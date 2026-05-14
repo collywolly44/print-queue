@@ -24000,6 +24000,54 @@ function showAuthError(msg) {
 // Single shared document at /workspace. Both users read/write the same node.
 function cloudRef() { return window._fb.ref(_fbDb, 'workspace'); }
 
+// ============================================================
+// Firebase key sanitization
+// ============================================================
+// Firebase Realtime Database forbids these characters in keys: . # $ / [ ]
+// They also can't be empty. We encode each forbidden char into a marker like
+// __DOT__ that's unlikely to occur naturally, and reverse on the way out.
+// We only need to translate KEYS, not VALUES.
+const FB_KEY_ESCAPES = [
+  ['\\', '__BSLASH__'],   // do backslash first (in case of double-escape weirdness)
+  ['.', '__DOT__'],
+  ['#', '__HASH__'],
+  ['$', '__DOLLAR__'],
+  ['/', '__SLASH__'],
+  ['[', '__LBRK__'],
+  [']', '__RBRK__'],
+];
+function fbEncodeKey(k) {
+  if (typeof k !== 'string') return k;
+  let out = k;
+  for (const [ch, esc] of FB_KEY_ESCAPES) out = out.split(ch).join(esc);
+  return out || '__EMPTY__';
+}
+function fbDecodeKey(k) {
+  if (typeof k !== 'string') return k;
+  let out = k;
+  if (out === '__EMPTY__') return '';
+  for (let i = FB_KEY_ESCAPES.length - 1; i >= 0; i--) {
+    const [ch, esc] = FB_KEY_ESCAPES[i];
+    out = out.split(esc).join(ch);
+  }
+  return out;
+}
+// Walk a nested object/array and rewrite all OBJECT keys via `fn`.
+// Arrays are passed through unchanged. Values are untouched.
+function transformKeys(value, fn) {
+  if (Array.isArray(value)) {
+    return value.map(v => transformKeys(v, fn));
+  }
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const k of Object.keys(value)) {
+      out[fn(k)] = transformKeys(value[k], fn);
+    }
+    return out;
+  }
+  return value;
+}
+
 // Pull cloud data on first sign-in. If cloud is empty, push local data up
 // (one-time seed). Otherwise replace local with cloud.
 async function pullFromCloudOnce() {
@@ -24007,7 +24055,9 @@ async function pullFromCloudOnce() {
   try {
     const snap = await window._fb.get(cloudRef());
     if (snap.exists()) {
-      const blob = snap.val();
+      const raw = snap.val();
+      // Decode any sanitized keys before applying locally
+      const blob = transformKeys(raw, fbDecodeKey);
       applyRestoreBlob(blob);
       cloudStatus('connected', `${_fbUser.email}`);
       toast('Synced from cloud');
@@ -24016,7 +24066,8 @@ async function pullFromCloudOnce() {
       const raw = localStorage.getItem(STORAGE_KEY);
       const blob = raw ? JSON.parse(raw) : null;
       if (blob && (Object.keys(blob.library || {}).length > 0 || (blob.orders || []).length > 0)) {
-        await window._fb.set(cloudRef(), blob);
+        const sanitized = transformKeys(blob, fbEncodeKey);
+        await window._fb.set(cloudRef(), sanitized);
         toast('First sync — uploaded local data to cloud');
       }
       cloudStatus('connected', `${_fbUser.email}`);
