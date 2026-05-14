@@ -1768,6 +1768,61 @@ body {
   padding: 24px;
 }
 .auth-overlay.hidden { display: none; }
+
+/* Offline overlay — locks edits when cloud disconnects */
+.offline-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15,20,25,0.92);
+  backdrop-filter: blur(2px);
+  z-index: 900;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.offline-overlay.show { display: flex; }
+.offline-box {
+  background: var(--panel);
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  padding: 32px 28px;
+  max-width: 360px;
+  width: 100%;
+  text-align: center;
+}
+.offline-icon {
+  font-size: 38px;
+  color: var(--red);
+  margin-bottom: 12px;
+}
+.offline-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 28px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.offline-msg {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  margin-bottom: 18px;
+}
+.offline-spinner {
+  width: 28px;
+  height: 28px;
+  margin: 0 auto;
+  border: 3px solid var(--line);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: offline-spin 0.9s linear infinite;
+}
+@keyframes offline-spin {
+  to { transform: rotate(360deg); }
+}
 .auth-box {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -21422,6 +21477,37 @@ function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
   updateLastSync(blob.lastSync);
   recordSnapshot(blob);
+  // Push to cloud if we're connected and signed in.
+  // Debounced so a burst of edits collapses into one cloud write.
+  scheduleCloudPush(blob);
+}
+
+// Debounced cloud push. Combines rapid edits (typing, +/- clicks, etc.) into
+// one Firebase write. Skips if offline or not signed in (local data still
+// gets written so user sees their edit; we'll catch up on reconnect).
+let _cloudPushTimer = null;
+let _cloudPushPending = false;
+function scheduleCloudPush(blob) {
+  if (!_fbReady || !_fbUser || _suspendCloudWrites) return;
+  _cloudPushPending = true;
+  clearTimeout(_cloudPushTimer);
+  _cloudPushTimer = setTimeout(async () => {
+    if (!_fbReady || !_fbUser) return;
+    try {
+      // Read the very latest local state at write time (in case more edits happened)
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const current = raw ? JSON.parse(raw) : blob;
+      const sanitized = transformKeys(current, fbEncodeKey);
+      _localWriteToken = Date.now() + ':' + Math.random();
+      sanitized._writeToken = _localWriteToken;
+      await window._fb.set(cloudRef(), sanitized);
+      _cloudPushPending = false;
+    } catch (e) {
+      console.error('Cloud push failed:', e);
+      // Mark offline so the user sees the warning; they can keep editing locally.
+      cloudStatus('offline', 'Offline — changes will sync when reconnected');
+    }
+  }, 600);
 }
 
 // Rolling auto-save snapshots. Lets the user recover from accidental data loss
@@ -23907,6 +23993,9 @@ window.OFFLINE_MODE = false;
 let _fbApp = null, _fbAuth = null, _fbDb = null, _fbUser = null;
 let _fbReady = false;
 let _initialPullDone = false;
+let _suspendCloudWrites = false;   // true while applying a cloud update locally
+let _localWriteToken = null;       // last token we wrote; used to ignore our own pushback
+let _watchUnsub = null;            // unsubscribe fn for the cloud value listener
 
 function cloudStatus(state, label) {
   const el = document.getElementById('cloud-status');
@@ -24081,15 +24170,71 @@ async function pullFromCloudOnce() {
 }
 
 // Listen for connection state (Firebase has a special /.info/connected node)
+// AND subscribe to live workspace changes so other devices' edits flow in.
 function watchCloudConnection() {
   const connRef = window._fb.ref(_fbDb, '.info/connected');
   window._fb.onValue(connRef, (snap) => {
     if (snap.val() === true) {
       cloudStatus('connected', _fbUser ? _fbUser.email : 'Online');
+      hideOfflineOverlay();
+      // If we have unflushed edits pending, push them now
+      if (_cloudPushPending) {
+        scheduleCloudPush(null);
+      }
     } else {
       cloudStatus('offline', 'Offline');
+      showOfflineOverlay();
     }
   });
+
+  // Subscribe to the workspace node — fires every time any device writes.
+  if (_watchUnsub) { try { _watchUnsub(); } catch {} _watchUnsub = null; }
+  _watchUnsub = window._fb.onValue(cloudRef(), (snap) => {
+    if (!snap.exists()) return;
+    const raw = snap.val();
+    // If this update's _writeToken matches ours, it's our own echo — ignore.
+    if (raw && raw._writeToken && raw._writeToken === _localWriteToken) return;
+    // Otherwise it came from another device (or another tab). Apply it.
+    try {
+      const blob = transformKeys(raw, fbDecodeKey);
+      // Strip the internal token before applying
+      delete blob._writeToken;
+      _suspendCloudWrites = true;
+      applyRestoreBlob(blob);
+      _suspendCloudWrites = false;
+      // Subtle hint instead of a noisy toast on every echo
+      cloudStatus('connected', _fbUser ? `${_fbUser.email} · synced` : 'Online');
+      setTimeout(() => {
+        if (_fbUser) cloudStatus('connected', _fbUser.email);
+      }, 1500);
+    } catch (e) {
+      console.error('Apply cloud update failed:', e);
+      _suspendCloudWrites = false;
+    }
+  });
+}
+
+// Full-screen "offline" lock — prevents edits when not connected to cloud.
+function showOfflineOverlay() {
+  let el = document.getElementById('offline-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'offline-overlay';
+    el.className = 'offline-overlay';
+    el.innerHTML = `
+      <div class="offline-box">
+        <div class="offline-icon">⚠</div>
+        <div class="offline-title">Offline</div>
+        <div class="offline-msg">Reconnecting to cloud… edits are paused so your data stays in sync.</div>
+        <div class="offline-spinner"></div>
+      </div>`;
+    document.body.appendChild(el);
+  }
+  el.classList.add('show');
+}
+function hideOfflineOverlay() {
+  const el = document.getElementById('offline-overlay');
+  if (el) el.classList.remove('show');
 }
 
 async function doSignOut() {
