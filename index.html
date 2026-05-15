@@ -2105,31 +2105,31 @@ body.mode-mobile .mobile-only { display: block; }
   border: 1px solid var(--line-bright);
   border-left: 4px solid var(--amber);
   border-radius: 6px;
-  padding: 16px;
+  padding: 22px 20px;
   margin-bottom: 18px;
   text-align: left;
 }
 .part-needed-label {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 14px;
   letter-spacing: 0.14em;
   color: var(--amber);
   font-weight: 700;
   text-transform: uppercase;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 .part-needed-input-wrap {
   position: relative;
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 .part-needed-input {
   flex: 1;
   background: var(--bg);
   border: 1px solid var(--line-bright);
   color: var(--ink);
-  font-size: 16px; /* prevents iOS auto-zoom */
-  padding: 14px 12px;
+  font-size: 18px;
+  padding: 18px 14px;
   border-radius: 4px;
   font-family: 'Inter', sans-serif;
   min-width: 0;
@@ -2139,15 +2139,16 @@ body.mode-mobile .mobile-only { display: block; }
   background: var(--amber);
   color: #1a1408;
   border: none;
-  padding: 0 18px;
+  padding: 0 22px;
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 14px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
+  min-height: 56px;
 }
 .part-needed-add:disabled {
   background: var(--line);
@@ -2155,54 +2156,128 @@ body.mode-mobile .mobile-only { display: block; }
   cursor: not-allowed;
 }
 .part-needed-add:not(:disabled):active { background: var(--amber-bright); }
-.part-needed-autocomplete {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
+.part-needed-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  margin-top: 12px;
+}
+
+/* Manually Update Stock box (mobile inventory landing) */
+.manual-stock-box {
+  background: var(--panel);
+  border: 1px solid var(--line-bright);
+  border-left: 4px solid var(--green);
+  border-radius: 6px;
+  padding: 22px 20px;
+  margin-top: 18px;
+  margin-bottom: 18px;
+  text-align: left;
+}
+.manual-stock-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  color: var(--green);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.manual-stock-search {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--ink);
+  font-size: 18px;
+  padding: 18px 14px;
+  border-radius: 4px;
+  font-family: 'Inter', sans-serif;
+}
+.manual-stock-search:focus { outline: none; border-color: var(--green); }
+.manual-stock-results {
+  margin-top: 10px;
   background: var(--panel-2);
   border: 1px solid var(--line-bright);
   border-radius: 4px;
-  max-height: 260px;
+  max-height: 320px;
   overflow-y: auto;
-  z-index: 30;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
-.part-needed-autocomplete .pn-ac-item {
-  padding: 12px 14px;
+.ms-result-item {
+  padding: 14px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--ink);
   border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
 }
-.part-needed-autocomplete .pn-ac-item:last-child { border-bottom: none; }
-.part-needed-autocomplete .pn-ac-item:active {
-  background: rgba(240,168,48,0.15);
+.ms-result-item:last-child { border-bottom: none; }
+.ms-result-item:active { background: rgba(108,191,126,0.12); }
+.ms-result-name {
+  flex: 1;
+  word-break: break-word;
+  font-weight: 600;
 }
-.part-needed-autocomplete .pn-ac-item .pn-ac-type {
+.ms-result-stock {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.ms-result-empty {
+  padding: 16px;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
   color: var(--ink-faint);
-  margin-left: 8px;
-  text-transform: uppercase;
   letter-spacing: 0.08em;
 }
-.part-needed-autocomplete .pn-ac-empty {
+
+/* Inline number-entry panel for the selected part */
+.manual-stock-entry {
+  margin-top: 14px;
+  padding: 16px;
+  background: rgba(108,191,126,0.06);
+  border: 1px solid var(--green);
+  border-radius: 4px;
+}
+.manual-stock-entry-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+.manual-stock-entry-current {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+  margin-bottom: 12px;
+}
+.manual-stock-entry-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--ink);
+  font-size: 32px;
+  font-family: 'Bebas Neue', sans-serif;
+  letter-spacing: 0.06em;
   padding: 14px;
+  border-radius: 4px;
   text-align: center;
-  font-size: 11px;
-  color: var(--ink-faint);
-  font-family: 'JetBrains Mono', monospace;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  margin-bottom: 12px;
 }
-.part-needed-hint {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: var(--ink-faint);
-  letter-spacing: 0.04em;
-  margin-top: 10px;
+.manual-stock-entry-input:focus { outline: none; border-color: var(--green); }
+.manual-stock-entry-actions {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 8px;
 }
+.manual-stock-entry-actions .btn { min-height: 52px; font-size: 14px; }
 
 /* Sent Today list */
 .part-needed-sent {
@@ -2917,9 +2992,8 @@ body.mode-mobile .mobile-only { display: block; }
         <div class="part-needed-box">
           <div class="part-needed-label">Part needed</div>
           <div class="part-needed-input-wrap">
-            <input type="text" id="part-needed-input" class="part-needed-input" placeholder="Start typing a part name…" autocomplete="off">
+            <input type="text" id="part-needed-input" class="part-needed-input" placeholder="Type the part name…" autocomplete="off">
             <button id="part-needed-add" class="part-needed-add" disabled>Send</button>
-            <div class="part-needed-autocomplete" id="part-needed-autocomplete" hidden></div>
           </div>
           <div class="part-needed-hint">Adds the part to the top of both queues so it gets printed next.</div>
         </div>
@@ -2932,7 +3006,27 @@ body.mode-mobile .mobile-only { display: block; }
           </div>
         </div>
 
-        <button class="btn btn-primary inv-mobile-btn" id="btn-walkthrough-mobile">Walk Through Mode</button>
+        <button class="btn btn-primary inv-mobile-btn" id="btn-walkthrough-mobile">Uncounted Parts</button>
+
+        <!-- Manually update stock -->
+        <div class="manual-stock-box">
+          <div class="manual-stock-label">Manually Update Stock</div>
+          <div class="manual-stock-input-wrap">
+            <input type="text" id="manual-stock-search" class="manual-stock-search" placeholder="Search any part…" autocomplete="off">
+          </div>
+          <div class="manual-stock-results" id="manual-stock-results" hidden></div>
+
+          <!-- Number-entry panel (shown after a part is picked) -->
+          <div class="manual-stock-entry" id="manual-stock-entry" hidden>
+            <div class="manual-stock-entry-name" id="manual-stock-entry-name"></div>
+            <div class="manual-stock-entry-current" id="manual-stock-entry-current"></div>
+            <input type="text" inputmode="numeric" id="manual-stock-entry-input" class="manual-stock-entry-input" placeholder="New count">
+            <div class="manual-stock-entry-actions">
+              <button class="btn" id="manual-stock-entry-cancel">Cancel</button>
+              <button class="btn btn-primary" id="manual-stock-entry-save">Save</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="view-mobile-hidden inv-desktop-only">
@@ -2942,7 +3036,7 @@ body.mode-mobile .mobile-only { display: block; }
           <div class="page-sub">Sorted by oldest open order · type a number to mark a part counted</div>
         </div>
         <div class="page-actions">
-          <button class="btn btn-primary" id="btn-walkthrough" title="Big-button counting mode for walking through inventory">Walk Through Mode</button>
+          <button class="btn btn-primary" id="btn-walkthrough" title="Big-button counting mode for walking through inventory">Uncounted Parts</button>
           <button class="btn btn-ghost" id="btn-resort-inventory" title="Re-sort by priority (uncounted first, oldest order first)">Re-sort by priority</button>
           <button class="btn btn-ghost" id="btn-reset-uncounted" title="Mark every part as uncounted (does NOT change stock numbers)">Reset all to uncounted</button>
           <button class="btn btn-ghost" id="btn-export-inventory">Export CSV</button>
@@ -5778,74 +5872,16 @@ document.getElementById('btn-walkthrough-mobile').addEventListener('click', () =
 // Resolved items stay on her "Sent today" list with a green badge.
 // ============================================================
 const PN = {
-  selectedPart: null,  // {name, type} from autocomplete picks; null if free-text
-  matches: [],
-
   init() {
     const input = document.getElementById('part-needed-input');
-    const list  = document.getElementById('part-needed-autocomplete');
     const btn   = document.getElementById('part-needed-add');
-    if (!input || !list || !btn) return;
-
-    const refreshMatches = () => {
-      const q = input.value.trim().toLowerCase();
-      const catalog = globalPartsCatalog();
-      // Show up to 10 matches. If empty input, show top-used 10.
-      let matches;
-      if (q === '') {
-        matches = catalog.slice(0, 10);
-      } else {
-        matches = catalog.filter(e => e.name.toLowerCase().includes(q)).slice(0, 10);
-      }
-      this.matches = matches;
-
-      if (matches.length === 0 && q !== '') {
-        list.innerHTML = '<div class="pn-ac-empty">No match — exact name will be sent as-is</div>';
-        list.hidden = false;
-        return;
-      }
-      if (matches.length === 0) {
-        list.hidden = true;
-        return;
-      }
-      list.innerHTML = matches.map(m =>
-        `<div class="pn-ac-item" data-name="${escapeAttr(m.name)}" data-type="${m.type}">
-           ${escapeHtml(m.name)}<span class="pn-ac-type">${m.type}</span>
-         </div>`
-      ).join('');
-      list.hidden = false;
-    };
+    if (!input || !btn) return;
 
     const validate = () => {
-      const v = input.value.trim();
-      btn.disabled = v.length === 0;
+      btn.disabled = input.value.trim().length === 0;
     };
 
-    input.addEventListener('focus', () => {
-      refreshMatches();
-    });
-    input.addEventListener('input', () => {
-      // Typing dissociates the selected catalog part (in case user starts over)
-      this.selectedPart = null;
-      refreshMatches();
-      validate();
-    });
-    input.addEventListener('blur', () => {
-      // Delay so a click on a list item can register
-      setTimeout(() => { list.hidden = true; }, 200);
-    });
-
-    list.addEventListener('click', (e) => {
-      const item = e.target.closest('.pn-ac-item');
-      if (!item) return;
-      const name = item.dataset.name;
-      const type = item.dataset.type === 'fdm' ? 'fdm' : 'resin';
-      input.value = name;
-      this.selectedPart = { name, type };
-      list.hidden = true;
-      validate();
-    });
-
+    input.addEventListener('input', validate);
     btn.addEventListener('click', () => this.send());
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); if (!btn.disabled) this.send(); }
@@ -5860,16 +5896,11 @@ const PN = {
     const v = input.value.trim();
     if (!v) return;
 
-    // Determine type: from the catalog entry if user picked one, otherwise from
-    // any catalog match for the typed name, otherwise default to 'resin'.
+    // Determine type from the parts library if the name matches; else default to resin.
     let type = 'resin';
-    if (this.selectedPart && this.selectedPart.name === v) {
-      type = this.selectedPart.type;
-    } else {
-      const catalog = globalPartsCatalog();
-      const match = catalog.find(e => e.name.toLowerCase() === v.toLowerCase());
-      if (match) type = match.type;
-    }
+    const catalog = globalPartsCatalog();
+    const match = catalog.find(e => e.name.toLowerCase() === v.toLowerCase());
+    if (match) type = match.type;
 
     const id = `need-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
     if (!Array.isArray(state.partsNeeded)) state.partsNeeded = [];
@@ -5883,9 +5914,7 @@ const PN = {
     });
     save();
     input.value = '';
-    this.selectedPart = null;
     document.getElementById('part-needed-add').disabled = true;
-    document.getElementById('part-needed-autocomplete').hidden = true;
     this.renderSentToday();
     renderQueue();
     renderSidebarCounts();
@@ -5918,6 +5947,112 @@ const PN = {
   },
 };
 PN.init();
+
+// ============================================================
+// MANUALLY UPDATE STOCK (mobile inventory landing)
+// Search any part and set its inventory count.
+// ============================================================
+const MS = {
+  selected: null,  // currently selected part name
+
+  init() {
+    const input = document.getElementById('manual-stock-search');
+    const results = document.getElementById('manual-stock-results');
+    const entry = document.getElementById('manual-stock-entry');
+    if (!input || !results || !entry) return;
+
+    input.addEventListener('input', () => this.refreshResults());
+    input.addEventListener('focus', () => this.refreshResults());
+
+    results.addEventListener('click', (e) => {
+      const item = e.target.closest('.ms-result-item');
+      if (!item) return;
+      this.openEntry(item.dataset.name);
+    });
+
+    document.getElementById('manual-stock-entry-cancel').addEventListener('click', () => this.closeEntry());
+    document.getElementById('manual-stock-entry-save').addEventListener('click', () => this.save());
+    document.getElementById('manual-stock-entry-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); this.save(); }
+    });
+  },
+
+  // Build a search list of all parts known to the app (library parts + inventory keys).
+  allParts() {
+    const set = new Set();
+    for (const sku of Object.keys(state.library)) {
+      partNames(state.library[sku]).forEach(p => set.add(p));
+    }
+    for (const p of Object.keys(state.inventory || {})) set.add(p);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  },
+
+  refreshResults() {
+    const input = document.getElementById('manual-stock-search');
+    const results = document.getElementById('manual-stock-results');
+    const q = input.value.trim().toLowerCase();
+    const all = this.allParts();
+    let matches;
+    if (q === '') {
+      matches = all.slice(0, 20);
+    } else {
+      matches = all.filter(p => p.toLowerCase().includes(q)).slice(0, 20);
+    }
+
+    if (matches.length === 0) {
+      results.innerHTML = '<div class="ms-result-empty">No parts match.</div>';
+      results.hidden = false;
+      return;
+    }
+    results.innerHTML = matches.map(p => {
+      const stock = Number(state.inventory[p] || 0);
+      return `<div class="ms-result-item" data-name="${escapeAttr(p)}">
+        <div class="ms-result-name">${escapeHtml(p)}</div>
+        <div class="ms-result-stock">Stock: ${stock}</div>
+      </div>`;
+    }).join('');
+    results.hidden = false;
+  },
+
+  openEntry(partName) {
+    this.selected = partName;
+    document.getElementById('manual-stock-entry-name').textContent = partName;
+    const current = Number(state.inventory[partName] || 0);
+    document.getElementById('manual-stock-entry-current').textContent = `Current stock: ${current}`;
+    const inp = document.getElementById('manual-stock-entry-input');
+    inp.value = current;
+    document.getElementById('manual-stock-entry').hidden = false;
+    // Don't auto-focus — that pops keyboard before user is ready; let them tap the field.
+  },
+
+  closeEntry() {
+    this.selected = null;
+    document.getElementById('manual-stock-entry').hidden = true;
+    document.getElementById('manual-stock-entry-input').value = '';
+  },
+
+  save() {
+    const partName = this.selected;
+    if (!partName) return;
+    const raw = document.getElementById('manual-stock-entry-input').value.trim();
+    if (raw === '') { toast('Enter a number', 'error'); return; }
+    const n = Math.max(0, Math.floor(Number(raw) || 0));
+    if (n === 0) delete state.inventory[partName];
+    else state.inventory[partName] = n;
+    state.countedParts[partName] = true;
+    save();
+    renderQueue();
+    renderInventory();
+    renderSidebarCounts();
+    toast(`${partName}: stock set to ${n}`);
+
+    // Clear search + close entry
+    document.getElementById('manual-stock-search').value = '';
+    document.getElementById('manual-stock-results').hidden = true;
+    this.closeEntry();
+  },
+};
+MS.init();
 
 // Refresh the Sent Today list when the user navigates to Inventory.
 document.querySelectorAll('.nav-item[data-view="inventory"]').forEach(el => {
