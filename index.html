@@ -2143,6 +2143,9 @@ body.mode-mobile .sidebar-priority { display: none; }
     font-size: 16px !important;
     touch-action: manipulation;
   }
+  /* But the Walk Through count input is supposed to be huge — restore its real size */
+  input.wt-input { font-size: 72px !important; }
+  input.manual-stock-entry-input { font-size: 32px !important; }
   /* The "search any part" + part-needed inputs explicitly */
   .manual-stock-search, .part-needed-input {
     -webkit-appearance: none;
@@ -5727,7 +5730,9 @@ function setStoredMode(m) {
   try { localStorage.setItem(MODE_KEY, m); } catch {}
 }
 function autoDetectMode() {
-  return window.innerWidth <= 900 ? 'mobile' : 'desktop';
+  // Phones only (≤ 600px). iPad portrait (~810px) and bigger get desktop mode
+  // so the larger desktop sizing kicks in.
+  return window.innerWidth <= 600 ? 'mobile' : 'desktop';
 }
 function applyAppMode(mode) {
   state.appMode = mode;
