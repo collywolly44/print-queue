@@ -1597,6 +1597,27 @@ body {
 }
 .lib-part-location:focus { outline: none; }
 .lib-part-location option { background: var(--panel); color: var(--ink); }
+
+/* Inventory page location dropdown — readable on dark theme */
+.inv-location {
+  background: var(--bg) !important;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 5px 6px;
+  width: 100%;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink) !important;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.inv-location:focus { outline: none; border-color: var(--amber); }
+.inv-location option {
+  background: var(--panel) !important;
+  color: var(--ink) !important;
+}
 .lib-part-del {
   width: 36px;
   height: 36px;
@@ -2002,6 +2023,43 @@ body {
 /* Mobile mode: hide nav items not marked mobile-friendly */
 body.mode-mobile .nav-item[data-mobile="hide"] { display: none; }
 body.mode-mobile .view-mobile-hidden { display: none !important; }
+/* .mobile-only is the inverse — hidden on desktop, shown on mobile */
+.mobile-only { display: none; }
+body.mode-mobile .mobile-only { display: block; }
+
+/* Mobile inventory landing: huge button, big icon */
+.inv-mobile-landing {
+  padding: 40px 24px;
+  text-align: center;
+  max-width: 460px;
+  margin: 0 auto;
+}
+.inv-mobile-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+}
+.inv-mobile-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 48px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+.inv-mobile-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+  margin: 0 0 28px;
+}
+.inv-mobile-btn {
+  width: 100%;
+  font-size: 18px;
+  padding: 20px;
+  letter-spacing: 0.06em;
+  min-height: 72px;
+  font-weight: 700;
+}
 @media (max-width: 768px) {
   .cloud-status {
     top: 6px;
@@ -2652,6 +2710,15 @@ body.mode-mobile .view-mobile-hidden { display: none !important; }
 
     <!-- =========== INVENTORY VIEW =========== -->
     <section id="view-inventory" class="hidden">
+      <!-- Mobile-only landing: just one giant Walk Through button -->
+      <div class="mobile-only inv-mobile-landing">
+        <div class="inv-mobile-icon">📦</div>
+        <h1 class="inv-mobile-title">Inventory</h1>
+        <p class="inv-mobile-sub">Tap below to walk through and count parts.</p>
+        <button class="btn btn-primary inv-mobile-btn" id="btn-walkthrough-mobile">Walk Through Mode</button>
+      </div>
+
+      <div class="view-mobile-hidden inv-desktop-only">
       <div class="page-header">
         <div>
           <h1 class="page-title">Inventory</h1>
@@ -2703,6 +2770,7 @@ body.mode-mobile .view-mobile-hidden { display: none !important; }
       </div>
 
       <div id="inventory-container"></div>
+      </div><!-- /.view-mobile-hidden -->
     </section>
 
     <!-- =========== ORDERS VIEW =========== -->
@@ -4409,7 +4477,7 @@ function renderInventory() {
     const ageStr = ageDays === null ? '' : ` <span style="color:var(--ink-faint);font-size:10px;">· ${ageDays}d</span>`;
     const rowAttr = !r.counted ? ' data-uncounted="1"' : '';
     const inputClass = !r.counted ? 'inv-stock empty-flag' : 'inv-stock';
-    const inputPlaceholder = !r.counted ? 'Type count' : '';
+    const inputPlaceholder = !r.counted ? 'QTY' : '';
     const inputValue = !r.counted ? '' : r.stock;
     const ploc = partLocation(r.part);
     const locOpts = LOCATIONS.filter(l => l !== '')
@@ -4419,7 +4487,7 @@ function renderInventory() {
       <div class="lib-row" data-part="${escapeAttr(r.part)}"${rowAttr} style="grid-template-columns: 2fr 110px 110px 110px 110px 110px 110px;">
         <div class="lib-cell qcell-part" style="font-weight:600;">${escapeHtml(r.part)}</div>
         <div class="lib-cell">
-          <select class="lib-input inv-location" style="background:transparent;border:1px solid var(--line);border-radius:3px;padding:5px 4px;width:100%;font-family:'Inter',sans-serif;font-size:11px;color:var(--ink);">
+          <select class="lib-input inv-location">
             <option value=""${ploc === '' ? ' selected' : ''}>—</option>
             ${locOpts}
           </select>
@@ -5391,6 +5459,7 @@ const WT = {
 };
 
 document.getElementById('btn-walkthrough').addEventListener('click', () => WT.start());
+document.getElementById('btn-walkthrough-mobile').addEventListener('click', () => WT.start());
 document.getElementById('wt-exit').addEventListener('click', () => WT.exit());
 
 // Location picker cards
