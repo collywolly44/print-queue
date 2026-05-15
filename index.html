@@ -3045,6 +3045,9 @@ function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
   updateLastSync(blob.lastSync);
   recordSnapshot(blob);
+  // The library may have changed; drop the cached parts catalog so the next
+  // autocomplete read is fresh.
+  invalidatePartsCatalog();
   // Push to cloud if we're connected and signed in.
   // Debounced so a burst of edits collapses into one cloud write.
   scheduleCloudPush(blob);
@@ -3278,7 +3281,15 @@ function partType(lib, partName) {
 }
 // Build the global catalog of unique parts seen across all SKUs in the library.
 // Returns: [{ name, type, yield, printer, usageCount }, ...] sorted by usage desc then name.
+// Memoize the global parts catalog. The autocomplete in renderLibrary calls
+// this on every keystroke; rebuilding for 333 SKUs × ~900 parts each time was
+// a major cost. We invalidate the cache whenever save() runs (since saves are
+// the only thing that mutates the library), and also via invalidatePartsCatalog
+// for explicit calls.
+let _partsCatalogCache = null;
+function invalidatePartsCatalog() { _partsCatalogCache = null; }
 function globalPartsCatalog() {
+  if (_partsCatalogCache) return _partsCatalogCache;
   const catalog = {};
   for (const sku of Object.keys(state.library)) {
     const lib = state.library[sku];
@@ -3308,10 +3319,11 @@ function globalPartsCatalog() {
       catalog[name].usageCount++;
     }
   }
-  return Object.values(catalog).sort((a, b) => {
+  _partsCatalogCache = Object.values(catalog).sort((a, b) => {
     if (a.usageCount !== b.usageCount) return b.usageCount - a.usageCount;
     return a.name.localeCompare(b.name);
   });
+  return _partsCatalogCache;
 }
 
 // Get preferred printer for a part by name (across all SKUs). Returns one of
@@ -3434,11 +3446,12 @@ function earliestDateByPart() {
   return result;
 }
 
-function libraryStatus(sku) {
+function libraryStatus(sku, skuInOrders) {
+  // skuInOrders is precomputed by callers when looping; falls back to a slow path
+  // for callers that don't pass it (legacy code).
   const lib = state.library[sku];
-  const inOrders = state.orders.some(o => o.sku === sku);
   if (lib && partNames(lib).length > 0) return 'defined';
-  if (inOrders) return 'needs';
+  if (skuInOrders === undefined ? state.orders.some(o => o.sku === sku) : skuInOrders) return 'needs';
   return 'unused';
 }
 
@@ -3447,10 +3460,16 @@ function libraryRows() {
   const skus = new Set(Object.keys(state.library));
   for (const o of state.orders) skus.add(o.sku);
 
-  // Earliest open order date per SKU (so SKUs blocking oldest orders surface first)
+  // Precompute order-derived data in ONE pass: which SKUs are in orders,
+  // earliest order date per SKU, and a fallback name per SKU. Without this,
+  // libraryStatus + name lookup would each loop over all orders for each SKU.
   const FAR_FUTURE = 8640000000000000;
   const earliestBySku = {};
+  const fallbackName  = {};
+  const inOrdersSet   = new Set();
   for (const o of state.orders) {
+    inOrdersSet.add(o.sku);
+    if (!(o.sku in fallbackName)) fallbackName[o.sku] = o.item;
     const d = new Date(o.date).getTime();
     if (isNaN(d)) continue;
     if (earliestBySku[o.sku] === undefined || d < earliestBySku[o.sku]) {
@@ -3460,16 +3479,12 @@ function libraryRows() {
 
   const rows = Array.from(skus).map(sku => {
     const lib = state.library[sku] || { name: '', parts: [], notes: '' };
-    let name = lib.name;
-    if (!name) {
-      const o = state.orders.find(x => x.sku === sku);
-      name = o ? o.item : '';
-    }
+    const name = lib.name || fallbackName[sku] || '';
     return {
       sku, name,
       parts: lib.parts || [],
       notes: lib.notes || '',
-      status: libraryStatus(sku),
+      status: libraryStatus(sku, inOrdersSet.has(sku)),
       _earliest: earliestBySku[sku] !== undefined ? earliestBySku[sku] : FAR_FUTURE,
     };
   });
@@ -3958,6 +3973,14 @@ function renderLibrary() {
   html += '<div style="margin-top:16px;"><button class="btn" id="btn-add-sku">+ Add SKU manually</button></div>';
   container.innerHTML = html;
 
+  // Defer wiring until after the browser paints. Big libraries (300+ SKUs)
+  // wire thousands of event listeners, which can stall the main thread for
+  // 100-300ms. Painting the cards first lets the user see the page right away;
+  // interactions become live a frame or two later.
+  requestAnimationFrame(() => wireLibraryCards(container));
+}
+
+function wireLibraryCards(container) {
   // ---- Wire up each card ----
   container.querySelectorAll('.lib-card[data-sku]').forEach(card => {
     const sku = card.dataset.sku;
