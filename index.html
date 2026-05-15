@@ -7,6 +7,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Print Queue">
 <meta name="theme-color" content="#0f1419">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
 <title>Print Queue · Workshop</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1917,6 +1919,7 @@ body {
   margin-bottom: 20px;
   line-height: 1.5;
 }
+.auth-box input[type="text"],
 .auth-box input[type="email"],
 .auth-box input[type="password"] {
   width: 100%;
@@ -2911,8 +2914,8 @@ body.mode-mobile .mobile-only { display: block; }
       </div>
     </div>
     <div class="auth-title">Sign in</div>
-    <div class="auth-sub">Use the email and password set up in Firebase.</div>
-    <input type="email" id="auth-email" placeholder="Email" autocomplete="username">
+    <div class="auth-sub">Enter your username and password.</div>
+    <input type="text" id="auth-email" placeholder="Username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">
     <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password">
     <div class="auth-error" id="auth-error" hidden></div>
     <button class="auth-btn" id="auth-signin">Sign in</button>
@@ -6641,6 +6644,8 @@ async function initFirebase() {
       signInWithEmailAndPassword: authMod.signInWithEmailAndPassword,
       signOut: authMod.signOut,
       onAuthStateChanged: authMod.onAuthStateChanged,
+      setPersistence: authMod.setPersistence,
+      browserLocalPersistence: authMod.browserLocalPersistence,
       ref: dbMod.ref,
       get: dbMod.get,
       set: dbMod.set,
@@ -6650,12 +6655,21 @@ async function initFirebase() {
     };
     _fbReady = true;
 
+    // Set persistent sign-in by default so the user only sees the login screen
+    // once per device. Without this, Firebase defaults to SESSION persistence
+    // and signs you out whenever the tab/browser closes.
+    try {
+      await authMod.setPersistence(_fbAuth, authMod.browserLocalPersistence);
+    } catch (e) {
+      console.warn('Could not set persistent auth:', e);
+    }
+
     // Watch auth state. If user is signed in, hide the login overlay and pull data.
     window._fb.onAuthStateChanged(_fbAuth, async (user) => {
       _fbUser = user;
       if (user) {
         document.getElementById('auth-overlay').classList.add('hidden');
-        cloudStatus('connecting', `${user.email}`);
+        cloudStatus("connecting", displayName(user.email));
         await pullFromCloudOnce();
         watchCloudConnection();
       } else {
@@ -6673,11 +6687,38 @@ async function initFirebase() {
   }
 }
 
-async function signIn(email, password) {
+// Convert a username (or already-email-looking input) to the canonical
+// fake-email Firebase stores. Allows you to type just "collin" instead of
+// "collin@printqueue.local". If the user actually types an @ we trust it
+// (so legacy real-email accounts still work).
+const USERNAME_DOMAIN = 'printqueue.local';
+function usernameToEmail(input) {
+  const v = String(input || '').trim().toLowerCase();
+  if (!v) return '';
+  if (v.includes('@')) return v;
+  return `${v}@${USERNAME_DOMAIN}`;
+}
+
+// For display in the cloud status pill — strip the @printqueue.local domain
+// when showing usernames. Real emails stay as-is.
+function displayName(emailLike) {
+  if (!emailLike) return '';
+  const s = String(emailLike);
+  if (s.endsWith(`@${USERNAME_DOMAIN}`)) return s.slice(0, -(USERNAME_DOMAIN.length + 1));
+  return s;
+}
+
+async function signIn(username, password) {
   if (!_fbReady) { showAuthError('Firebase still loading, try again in a sec…'); return; }
   const btn = document.getElementById('auth-signin');
   btn.disabled = true; btn.textContent = 'Signing in…';
   try {
+    // Persist the session across browser restarts (the default is SESSION,
+    // which forgets you when the tab/browser closes).
+    if (window._fb.setPersistence && window._fb.browserLocalPersistence) {
+      try { await window._fb.setPersistence(_fbAuth, window._fb.browserLocalPersistence); } catch {}
+    }
+    const email = usernameToEmail(username);
     await window._fb.signInWithEmailAndPassword(_fbAuth, email, password);
     // onAuthStateChanged handler will take it from here
   } catch (e) {
@@ -6689,9 +6730,9 @@ async function signIn(email, password) {
 }
 
 function friendlyAuthError(code) {
-  if (code === 'auth/invalid-email') return 'Email looks wrong.';
+  if (code === 'auth/invalid-email') return 'Username looks wrong.';
   if (code === 'auth/missing-password') return 'Enter your password.';
-  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') return 'Email or password is incorrect.';
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') return 'Username or password is incorrect.';
   if (code === 'auth/too-many-requests') return 'Too many tries — wait a minute, then try again.';
   if (code === 'auth/network-request-failed') return 'No internet connection.';
   return code;
@@ -6766,7 +6807,7 @@ async function pullFromCloudOnce() {
       // Decode any sanitized keys before applying locally
       const blob = transformKeys(raw, fbDecodeKey);
       applyRestoreBlob(blob);
-      cloudStatus('connected', `${_fbUser.email}`);
+      cloudStatus("connected", displayName(_fbUser.email));
       toast('Synced from cloud');
     } else {
       // First-ever connection: cloud is empty. Push current local data up.
@@ -6777,7 +6818,7 @@ async function pullFromCloudOnce() {
         await window._fb.set(cloudRef(), sanitized);
         toast('First sync — uploaded local data to cloud');
       }
-      cloudStatus('connected', `${_fbUser.email}`);
+      cloudStatus("connected", displayName(_fbUser.email));
     }
     _initialPullDone = true;
   } catch (e) {
@@ -6793,7 +6834,7 @@ function watchCloudConnection() {
   const connRef = window._fb.ref(_fbDb, '.info/connected');
   window._fb.onValue(connRef, (snap) => {
     if (snap.val() === true) {
-      cloudStatus('connected', _fbUser ? _fbUser.email : 'Online');
+      cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : "Online");
       hideOfflineOverlay();
       // If we have unflushed edits pending, push them now
       if (_cloudPushPending) {
@@ -6821,9 +6862,9 @@ function watchCloudConnection() {
       applyRestoreBlob(blob);
       _suspendCloudWrites = false;
       // Subtle hint instead of a noisy toast on every echo
-      cloudStatus('connected', _fbUser ? `${_fbUser.email} · synced` : 'Online');
+      cloudStatus('connected', _fbUser ? `${displayName(_fbUser.email)} · synced` : "Online");
       setTimeout(() => {
-        if (_fbUser) cloudStatus('connected', _fbUser.email);
+        if (_fbUser) cloudStatus("connected", displayName(_fbUser.email));
       }, 1500);
     } catch (e) {
       console.error('Apply cloud update failed:', e);
