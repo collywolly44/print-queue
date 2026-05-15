@@ -2024,6 +2024,101 @@ body {
 body.mode-mobile .nav-item[data-mobile="hide"] { display: none; }
 body.mode-mobile .view-mobile-hidden { display: none !important; }
 
+/* Permanent Priority panel in the sidebar (where Part Needed lands).
+   Items are draggable into the resin kanban or the FDM queue. */
+.sidebar-priority {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding: 14px 18px 12px;
+  flex-shrink: 0;
+}
+.sidebar-priority-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.sidebar-priority-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--amber);
+  text-transform: uppercase;
+}
+.sidebar-priority-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1a1408;
+  background: var(--amber);
+  padding: 1px 7px;
+  border-radius: 2px;
+}
+.sidebar-priority-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+.sidebar-priority-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sidebar-priority-empty {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+  text-align: center;
+  padding: 8px 4px;
+}
+.sidebar-priority-item {
+  background: rgba(240,168,48,0.08);
+  border: 1px solid var(--line-bright);
+  border-left: 3px solid var(--amber);
+  border-radius: 4px;
+  padding: 10px 12px;
+  cursor: grab;
+  user-select: none;
+  transition: background 0.12s;
+}
+.sidebar-priority-item:hover {
+  background: rgba(240,168,48,0.14);
+  border-color: var(--amber);
+}
+.sidebar-priority-item:active { cursor: grabbing; }
+.sidebar-priority-item.dragging { opacity: 0.4; }
+.sidebar-priority-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  word-break: break-word;
+  line-height: 1.3;
+}
+.sidebar-priority-item-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--ink-faint);
+  margin-top: 4px;
+  letter-spacing: 0.06em;
+}
+
+/* Drop-target highlight when dragging a Priority item over a column / queue */
+.drop-target-active {
+  outline: 2px dashed var(--amber);
+  outline-offset: -4px;
+  background: rgba(240,168,48,0.06);
+}
+
+/* Hide the sidebar Priority panel on mobile — only the user (you) drags from it */
+body.mode-mobile .sidebar-priority { display: none; }
+
 /* Mobile: ensure nothing horizontally overflows the screen */
 @media (max-width: 768px) {
   html, body { overflow-x: hidden; max-width: 100vw; }
@@ -2870,6 +2965,19 @@ body.mode-mobile .mobile-only { display: block; }
         <span>Import / Settings</span>
       </div>
     </nav>
+
+    <!-- Permanent Priority section (sister sends parts here, drag to queues) -->
+    <div class="sidebar-priority" id="sidebar-priority">
+      <div class="sidebar-priority-head">
+        <span class="sidebar-priority-title">Priority</span>
+        <span class="sidebar-priority-count" id="sidebar-priority-count">0</span>
+      </div>
+      <div class="sidebar-priority-hint">Drag onto a printer column or the FDM queue.</div>
+      <div class="sidebar-priority-list" id="sidebar-priority-list">
+        <div class="sidebar-priority-empty">No requests right now.</div>
+      </div>
+    </div>
+
     <div class="sidebar-footer">
       <div class="sidebar-footer-row"><span>Last sync</span><span id="last-sync">—</span></div>
       <div class="sidebar-footer-row"><span>Storage</span><span>Browser</span></div>
@@ -2889,21 +2997,6 @@ body.mode-mobile .mobile-only { display: block; }
         <div class="page-actions">
           <button class="btn btn-ghost" data-action="export-queue">Export CSV</button>
         </div>
-      </div>
-
-      <div class="priority-block">
-        <div class="priority-head">
-          <div class="priority-title">
-            <span class="priority-mark">!</span>
-            <span>Priority Print · Resin</span>
-            <span class="priority-count" data-priority-count></span>
-          </div>
-          <div class="priority-actions">
-            <button class="btn btn-sm btn-ghost" data-action="priority-paste">Paste from sheet</button>
-            <button class="btn btn-sm btn-ghost" data-action="priority-clear">Clear all</button>
-          </div>
-        </div>
-        <div data-priority-container></div>
       </div>
 
       <div class="queue-layout">
@@ -2952,21 +3045,6 @@ body.mode-mobile .mobile-only { display: block; }
         <div class="page-actions">
           <button class="btn btn-ghost" data-action="export-queue">Export CSV</button>
         </div>
-      </div>
-
-      <div class="priority-block">
-        <div class="priority-head">
-          <div class="priority-title">
-            <span class="priority-mark">!</span>
-            <span>Priority Print · FDM</span>
-            <span class="priority-count" data-priority-count></span>
-          </div>
-          <div class="priority-actions">
-            <button class="btn btn-sm btn-ghost" data-action="priority-paste">Paste from sheet</button>
-            <button class="btn btn-sm btn-ghost" data-action="priority-clear">Clear all</button>
-          </div>
-        </div>
-        <div data-priority-container></div>
       </div>
 
       <div class="queue-layout">
@@ -3773,32 +3851,35 @@ function buildQueue(typeFilter) {
     if (!typeFilter || r.type === typeFilter) visible.push(enriched);
   }
 
-  // Inject any unresolved partsNeeded entries at the TOP of the queue. These
-  // bypass inventory FIFO entirely — they're alerts from the employee, not
-  // demand against inventory. Hitting Done on them flags them as resolved.
+  // Inject any partsNeeded entries that have been PLACED into a queue (via drag
+  // from the sidebar). Items still in the sidebar Priority list are NOT shown
+  // in the queues — the user drags them in when ready.
+  // These bypass inventory FIFO — they're alerts, not real demand against stock.
   const needRows = [];
   for (const need of (state.partsNeeded || [])) {
     if (need.resolvedAt) continue;
-    if (typeFilter && need.type !== typeFilter) continue;
+    if (!need.placedAt) continue;        // skip un-placed items (still in sidebar)
+    if (typeFilter && need.placedQueue !== typeFilter) continue;
     needRows.push({
       key: `__need__${need.id}`,
       orderId: `__need__${need.id}`,
-      date: need.addedAt || new Date(0).toISOString(),
+      date: need.placedAt || need.addedAt || new Date(0).toISOString(),
       customer: 'Part Needed',
       sku: '',
       part: need.partName,
       qty: 1,
       item: 'Requested by employee',
       notes: '',
-      type: need.type,
+      type: need.placedQueue,
       _isNeed: true,
       _needId: need.id,
       _covered: 0,
       _remaining: 1,
       originalQty: 1,
+      _placedMachine: need.placedMachine || null,
     });
   }
-  // Sort needs oldest-first so multiple alerts stay in order, then prepend
+  // Sort needs oldest-placed first
   needRows.sort((a, b) => new Date(a.date) - new Date(b.date));
   const finalVisible = [...needRows, ...visible];
 
@@ -3976,7 +4057,6 @@ function renderQueue(type) {
   section.querySelector('[data-stat="undef"]').textContent = undef.size;
 
   renderSidebarCounts();
-  renderPriority(type);
   renderTop10(type);
 
   // Resin → kanban board. FDM → list.
@@ -4189,7 +4269,32 @@ function renderKanban(filtered, allVisible) {
     zone.addEventListener('drop', e => {
       e.preventDefault();
       col.classList.remove('drag-over');
-      const key = draggedKey || e.dataTransfer.getData('text/plain');
+      // First: a Priority item being dragged from the sidebar?
+      const needId = e.dataTransfer.getData('application/x-need-id');
+      const fallback = e.dataTransfer.getData('text/plain');
+      const isFallbackNeed = fallback && fallback.startsWith('need:');
+      if (needId || isFallbackNeed) {
+        const id = needId || fallback.slice(5);
+        const need = (state.partsNeeded || []).find(n => n.id === id);
+        if (!need) return;
+        need.placedAt = new Date().toISOString();
+        need.placedQueue = 'resin';
+        const machine = zone.dataset.dropTarget;
+        need.placedMachine = (machine && machine !== 'unassigned') ? machine : null;
+        // Pre-set kanban assignment so it lands in the correct column
+        const key = `__need__${need.id}`;
+        if (need.placedMachine) state.assignments[key] = need.placedMachine;
+        else delete state.assignments[key];
+        save();
+        renderSidebarPriority();
+        renderQueue('resin');
+        renderSidebarCounts();
+        const colLabel = MACHINE_LABELS[machine] || 'Unassigned';
+        toast(`"${need.partName}" → ${colLabel}`);
+        return;
+      }
+      // Otherwise: a regular kanban card being moved between columns
+      const key = draggedKey || fallback;
       if (!key) return;
       const machine = zone.dataset.dropTarget;
       if (machine === 'unassigned') delete state.assignments[key];
@@ -5145,6 +5250,49 @@ function renderSidebarCounts() {
   const invCount = Object.values(state.inventory).filter(v => Number(v) > 0).length;
   document.getElementById('nav-inventory-count').textContent = invCount;
   document.getElementById('nav-orders-count').textContent = state.orders.length.toLocaleString();
+  renderSidebarPriority();
+}
+
+// Render the permanent Priority list (Part Needed items waiting to be placed).
+function renderSidebarPriority() {
+  const list = document.getElementById('sidebar-priority-list');
+  const countEl = document.getElementById('sidebar-priority-count');
+  if (!list || !countEl) return;
+  // Show only items that have been sent by employee AND not yet placed into a
+  // queue AND not yet resolved.
+  const items = (state.partsNeeded || []).filter(n => !n.placedAt && !n.resolvedAt);
+  items.sort((a, b) => new Date(a.addedAt) - new Date(b.addedAt)); // oldest first
+  countEl.textContent = items.length;
+  if (items.length === 0) {
+    list.innerHTML = '<div class="sidebar-priority-empty">No requests right now.</div>';
+    return;
+  }
+  list.innerHTML = items.map(n => {
+    const time = new Date(n.addedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const day  = new Date(n.addedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `<div class="sidebar-priority-item" draggable="true" data-need-id="${escapeAttr(n.id)}">
+      <div class="sidebar-priority-item-name">${escapeHtml(n.partName)}</div>
+      <div class="sidebar-priority-item-meta">${day} · ${time}</div>
+    </div>`;
+  }).join('');
+
+  // Wire drag start/end so the dragged item visually fades
+  list.querySelectorAll('.sidebar-priority-item').forEach(el => {
+    el.addEventListener('dragstart', (e) => {
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      // Custom data — the kanban drag uses 'text/plain' for its own keys, so
+      // we use a distinct mime type to avoid colliding.
+      e.dataTransfer.setData('application/x-need-id', el.dataset.needId);
+      // Also put a fallback in text/plain so very simple drop handlers can see it
+      e.dataTransfer.setData('text/plain', `need:${el.dataset.needId}`);
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      // Clear any active drop-target highlights left over
+      document.querySelectorAll('.drop-target-active').forEach(x => x.classList.remove('drop-target-active'));
+    });
+  });
 }
 
 // ============================================================
@@ -5521,62 +5669,13 @@ function queueTypeFromEl(el) {
   return sec ? sec.dataset.queueType : null;
 }
 
-// Priority paste / clear / export buttons (per-section via data-action)
-document.querySelectorAll('[data-action="priority-paste"]').forEach(btn => {
-  btn.addEventListener('click', e => {
-    const type = queueTypeFromEl(e.currentTarget);
-    if (!type) return;
-    document.getElementById('paste-textarea').value = '';
-    document.getElementById('paste-textarea').dataset.targetType = type;
-    document.getElementById('paste-modal-title').textContent =
-      `Paste priority items · ${type === 'resin' ? 'Resin' : 'FDM'}`;
-    document.getElementById('paste-modal-bg').classList.add('show');
-    setTimeout(() => document.getElementById('paste-textarea').focus(), 50);
-  });
-});
-document.querySelectorAll('[data-action="priority-clear"]').forEach(btn => {
-  btn.addEventListener('click', e => {
-    const type = queueTypeFromEl(e.currentTarget);
-    if (!type) return;
-    const list = state.priority[type] || [];
-    if (list.length === 0) { toast('Priority list is already empty', 'info'); return; }
-    const typeLabel = type === 'resin' ? 'Resin' : 'FDM';
-    confirmModal({
-      title: `Clear all ${typeLabel} priority items?`,
-      text: `This removes all ${list.length} ${typeLabel} priority items. Cannot be undone.`,
-      onConfirm: () => {
-        state.priority[type] = [];
-        save();
-        renderPriority(type);
-        renderSidebarCounts();
-        toast(`${typeLabel} priority list cleared`);
-      },
-    });
-  });
-});
+// Priority paste / clear UI was removed when we moved priority to the sidebar.
+// (renderPriority/addPriorityItems remain as no-ops further down for safety.)
 document.querySelectorAll('[data-action="export-queue"]').forEach(btn => {
   btn.addEventListener('click', e => {
     const type = queueTypeFromEl(e.currentTarget);
     exportQueueCSV(type);
   });
-});
-
-document.getElementById('paste-cancel').addEventListener('click', () => {
-  document.getElementById('paste-modal-bg').classList.remove('show');
-});
-document.getElementById('paste-modal-bg').addEventListener('click', e => {
-  if (e.target.id === 'paste-modal-bg') {
-    document.getElementById('paste-modal-bg').classList.remove('show');
-  }
-});
-document.getElementById('paste-confirm').addEventListener('click', () => {
-  const ta = document.getElementById('paste-textarea');
-  const type = ta.dataset.targetType || 'resin';
-  const n = addPriorityItems(type, ta.value);
-  if (n > 0) {
-    document.getElementById('paste-modal-bg').classList.remove('show');
-    toast(`Added ${n} priority item${n > 1 ? 's' : ''} to ${type === 'resin' ? 'Resin' : 'FDM'}`);
-  }
 });
 
 // Per-queue search and age filters (delegated by section)
@@ -6721,6 +6820,49 @@ if (state.appMode === 'mobile') {
 } else {
   switchView('queue-resin');
 }
+
+// Wire the FDM queue as a drop target for Priority items dragged from the sidebar.
+(function wireFdmDrop() {
+  const fdmSection = document.getElementById('view-queue-fdm');
+  if (!fdmSection) return;
+  const dropZone = fdmSection.querySelector('[data-queue-container]') || fdmSection;
+  // We use the section itself as the visible target so drops anywhere on the
+  // page count, even if the queue is empty.
+  const visualZone = fdmSection.querySelector('.queue-main') || fdmSection;
+
+  fdmSection.addEventListener('dragover', e => {
+    // Only handle Priority drags (which set application/x-need-id or text/plain "need:")
+    const types = Array.from(e.dataTransfer.types || []);
+    if (!types.includes('application/x-need-id') && !types.includes('text/plain')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    visualZone.classList.add('drop-target-active');
+  });
+  fdmSection.addEventListener('dragleave', e => {
+    if (!fdmSection.contains(e.relatedTarget)) {
+      visualZone.classList.remove('drop-target-active');
+    }
+  });
+  fdmSection.addEventListener('drop', e => {
+    const needId = e.dataTransfer.getData('application/x-need-id');
+    const fallback = e.dataTransfer.getData('text/plain');
+    const isFallbackNeed = fallback && fallback.startsWith('need:');
+    if (!needId && !isFallbackNeed) return; // not a Priority drop
+    e.preventDefault();
+    visualZone.classList.remove('drop-target-active');
+    const id = needId || fallback.slice(5);
+    const need = (state.partsNeeded || []).find(n => n.id === id);
+    if (!need) return;
+    need.placedAt = new Date().toISOString();
+    need.placedQueue = 'fdm';
+    need.placedMachine = null;
+    save();
+    renderSidebarPriority();
+    renderQueue('fdm');
+    renderSidebarCounts();
+    toast(`"${need.partName}" → FDM queue`);
+  });
+})();
 
 // Wire auth UI
 document.getElementById('auth-signin').addEventListener('click', () => {
