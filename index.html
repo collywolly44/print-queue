@@ -3272,17 +3272,7 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="section-title">Load CSV</div>
 
       <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px 18px;margin-bottom:16px;font-size:13px;color:var(--ink-dim);">
-        <strong style="color:var(--ink);">Sync mode</strong> (default): upload each CSV as a complete snapshot of pending orders.
-        Any order that was present before but isn't in the new CSV is treated as shipped — its parts are automatically subtracted from inventory.
-        New orders get added. <br><br>
-        Use <strong>Sync without inventory change</strong> when you've already counted stock manually and just want to update which orders are pending — orders that shipped get removed from the queue but inventory is left exactly as it is.<br><br>
-        Use <strong>Append only</strong> if you're loading partial data and don't want anything removed or changed.
-      </div>
-
-      <div class="import-mode">
-        <button class="filter-chip active" data-import-mode="replace">Sync (full snapshot · detect ships)</button>
-        <button class="filter-chip" data-import-mode="replace-no-inv">Sync without inventory change</button>
-        <button class="filter-chip" data-import-mode="merge">Append only (no ship detection)</button>
+        Upload each CSV as a complete snapshot of pending orders. Any order that was present before but isn't in the new CSV is treated as shipped — its parts are automatically subtracted from inventory. New orders get added to the queues.
       </div>
 
       <div class="import-zone" id="import-zone">
@@ -3296,19 +3286,11 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="section-title">Data Management</div>
       <div class="danger-card" style="margin-bottom:16px;">
         <div class="danger-title" style="color: var(--ink); margin-bottom:8px;">Backup</div>
-        <div class="danger-text">Download a full backup of all orders, parts library, and printed history as JSON, or send it to yourself by email.</div>
+        <div class="danger-text">Download a full backup of all orders, parts library, and printed history as JSON. Save the file somewhere safe (Dropbox, Google Drive, USB).</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
           <button class="btn" id="btn-backup">Download backup</button>
-          <button class="btn" id="btn-share-backup">Share / Send to…</button>
           <button class="btn" id="btn-restore">Restore from backup</button>
           <input type="file" class="file-input" id="restore-input" accept=".json">
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
-          <input type="email" class="search" id="backup-email-input" placeholder="your-email@example.com" style="flex:1;min-width:200px;">
-          <button class="btn" id="btn-email-backup">Email backup</button>
-        </div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.06em;margin-top:8px;">
-          Email opens your mail app with the backup pasted in. For large backups, use Share / Send to… instead (attaches as a file).
         </div>
       </div>
 
@@ -3319,12 +3301,6 @@ body.mode-mobile .mobile-only { display: block; }
         </div>
         <button class="btn" id="btn-show-snapshots">View snapshots</button>
         <div id="snapshot-list" hidden style="margin-top:14px;"></div>
-      </div>
-
-      <div class="danger-card">
-        <div class="danger-title">Danger zone</div>
-        <div class="danger-text">Wipe everything and start fresh. Inventory adjustments happen automatically as you print and as orders ship — there's no separate "printed" state to reset.</div>
-        <button class="btn btn-danger" id="btn-wipe">Wipe all data</button>
       </div>
     </section>
 
@@ -3503,7 +3479,6 @@ const state = {
   invFilter: 'uncounted',
   invLocFilter: 'all',     // 'all' | 'gun_wall' | 'back_room' | 'shipping_side' | 'unset'
   appMode: null,           // 'desktop' | 'mobile' (auto-detected by screen size, override via button)
-  importMode: 'replace',
   invOrderSnapshot: null,  // [partName, ...] frozen sort order for the Inventory page
   libOrderSnapshot: null,  // [sku, ...] frozen sort order for the Parts Library page
 };
@@ -5479,43 +5454,31 @@ function importCSV(text) {
   let shippedCount = 0;
   const shippedSubtractions = {}; // part -> total qty subtracted
 
-  if (state.importMode === 'replace' || state.importMode === 'replace-no-inv') {
-    // The new CSV is the complete snapshot of pending orders.
-    // Anything in state.orders not in newOrders has shipped.
-    // In 'replace' mode we subtract those parts from inventory.
-    // In 'replace-no-inv' mode we DON'T touch inventory (user counted manually).
-    const skipInvChange = state.importMode === 'replace-no-inv';
-    const newIds = new Set(newOrders.map(o => o.id));
-    for (const old of state.orders) {
-      if (newIds.has(old.id)) continue;
-      shippedCount++;
-      if (skipInvChange) continue;  // remove from orders but leave inventory alone
-      const lib = state.library[old.sku];
-      const parts = (lib && lib.parts) ? lib.parts : [];
-      for (const partObj of parts) {
-        const part = (typeof partObj === 'string') ? partObj : partObj.name;
-        if (!part) continue;
-        const partQty = (typeof partObj === 'string') ? 1
-          : Math.max(1, Math.floor(Number(partObj.qty) || 1));
-        const sub = (Number(old.qty) || 0) * partQty;
-        const have = Number(state.inventory[part] || 0);
-        const next = Math.max(0, have - sub);
-        if (next <= 0) delete state.inventory[part];
-        else state.inventory[part] = next;
-        shippedSubtractions[part] = (shippedSubtractions[part] || 0) + sub;
-      }
-    }
-    // Count truly-new orders
-    const existingIds = new Set(state.orders.map(o => o.id));
-    for (const o of newOrders) if (!existingIds.has(o.id)) added++;
-    state.orders = newOrders;
-  } else {
-    // Append mode: just add anything new, never remove or subtract.
-    const existingIds = new Set(state.orders.map(o => o.id));
-    for (const o of newOrders) {
-      if (!existingIds.has(o.id)) { state.orders.push(o); added++; }
+  // The new CSV is the complete snapshot of pending orders.
+  // Anything in state.orders not in newOrders has shipped → subtract its parts from inventory.
+  const newIds = new Set(newOrders.map(o => o.id));
+  for (const old of state.orders) {
+    if (newIds.has(old.id)) continue;
+    shippedCount++;
+    const lib = state.library[old.sku];
+    const parts = (lib && lib.parts) ? lib.parts : [];
+    for (const partObj of parts) {
+      const part = (typeof partObj === 'string') ? partObj : partObj.name;
+      if (!part) continue;
+      const partQty = (typeof partObj === 'string') ? 1
+        : Math.max(1, Math.floor(Number(partObj.qty) || 1));
+      const sub = (Number(old.qty) || 0) * partQty;
+      const have = Number(state.inventory[part] || 0);
+      const next = Math.max(0, have - sub);
+      if (next <= 0) delete state.inventory[part];
+      else state.inventory[part] = next;
+      shippedSubtractions[part] = (shippedSubtractions[part] || 0) + sub;
     }
   }
+  // Count truly-new orders
+  const existingIds = new Set(state.orders.map(o => o.id));
+  for (const o of newOrders) if (!existingIds.has(o.id)) added++;
+  state.orders = newOrders;
 
   // Re-sort orders
   state.orders.sort((a,b) => new Date(a.date) - new Date(b.date));
@@ -5528,17 +5491,10 @@ function importCSV(text) {
   renderSidebarCounts();
 
   // Compose a useful toast: how many added, how many shipped, brief inventory summary
-  let msg = '';
-  if (state.importMode === 'replace') {
-    msg = `Synced: ${added} new · ${shippedCount} shipped`;
-    if (shippedCount > 0) {
-      const subParts = Object.keys(shippedSubtractions).length;
-      msg += ` · −${subParts} part type${subParts !== 1 ? 's' : ''} from inventory`;
-    }
-  } else if (state.importMode === 'replace-no-inv') {
-    msg = `Synced: ${added} new · ${shippedCount} shipped · inventory untouched`;
-  } else {
-    msg = `Imported ${added} new order${added !== 1 ? 's' : ''}`;
+  let msg = `Synced: ${added} new · ${shippedCount} shipped`;
+  if (shippedCount > 0) {
+    const subParts = Object.keys(shippedSubtractions).length;
+    msg += ` · −${subParts} part type${subParts !== 1 ? 's' : ''} from inventory`;
   }
   if (skipped) msg += ` (${skipped} skipped)`;
   toast(msg);
@@ -5625,69 +5581,6 @@ function exportBackup() {
   toast('Backup downloaded');
 }
 
-// Email backup: opens the user's mail app with the JSON in the body.
-// mailto: has a length limit (~2000 chars on some clients), so for large
-// backups we warn the user and suggest the Share button instead.
-function emailBackup(recipient) {
-  const json = JSON.stringify(buildBackupBlob());
-  const filename = backupFilename();
-  const subject = encodeURIComponent(`Print Queue backup · ${new Date().toLocaleDateString()}`);
-  // Email body has a hard size limit on mailto links. iOS/macOS Mail handles
-  // ~10–20 KB fine; beyond that we direct them to Share. Save the JSON to
-  // clipboard as a fallback either way.
-  const bytes = new Blob([json]).size;
-  const MAX_INLINE = 15000;
-
-  // Always copy to clipboard so the user has a backup path even if mailto fails
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(json).catch(() => {});
-  }
-
-  if (bytes > MAX_INLINE) {
-    toast(`Backup is ${Math.round(bytes/1024)} KB — too big for email body. JSON copied to clipboard; paste into your mail. Or use Share / Send to… to attach as a file.`, 'info');
-    // Still open the mail app pre-addressed so user can paste
-    const intro = encodeURIComponent(`Print Queue backup (${Math.round(bytes/1024)} KB).\n\nPaste the JSON from your clipboard below:\n\n`);
-    const to = encodeURIComponent(recipient || '');
-    window.location.href = `mailto:${to}?subject=${subject}&body=${intro}`;
-    return;
-  }
-
-  const body = encodeURIComponent(
-    `Print Queue backup attached below as JSON.\n\nTo restore: open the app, go to Import / Settings, copy this JSON into a .json file, then click "Restore from backup".\n\n--- BEGIN BACKUP ---\n${json}\n--- END BACKUP ---\n`
-  );
-  const to = encodeURIComponent(recipient || '');
-  window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
-  toast('Opening mail app…');
-}
-
-// Use the native Web Share API if available (works great on iOS) to attach the
-// backup as a real file in any sharing target — Mail, Messages, AirDrop, etc.
-async function shareBackup() {
-  const json = JSON.stringify(buildBackupBlob(), null, 2);
-  const filename = backupFilename();
-
-  // Prefer file sharing if supported (iOS Safari supports this)
-  try {
-    const file = new File([json], filename, { type: 'application/json' });
-    const shareData = {
-      files: [file],
-      title: 'Print Queue Backup',
-      text: `Backup from ${new Date().toLocaleString()}`,
-    };
-    if (navigator.canShare && navigator.canShare(shareData) && navigator.share) {
-      await navigator.share(shareData);
-      toast('Backup shared');
-      return;
-    }
-  } catch (e) {
-    // Fall through to download fallback
-    console.warn('Share with file failed:', e);
-  }
-
-  // Fallback: just download it
-  exportBackup();
-  toast('Sharing not supported here — downloaded instead');
-}
 function csvEscape(v) {
   v = String(v ?? '');
   if (/[,"\n\r]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
@@ -6413,14 +6306,6 @@ function handleFile(f) {
   reader.readAsText(f);
 }
 
-document.querySelectorAll('[data-import-mode]').forEach(b => {
-  b.addEventListener('click', () => {
-    document.querySelectorAll('[data-import-mode]').forEach(x => x.classList.remove('active'));
-    b.classList.add('active');
-    state.importMode = b.dataset.importMode;
-  });
-});
-
 // Exports
 document.getElementById('btn-export-library').addEventListener('click', exportLibraryCSV);
 document.getElementById('btn-resort-library').addEventListener('click', () => {
@@ -6429,29 +6314,6 @@ document.getElementById('btn-resort-library').addEventListener('click', () => {
   toast('Parts Library re-sorted by priority');
 });
 document.getElementById('btn-backup').addEventListener('click', exportBackup);
-
-// Remember the user's email between sessions
-const BACKUP_EMAIL_KEY = 'print_queue_backup_email';
-(function initEmailField() {
-  const input = document.getElementById('backup-email-input');
-  if (!input) return;
-  try {
-    const saved = localStorage.getItem(BACKUP_EMAIL_KEY);
-    if (saved) input.value = saved;
-  } catch {}
-  input.addEventListener('change', () => {
-    try { localStorage.setItem(BACKUP_EMAIL_KEY, input.value.trim()); } catch {}
-  });
-})();
-
-document.getElementById('btn-email-backup').addEventListener('click', () => {
-  const input = document.getElementById('backup-email-input');
-  const recipient = input ? input.value.trim() : '';
-  try { localStorage.setItem(BACKUP_EMAIL_KEY, recipient); } catch {}
-  emailBackup(recipient);
-});
-
-document.getElementById('btn-share-backup').addEventListener('click', shareBackup);
 
 // Shared: apply a blob (from file or snapshot) into live state.
 function applyRestoreBlob(blob) {
@@ -6581,25 +6443,6 @@ document.getElementById('btn-show-snapshots').addEventListener('click', () => {
     wrap.hidden = true;
     document.getElementById('btn-show-snapshots').textContent = 'View snapshots';
   }
-});
-
-// Wipe
-document.getElementById('btn-wipe').addEventListener('click', () => {
-  confirmModal({
-    title: 'Wipe all data?',
-    text: 'This deletes orders, library, inventory, counts, priority list, and machine assignments. Cannot be undone unless you have a backup.',
-    onConfirm: () => {
-      state.orders = [];
-      state.library = {};
-      state.inventory = {};
-      state.countedParts = {};
-      state.priority = { resin: [], fdm: [] };
-      state.assignments = {};
-      save();
-      renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
-      toast('All data wiped');
-    },
-  });
 });
 
 // ============================================================
