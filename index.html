@@ -2453,19 +2453,19 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .part-needed-sent-head {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+  font-size: 14px;
   letter-spacing: 0.14em;
   color: var(--ink-faint);
   font-weight: 700;
   text-transform: uppercase;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
-.part-needed-sent-list { display: flex; flex-direction: column; gap: 6px; }
+.part-needed-sent-list { display: flex; flex-direction: column; gap: 8px; }
 .part-needed-sent-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 12px;
+  padding: 14px 14px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -2477,25 +2477,26 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .pn-sent-name {
   flex: 1;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--ink);
   word-break: break-word;
 }
 .pn-sent-meta {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-faint);
   margin-left: 10px;
   white-space: nowrap;
+  font-weight: 700;
 }
 .pn-sent-meta.resolved { color: var(--green); }
 .part-needed-sent-empty {
   text-align: center;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--ink-faint);
-  padding: 12px;
+  padding: 16px;
 }
 @media (max-width: 768px) {
   .cloud-status {
@@ -2560,10 +2561,11 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .wt-progress-text {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 15px;
   color: var(--ink-faint);
   letter-spacing: 0.08em;
   text-align: right;
+  font-weight: 700;
 }
 
 .wt-card {
@@ -2591,7 +2593,7 @@ body.mode-mobile .mobile-only { display: block; }
 .wt-loc-picker[hidden] { display: none; }
 .wt-loc-title {
   font-family: 'Bebas Neue', sans-serif;
-  font-size: 36px;
+  font-size: 48px;
   letter-spacing: 0.04em;
   color: var(--ink);
   margin-bottom: 8px;
@@ -2599,12 +2601,13 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .wt-loc-sub {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 14px;
   color: var(--ink-faint);
   letter-spacing: 0.06em;
   text-align: center;
   margin-bottom: 28px;
-  max-width: 340px;
+  max-width: 420px;
+  line-height: 1.4;
 }
 .wt-loc-grid {
   display: grid;
@@ -2617,11 +2620,11 @@ body.mode-mobile .mobile-only { display: block; }
   background: var(--panel);
   border: 2px solid var(--line-bright);
   border-radius: 8px;
-  padding: 24px 16px;
+  padding: 28px 16px;
   cursor: pointer;
   transition: all 0.12s;
   text-align: center;
-  min-height: 100px;
+  min-height: 120px;
 }
 .wt-loc-card:hover, .wt-loc-card:active {
   border-color: var(--amber);
@@ -2633,16 +2636,17 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .wt-loc-name {
   font-family: 'Bebas Neue', sans-serif;
-  font-size: 22px;
+  font-size: 30px;
   letter-spacing: 0.04em;
   color: var(--ink);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .wt-loc-count {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 15px;
   color: var(--amber);
   letter-spacing: 0.06em;
+  font-weight: 700;
 }
 .wt-loc-count.empty {
   color: var(--ink-faint);
@@ -2650,11 +2654,11 @@ body.mode-mobile .mobile-only { display: block; }
 
 .wt-loc-btn {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  padding: 8px 12px;
+  padding: 10px 14px;
   background: var(--panel);
   border: 1px solid var(--line-bright);
   color: var(--ink-dim);
@@ -2668,15 +2672,15 @@ body.mode-mobile .mobile-only { display: block; }
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 .wt-status-badge {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  padding: 5px 10px;
+  padding: 6px 12px;
   border-radius: 3px;
   background: rgba(232,93,74,0.18);
   color: var(--red);
@@ -2687,45 +2691,48 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .wt-demand {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 15px;
   color: var(--ink-dim);
+  font-weight: 700;
 }
 .wt-part-name {
   font-family: 'Bebas Neue', sans-serif;
-  font-size: 42px;
+  font-size: 56px;
   letter-spacing: 0.03em;
   color: var(--ink);
   line-height: 1.05;
-  margin-bottom: 14px;
+  margin-bottom: 18px;
   word-break: break-word;
 }
 .wt-skus-label {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.18em;
   color: var(--ink-faint);
   text-transform: uppercase;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  font-weight: 700;
 }
 .wt-skus {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 14px;
   color: var(--ink-dim);
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 10px 12px;
-  max-height: 90px;
+  padding: 12px 14px;
+  max-height: 110px;
   overflow-y: auto;
-  margin-bottom: 18px;
-  line-height: 1.45;
+  margin-bottom: 22px;
+  line-height: 1.5;
 }
 .wt-skus .wt-sku-tag {
   display: inline-block;
-  padding: 1px 7px;
+  padding: 2px 8px;
   background: rgba(255,255,255,0.04);
   border-radius: 2px;
   margin: 2px 4px 2px 0;
+  font-size: 14px;
 }
 
 .wt-input-row {
@@ -2735,22 +2742,23 @@ body.mode-mobile .mobile-only { display: block; }
   background: var(--panel);
   border: 2px solid var(--amber);
   border-radius: 6px;
-  padding: 14px 18px;
+  padding: 18px 22px;
   margin-bottom: 14px;
 }
 .wt-input-label {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: 16px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-faint);
+  font-weight: 700;
 }
 .wt-input {
   background: transparent;
   border: none;
   color: var(--amber);
   font-family: 'Bebas Neue', sans-serif;
-  font-size: 48px;
+  font-size: 72px;
   letter-spacing: 0.04em;
   text-align: right;
   width: 50%;
@@ -2770,12 +2778,12 @@ body.mode-mobile .mobile-only { display: block; }
   border: 1px solid var(--line-bright);
   color: var(--ink);
   font-family: 'Bebas Neue', sans-serif;
-  font-size: 32px;
+  font-size: 44px;
   letter-spacing: 0.04em;
-  padding: 18px 0;
+  padding: 22px 0;
   border-radius: 6px;
   cursor: pointer;
-  min-height: 64px;
+  min-height: 76px;
   touch-action: manipulation;
   user-select: none;
 }
@@ -2785,7 +2793,7 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .wt-clear, .wt-back {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--ink-dim);
@@ -2798,17 +2806,17 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .wt-nav-btn {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  padding: 16px 8px;
+  padding: 18px 8px;
   border-radius: 6px;
   border: 1px solid var(--line-bright);
   background: var(--panel);
   color: var(--ink);
   cursor: pointer;
-  min-height: 56px;
+  min-height: 64px;
   touch-action: manipulation;
 }
 .wt-nav-btn:active { background: var(--line); }
@@ -2821,11 +2829,12 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .wt-save:active { background: var(--amber-bright); }
 
-/* Adjust for mobile */
+/* Adjust for very small phones */
 @media (max-width: 480px) {
-  .wt-part-name { font-size: 36px; }
-  .wt-input { font-size: 42px; }
-  .wt-num { font-size: 28px; min-height: 56px; padding: 14px 0; }
+  .wt-part-name { font-size: 44px; }
+  .wt-input { font-size: 60px; }
+  .wt-num { font-size: 38px; min-height: 66px; padding: 18px 0; }
+  .wt-nav-btn { font-size: 13px; padding: 14px 6px; min-height: 56px; }
 }
 
 .modal-bg {
