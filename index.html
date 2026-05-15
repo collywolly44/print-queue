@@ -3274,11 +3274,14 @@ body.mode-mobile .mobile-only { display: block; }
       <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px 18px;margin-bottom:16px;font-size:13px;color:var(--ink-dim);">
         <strong style="color:var(--ink);">Sync mode</strong> (default): upload each CSV as a complete snapshot of pending orders.
         Any order that was present before but isn't in the new CSV is treated as shipped — its parts are automatically subtracted from inventory.
-        New orders get added. Use <strong>Append only</strong> if you're loading partial data and don't want anything subtracted.
+        New orders get added. <br><br>
+        Use <strong>Sync without inventory change</strong> when you've already counted stock manually and just want to update which orders are pending — orders that shipped get removed from the queue but inventory is left exactly as it is.<br><br>
+        Use <strong>Append only</strong> if you're loading partial data and don't want anything removed or changed.
       </div>
 
       <div class="import-mode">
         <button class="filter-chip active" data-import-mode="replace">Sync (full snapshot · detect ships)</button>
+        <button class="filter-chip" data-import-mode="replace-no-inv">Sync without inventory change</button>
         <button class="filter-chip" data-import-mode="merge">Append only (no ship detection)</button>
       </div>
 
@@ -5476,13 +5479,17 @@ function importCSV(text) {
   let shippedCount = 0;
   const shippedSubtractions = {}; // part -> total qty subtracted
 
-  if (state.importMode === 'replace') {
+  if (state.importMode === 'replace' || state.importMode === 'replace-no-inv') {
     // The new CSV is the complete snapshot of pending orders.
-    // Anything in state.orders not in newOrders has shipped → subtract its parts from inventory.
+    // Anything in state.orders not in newOrders has shipped.
+    // In 'replace' mode we subtract those parts from inventory.
+    // In 'replace-no-inv' mode we DON'T touch inventory (user counted manually).
+    const skipInvChange = state.importMode === 'replace-no-inv';
     const newIds = new Set(newOrders.map(o => o.id));
     for (const old of state.orders) {
       if (newIds.has(old.id)) continue;
       shippedCount++;
+      if (skipInvChange) continue;  // remove from orders but leave inventory alone
       const lib = state.library[old.sku];
       const parts = (lib && lib.parts) ? lib.parts : [];
       for (const partObj of parts) {
@@ -5528,6 +5535,8 @@ function importCSV(text) {
       const subParts = Object.keys(shippedSubtractions).length;
       msg += ` · −${subParts} part type${subParts !== 1 ? 's' : ''} from inventory`;
     }
+  } else if (state.importMode === 'replace-no-inv') {
+    msg = `Synced: ${added} new · ${shippedCount} shipped · inventory untouched`;
   } else {
     msg = `Imported ${added} new order${added !== 1 ? 's' : ''}`;
   }
