@@ -816,23 +816,21 @@ body {
 .priority-row .pcell-action { justify-content: center; }
 
 /* Top 10 block */
-/* Queue layout: main work area + right sidebar */
+/* Queue layout: main work area on top, stats sidebar always below.
+   This avoids the stats panel ever covering the rightmost kanban column. */
 .queue-layout {
-  display: grid;
-  grid-template-columns: 1fr 280px;
+  display: flex;
+  flex-direction: column;
   gap: 20px;
-  align-items: start;
 }
 .queue-main { min-width: 0; }
 .queue-sidebar {
-  position: sticky;
-  top: 24px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   gap: 16px;
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
 }
+.queue-sidebar > * { flex: 1 1 320px; }
 
 /* Vertical stat stack for sidebar */
 .stats.stats-vertical {
@@ -901,19 +899,6 @@ body {
 .top10-block.top10-sidebar .top10-empty {
   padding: 14px 10px;
   font-size: 10px;
-}
-
-@media (max-width: 1500px) {
-  .queue-layout {
-    grid-template-columns: 1fr;
-  }
-  .queue-sidebar {
-    position: static;
-    max-height: none;
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-  .queue-sidebar > * { flex: 1 1 320px; }
 }
 
 /* ============================================================
@@ -1620,11 +1605,6 @@ body {
   background: var(--panel) !important;
   color: var(--ink) !important;
 }
-.lib-part-actions {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
 .lib-part-del {
   width: 36px;
   height: 36px;
@@ -1635,33 +1615,16 @@ body {
   font-weight: 700;
   padding: 0 !important;
   line-height: 1;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  color: var(--ink-dim);
-  border-radius: 3px;
-  cursor: pointer;
 }
-.lib-part-del:hover {
-  border-color: var(--red);
-  color: var(--red);
-}
-.lib-part-del-all {
-  height: 36px;
-  padding: 0 10px !important;
-  font-size: 11px;
+.inv-delete-btn {
+  border: 1px solid var(--red) !important;
+  color: var(--red) !important;
+  background: transparent !important;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  background: var(--panel);
-  border: 1px solid var(--red);
-  color: var(--red);
-  border-radius: 3px;
-  cursor: pointer;
-  font-family: 'JetBrains Mono', monospace;
-  white-space: nowrap;
 }
-.lib-part-del-all:hover {
-  background: var(--red);
-  color: var(--bg);
+.inv-delete-btn:hover {
+  background: var(--red) !important;
+  color: var(--bg) !important;
 }
 
 .lib-card-foot {
@@ -4541,10 +4504,7 @@ function renderLibrary() {
               <span class="lib-yield-label">Plate yield</span>
               <input type="number" class="lib-input lib-part-yield" min="1" step="1" value="${py}">
             </div>
-            <div class="lib-part-actions">
-              <button class="btn btn-sm lib-part-del" title="Remove from this SKU only">×</button>
-              <button class="btn btn-sm lib-part-del-all" title="Delete this part everywhere (all SKUs + inventory)">⌫ All</button>
-            </div>
+            <button class="btn btn-sm btn-danger lib-part-del" title="Remove part">×</button>
           </div>`;
       });
     }
@@ -4625,7 +4585,6 @@ function wireLibraryCards(container) {
       const printerWrap   = prow.querySelector('.lib-printer-wrap');
       const locationInput = prow.querySelector('.lib-part-location');
       const delBtn        = prow.querySelector('.lib-part-del');
-      const delAllBtn     = prow.querySelector('.lib-part-del-all');
       const typeBtns      = prow.querySelectorAll('.lib-type-btn');
       const acList        = prow.querySelector('.lib-autocomplete-list');
 
@@ -4897,59 +4856,6 @@ function wireLibraryCards(container) {
         renderSidebarCounts();
         toast(`Removed part from ${sku}`);
       });
-
-      delAllBtn.addEventListener('click', () => {
-        const partName = nameInput.value.trim();
-        if (!partName) {
-          // No name to match — just remove this row from this SKU
-          const lib = ensureLibEntry();
-          lib.parts.splice(partIdx, 1);
-          save();
-          renderLibrary();
-          renderSidebarCounts();
-          return;
-        }
-        // Find every SKU that uses this part name and count them
-        let skusUsing = 0;
-        for (const otherSku of Object.keys(state.library)) {
-          const otherLib = state.library[otherSku];
-          if (!otherLib || !Array.isArray(otherLib.parts)) continue;
-          for (const p of otherLib.parts) {
-            const pname = (typeof p === 'string') ? p : (p && p.name);
-            if (pname === partName) { skusUsing++; break; }
-          }
-        }
-        const inStock = Number(state.inventory[partName] || 0);
-        confirmModal({
-          title: `Delete "${partName}" everywhere?`,
-          text: `This removes the part from ${skusUsing} SKU${skusUsing === 1 ? '' : 's'} and deletes its inventory entry (current stock: ${inStock}). Cannot be undone except from a backup or snapshot.`,
-          onConfirm: () => {
-            // Remove the part from every SKU's parts list
-            for (const otherSku of Object.keys(state.library)) {
-              const otherLib = state.library[otherSku];
-              if (!otherLib || !Array.isArray(otherLib.parts)) continue;
-              otherLib.parts = otherLib.parts.filter(p => {
-                const pname = (typeof p === 'string') ? p : (p && p.name);
-                return pname !== partName;
-              });
-            }
-            // Strip inventory + location + counted flag
-            delete state.inventory[partName];
-            delete state.countedParts[partName];
-            if (state.partLocations) delete state.partLocations[partName];
-            // Resolve any partsNeeded entries pointing at this name
-            if (Array.isArray(state.partsNeeded)) {
-              state.partsNeeded = state.partsNeeded.filter(n => n.partName !== partName);
-            }
-            save();
-            renderLibrary();
-            renderInventory();
-            renderQueue();
-            renderSidebarCounts();
-            toast(`Deleted "${partName}" from ${skusUsing} SKU${skusUsing === 1 ? '' : 's'}`);
-          },
-        });
-      });
     });
 
     // Add part button
@@ -5175,7 +5081,7 @@ function renderInventory() {
 
   let html = '<div class="lib-table">';
   html += `
-    <div class="lib-row lib-header" style="grid-template-columns: 2fr 110px 110px 110px 110px 110px 110px;">
+    <div class="lib-row lib-header" style="grid-template-columns: 2fr 110px 110px 110px 110px 110px 130px 80px;">
       <div class="lib-cell">Part</div>
       <div class="lib-cell">Location</div>
       <div class="lib-cell">Stock</div>
@@ -5183,6 +5089,7 @@ function renderInventory() {
       <div class="lib-cell">Demand</div>
       <div class="lib-cell">Status</div>
       <div class="lib-cell">Actions</div>
+      <div class="lib-cell"></div>
     </div>`;
   filtered.forEach(r => {
     const covered = r.demand === 0
@@ -5220,7 +5127,7 @@ function renderInventory() {
       .map(l => `<option value="${l}"${ploc === l ? ' selected' : ''}>${LOCATION_LABELS[l]}</option>`)
       .join('');
     html += `
-      <div class="lib-row" data-part="${escapeAttr(r.part)}"${rowAttr} style="grid-template-columns: 2fr 110px 110px 110px 110px 110px 110px;">
+      <div class="lib-row" data-part="${escapeAttr(r.part)}"${rowAttr} style="grid-template-columns: 2fr 110px 110px 110px 110px 110px 130px 80px;">
         <div class="lib-cell qcell-part" style="font-weight:600;">${escapeHtml(r.part)}</div>
         <div class="lib-cell">
           <select class="lib-input inv-location">
@@ -5243,6 +5150,9 @@ function renderInventory() {
           <button class="btn btn-sm" data-step="-1">−1</button>
           <button class="btn btn-sm" data-step="1">+1</button>
           ${r.counted ? `<button class="btn btn-sm" data-action="uncount" title="Mark as uncounted">Reset</button>` : ''}
+        </div>
+        <div class="lib-cell">
+          <button class="btn btn-sm inv-delete-btn" data-action="delete-everywhere" title="Delete this part from all SKUs and inventory">Delete</button>
         </div>
       </div>`;
   });
@@ -5302,6 +5212,51 @@ function renderInventory() {
         renderInventory();
         renderQueue();
         toast(`Marked "${part}" as uncounted`);
+      });
+    }
+    // Per-row "Delete part everywhere"
+    const delBtn = row.querySelector('[data-action="delete-everywhere"]');
+    if (delBtn) {
+      delBtn.addEventListener('click', () => {
+        // Find every SKU that uses this part name and count them
+        let skusUsing = 0;
+        for (const sku of Object.keys(state.library)) {
+          const lib = state.library[sku];
+          if (!lib || !Array.isArray(lib.parts)) continue;
+          for (const p of lib.parts) {
+            const pname = (typeof p === 'string') ? p : (p && p.name);
+            if (pname === part) { skusUsing++; break; }
+          }
+        }
+        const inStock = Number(state.inventory[part] || 0);
+        confirmModal({
+          title: `Delete "${part}"?`,
+          text: `This removes the part from ${skusUsing} SKU${skusUsing === 1 ? '' : 's'} and deletes its inventory entry (current stock: ${inStock}). Cannot be undone except from a backup or snapshot.`,
+          onConfirm: () => {
+            // Remove from every SKU's parts list
+            for (const sku of Object.keys(state.library)) {
+              const lib = state.library[sku];
+              if (!lib || !Array.isArray(lib.parts)) continue;
+              lib.parts = lib.parts.filter(p => {
+                const pname = (typeof p === 'string') ? p : (p && p.name);
+                return pname !== part;
+              });
+            }
+            // Strip inventory, location, counted flag, and any pending Part Needed
+            delete state.inventory[part];
+            delete state.countedParts[part];
+            if (state.partLocations) delete state.partLocations[part];
+            if (Array.isArray(state.partsNeeded)) {
+              state.partsNeeded = state.partsNeeded.filter(n => n.partName !== part);
+            }
+            save();
+            renderLibrary();
+            renderInventory();
+            renderQueue();
+            renderSidebarCounts();
+            toast(`Deleted "${part}" from ${skusUsing} SKU${skusUsing === 1 ? '' : 's'}`);
+          },
+        });
       });
     }
   });
