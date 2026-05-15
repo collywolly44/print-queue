@@ -903,7 +903,7 @@ body {
   font-size: 10px;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1500px) {
   .queue-layout {
     grid-template-columns: 1fr;
   }
@@ -1620,6 +1620,11 @@ body {
   background: var(--panel) !important;
   color: var(--ink) !important;
 }
+.lib-part-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
 .lib-part-del {
   width: 36px;
   height: 36px;
@@ -1630,6 +1635,33 @@ body {
   font-weight: 700;
   padding: 0 !important;
   line-height: 1;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.lib-part-del:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.lib-part-del-all {
+  height: 36px;
+  padding: 0 10px !important;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: var(--panel);
+  border: 1px solid var(--red);
+  color: var(--red);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+}
+.lib-part-del-all:hover {
+  background: var(--red);
+  color: var(--bg);
 }
 
 .lib-card-foot {
@@ -2834,10 +2866,25 @@ body.mode-mobile .mobile-only { display: block; }
 
 /* Adjust for very small phones */
 @media (max-width: 480px) {
-  .wt-part-name { font-size: 44px; }
-  .wt-input { font-size: 60px; }
-  .wt-num { font-size: 38px; min-height: 66px; padding: 18px 0; }
-  .wt-nav-btn { font-size: 13px; padding: 14px 6px; min-height: 56px; }
+  /* The Walk Through overlay needs to fit on a phone without scrolling so
+     Save → Next stays in view. Aggressively compact every element. */
+  .wt-overlay { padding: 14px 12px 18px !important; }
+  .wt-progress-text { font-size: 12px; }
+  .wt-part-name { font-size: 32px; margin-bottom: 10px; line-height: 1.05; }
+  .wt-status-row { margin-bottom: 8px; }
+  .wt-status-badge { font-size: 11px; padding: 4px 8px; }
+  .wt-demand { font-size: 12px; }
+  .wt-skus-label { font-size: 10px; margin-bottom: 4px; }
+  .wt-skus { font-size: 12px; padding: 8px 10px; max-height: 70px; margin-bottom: 12px; }
+  .wt-skus .wt-sku-tag { font-size: 12px; }
+  .wt-input-row { padding: 10px 14px; margin-bottom: 10px; }
+  .wt-input-label { font-size: 13px; }
+  .wt-input { font-size: 48px; }
+  .wt-numpad { gap: 6px; margin-bottom: 10px; }
+  .wt-num { font-size: 30px; min-height: 52px; padding: 10px 0; }
+  .wt-clear, .wt-back { font-size: 15px; }
+  .wt-nav-btn { font-size: 13px; padding: 12px 6px; min-height: 50px; }
+  .wt-loc-btn { font-size: 11px; padding: 8px 10px; }
 }
 
 .modal-bg {
@@ -4494,7 +4541,10 @@ function renderLibrary() {
               <span class="lib-yield-label">Plate yield</span>
               <input type="number" class="lib-input lib-part-yield" min="1" step="1" value="${py}">
             </div>
-            <button class="btn btn-sm btn-danger lib-part-del" title="Remove part">×</button>
+            <div class="lib-part-actions">
+              <button class="btn btn-sm lib-part-del" title="Remove from this SKU only">×</button>
+              <button class="btn btn-sm lib-part-del-all" title="Delete this part everywhere (all SKUs + inventory)">⌫ All</button>
+            </div>
           </div>`;
       });
     }
@@ -4575,6 +4625,7 @@ function wireLibraryCards(container) {
       const printerWrap   = prow.querySelector('.lib-printer-wrap');
       const locationInput = prow.querySelector('.lib-part-location');
       const delBtn        = prow.querySelector('.lib-part-del');
+      const delAllBtn     = prow.querySelector('.lib-part-del-all');
       const typeBtns      = prow.querySelectorAll('.lib-type-btn');
       const acList        = prow.querySelector('.lib-autocomplete-list');
 
@@ -4845,6 +4896,59 @@ function wireLibraryCards(container) {
         renderLibrary();
         renderSidebarCounts();
         toast(`Removed part from ${sku}`);
+      });
+
+      delAllBtn.addEventListener('click', () => {
+        const partName = nameInput.value.trim();
+        if (!partName) {
+          // No name to match — just remove this row from this SKU
+          const lib = ensureLibEntry();
+          lib.parts.splice(partIdx, 1);
+          save();
+          renderLibrary();
+          renderSidebarCounts();
+          return;
+        }
+        // Find every SKU that uses this part name and count them
+        let skusUsing = 0;
+        for (const otherSku of Object.keys(state.library)) {
+          const otherLib = state.library[otherSku];
+          if (!otherLib || !Array.isArray(otherLib.parts)) continue;
+          for (const p of otherLib.parts) {
+            const pname = (typeof p === 'string') ? p : (p && p.name);
+            if (pname === partName) { skusUsing++; break; }
+          }
+        }
+        const inStock = Number(state.inventory[partName] || 0);
+        confirmModal({
+          title: `Delete "${partName}" everywhere?`,
+          text: `This removes the part from ${skusUsing} SKU${skusUsing === 1 ? '' : 's'} and deletes its inventory entry (current stock: ${inStock}). Cannot be undone except from a backup or snapshot.`,
+          onConfirm: () => {
+            // Remove the part from every SKU's parts list
+            for (const otherSku of Object.keys(state.library)) {
+              const otherLib = state.library[otherSku];
+              if (!otherLib || !Array.isArray(otherLib.parts)) continue;
+              otherLib.parts = otherLib.parts.filter(p => {
+                const pname = (typeof p === 'string') ? p : (p && p.name);
+                return pname !== partName;
+              });
+            }
+            // Strip inventory + location + counted flag
+            delete state.inventory[partName];
+            delete state.countedParts[partName];
+            if (state.partLocations) delete state.partLocations[partName];
+            // Resolve any partsNeeded entries pointing at this name
+            if (Array.isArray(state.partsNeeded)) {
+              state.partsNeeded = state.partsNeeded.filter(n => n.partName !== partName);
+            }
+            save();
+            renderLibrary();
+            renderInventory();
+            renderQueue();
+            renderSidebarCounts();
+            toast(`Deleted "${partName}" from ${skusUsing} SKU${skusUsing === 1 ? '' : 's'}`);
+          },
+        });
       });
     });
 
