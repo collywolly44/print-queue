@@ -2130,6 +2130,26 @@ body.mode-mobile .sidebar-priority { display: none; }
   input, textarea, select { max-width: 100%; box-sizing: border-box; }
 }
 
+/* iOS Safari keyboard-appearance fixes (covers iPad portrait at ~810px too).
+   The "freeze on input focus" bug on iPad is mitigated by:
+   - font-size:16px on all inputs (prevents auto-zoom on focus, which can
+     freeze Safari when combined with fixed/overlay elements)
+   - -webkit-text-size-adjust: 100% so iOS doesn't try to scale text mid-render
+   - touch-action: manipulation on the inputs themselves to short-circuit
+     double-tap-to-zoom detection that adds 300ms of input lag */
+@media (max-width: 1024px) {
+  html { -webkit-text-size-adjust: 100%; }
+  input, textarea {
+    font-size: 16px !important;
+    touch-action: manipulation;
+  }
+  /* The "search any part" + part-needed inputs explicitly */
+  .manual-stock-search, .part-needed-input {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
 /* Mobile: compact the cloud-status badge so it doesn't crowd the brand title */
 @media (max-width: 768px) {
   .cloud-status {
@@ -3491,6 +3511,7 @@ function save() {
   // The library may have changed; drop the cached parts catalog so the next
   // autocomplete read is fresh.
   invalidatePartsCatalog();
+  if (typeof MS !== 'undefined' && MS.invalidateCache) MS.invalidateCache();
   // Push to cloud if we're connected and signed in.
   // Debounced so a burst of edits collapses into one cloud write.
   scheduleCloudPush(blob);
@@ -6171,8 +6192,16 @@ const MS = {
     const entry = document.getElementById('manual-stock-entry');
     if (!input || !results || !entry) return;
 
+    // Use 'input' for typing changes (already cheap with the cache).
+    // Use a deferred focus handler so iOS Safari can finish bringing up the
+    // keyboard before we render results — doing DOM work during the focus event
+    // can lock Safari on iPad.
     input.addEventListener('input', () => this.refreshResults());
-    input.addEventListener('focus', () => this.refreshResults());
+    input.addEventListener('focus', () => {
+      // setTimeout 0 yields to the browser so the keyboard animation gets a
+      // frame to itself before we re-render the results list.
+      setTimeout(() => this.refreshResults(), 0);
+    });
 
     results.addEventListener('click', (e) => {
       const item = e.target.closest('.ms-result-item');
@@ -6188,14 +6217,20 @@ const MS = {
   },
 
   // Build a search list of all parts known to the app (library parts + inventory keys).
+  // Cached for performance — iOS Safari struggles to filter/sort ~900 entries
+  // on every keystroke while the keyboard is animating. Cache is invalidated
+  // by save() via invalidateMsCache().
   allParts() {
+    if (this._cache) return this._cache;
     const set = new Set();
     for (const sku of Object.keys(state.library)) {
       partNames(state.library[sku]).forEach(p => set.add(p));
     }
     for (const p of Object.keys(state.inventory || {})) set.add(p);
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    this._cache = Array.from(set).sort((a, b) => a.localeCompare(b));
+    return this._cache;
   },
+  invalidateCache() { this._cache = null; },
 
   refreshResults() {
     const input = document.getElementById('manual-stock-search');
