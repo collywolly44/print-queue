@@ -4733,15 +4733,74 @@ function wireLibraryCards(container) {
           setTimeout(() => renderLibrary(), 360);
           return;
         }
+        // Capture the old part shape so we know what (if anything) changed in
+        // a way that should propagate to other SKUs.
+        const before = lib.parts[partIdx];
+        const beforeShape = (typeof before === 'string')
+          ? { name: before, yield: 1, type: 'resin', qty: 1, printer: '' }
+          : {
+              name: before.name || '',
+              yield: Number(before.yield) || 1,
+              type: before.type === 'fdm' ? 'fdm' : 'resin',
+              qty: Math.max(1, Math.floor(Number(before.qty) || 1)),
+              printer: before.printer || '',
+            };
+
         const next = { name: newName, yield: newYield, qty: newQty, type: newType };
         // Printer only applies to resin parts; ignored otherwise
+        let newPrinter = '';
         if (newType === 'resin') {
           const printerVal = printerInput ? printerInput.value : '';
           if (printerVal && MACHINES.includes(printerVal) && printerVal !== 'unassigned') {
             next.printer = printerVal;
+            newPrinter = printerVal;
           }
         }
         lib.parts[partIdx] = next;
+
+        // Cascade yield/type/printer to all OTHER SKUs that use the same part name.
+        // Qty stays per-SKU (genuinely differs between products). Renames also
+        // do NOT propagate (too risky for typos).
+        if (newName === beforeShape.name) {  // skip cascade on rename
+          const yieldChanged   = newYield   !== beforeShape.yield;
+          const typeChanged    = newType    !== beforeShape.type;
+          const printerChanged = newPrinter !== beforeShape.printer;
+          if (yieldChanged || typeChanged || printerChanged) {
+            let touchedSkus = 0;
+            for (const otherSku of Object.keys(state.library)) {
+              if (otherSku === sku) continue;
+              const otherLib = state.library[otherSku];
+              if (!otherLib || !Array.isArray(otherLib.parts)) continue;
+              let didChange = false;
+              otherLib.parts = otherLib.parts.map(p => {
+                const pname = (typeof p === 'string') ? p : (p && p.name);
+                if (pname !== newName) return p;
+                // Normalize to an object form on the fly
+                const obj = (typeof p === 'string')
+                  ? { name: p, yield: 1, qty: 1, type: 'resin' }
+                  : { ...p };
+                if (yieldChanged)   obj.yield = newYield;
+                if (typeChanged)    obj.type  = newType;
+                if (printerChanged) {
+                  if (newPrinter) obj.printer = newPrinter;
+                  else            delete obj.printer;
+                }
+                // If type flipped to FDM, drop any stale printer
+                if (obj.type === 'fdm') delete obj.printer;
+                didChange = true;
+                return obj;
+              });
+              if (didChange) touchedSkus++;
+            }
+            if (touchedSkus > 0) {
+              scheduleSave(`Saved ${sku} · synced to ${touchedSkus} other SKU${touchedSkus === 1 ? '' : 's'}`);
+              // Refresh the library so the other SKU cards on screen reflect
+              // the cascaded values. Slightly longer delay so the save lands first.
+              setTimeout(() => renderLibrary(), 500);
+              return;
+            }
+          }
+        }
         scheduleSave(`Saved ${sku}`);
       };
 
