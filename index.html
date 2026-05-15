@@ -2023,6 +2023,44 @@ body {
 /* Mobile mode: hide nav items not marked mobile-friendly */
 body.mode-mobile .nav-item[data-mobile="hide"] { display: none; }
 body.mode-mobile .view-mobile-hidden { display: none !important; }
+
+/* "Part Needed" highlight on queue rows and kanban cards */
+.queue-row-need {
+  background: linear-gradient(90deg, rgba(240,168,48,0.10), rgba(240,168,48,0.02) 70%) !important;
+  border-left: 4px solid var(--amber) !important;
+}
+.queue-row-need:hover { background: rgba(240,168,48,0.16) !important; }
+.queue-need-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--amber);
+  color: #1a1408;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border-radius: 3px;
+}
+.kanban-card-need {
+  background: rgba(240,168,48,0.08);
+  border-color: var(--amber);
+  border-left: 4px solid var(--amber);
+}
+.kanban-card-need:hover { border-color: var(--amber-bright); }
+.kanban-card-need-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--amber);
+  color: #1a1408;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border-radius: 3px;
+  margin-bottom: 6px;
+}
 /* .mobile-only is the inverse — hidden on desktop, shown on mobile */
 .mobile-only { display: none; }
 body.mode-mobile .mobile-only { display: block; }
@@ -2059,6 +2097,167 @@ body.mode-mobile .mobile-only { display: block; }
   letter-spacing: 0.06em;
   min-height: 72px;
   font-weight: 700;
+}
+
+/* Part Needed box (mobile inventory landing) */
+.part-needed-box {
+  background: var(--panel);
+  border: 1px solid var(--line-bright);
+  border-left: 4px solid var(--amber);
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 18px;
+  text-align: left;
+}
+.part-needed-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--amber);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.part-needed-input-wrap {
+  position: relative;
+  display: flex;
+  gap: 6px;
+}
+.part-needed-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--ink);
+  font-size: 16px; /* prevents iOS auto-zoom */
+  padding: 14px 12px;
+  border-radius: 4px;
+  font-family: 'Inter', sans-serif;
+  min-width: 0;
+}
+.part-needed-input:focus { outline: none; border-color: var(--amber); }
+.part-needed-add {
+  background: var(--amber);
+  color: #1a1408;
+  border: none;
+  padding: 0 18px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.part-needed-add:disabled {
+  background: var(--line);
+  color: var(--ink-faint);
+  cursor: not-allowed;
+}
+.part-needed-add:not(:disabled):active { background: var(--amber-bright); }
+.part-needed-autocomplete {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--line-bright);
+  border-radius: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 30;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.part-needed-autocomplete .pn-ac-item {
+  padding: 12px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+.part-needed-autocomplete .pn-ac-item:last-child { border-bottom: none; }
+.part-needed-autocomplete .pn-ac-item:active {
+  background: rgba(240,168,48,0.15);
+}
+.part-needed-autocomplete .pn-ac-item .pn-ac-type {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  margin-left: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.part-needed-autocomplete .pn-ac-empty {
+  padding: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.part-needed-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  margin-top: 10px;
+}
+
+/* Sent Today list */
+.part-needed-sent {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 14px;
+  margin-bottom: 18px;
+  text-align: left;
+}
+.part-needed-sent-head {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.part-needed-sent-list { display: flex; flex-direction: column; gap: 6px; }
+.part-needed-sent-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.part-needed-sent-item.resolved {
+  opacity: 0.65;
+  border-color: var(--green);
+  border-left: 3px solid var(--green);
+}
+.pn-sent-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  word-break: break-word;
+}
+.pn-sent-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  margin-left: 10px;
+  white-space: nowrap;
+}
+.pn-sent-meta.resolved { color: var(--green); }
+.part-needed-sent-empty {
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-faint);
+  padding: 12px;
 }
 @media (max-width: 768px) {
   .cloud-status {
@@ -2710,11 +2909,29 @@ body.mode-mobile .mobile-only { display: block; }
 
     <!-- =========== INVENTORY VIEW =========== -->
     <section id="view-inventory" class="hidden">
-      <!-- Mobile-only landing: just one giant Walk Through button -->
+      <!-- Mobile-only landing -->
       <div class="mobile-only inv-mobile-landing">
-        <div class="inv-mobile-icon">📦</div>
-        <h1 class="inv-mobile-title">Inventory</h1>
-        <p class="inv-mobile-sub">Tap below to walk through and count parts.</p>
+        <div class="inv-mobile-title">Inventory</div>
+
+        <!-- Part Needed input -->
+        <div class="part-needed-box">
+          <div class="part-needed-label">Part needed</div>
+          <div class="part-needed-input-wrap">
+            <input type="text" id="part-needed-input" class="part-needed-input" placeholder="Start typing a part name…" autocomplete="off">
+            <button id="part-needed-add" class="part-needed-add" disabled>Send</button>
+            <div class="part-needed-autocomplete" id="part-needed-autocomplete" hidden></div>
+          </div>
+          <div class="part-needed-hint">Adds the part to the top of both queues so it gets printed next.</div>
+        </div>
+
+        <!-- Sent today list -->
+        <div class="part-needed-sent" id="part-needed-sent">
+          <div class="part-needed-sent-head">Sent today</div>
+          <div class="part-needed-sent-list" id="part-needed-sent-list">
+            <div class="part-needed-sent-empty">Nothing sent today yet.</div>
+          </div>
+        </div>
+
         <button class="btn btn-primary inv-mobile-btn" id="btn-walkthrough-mobile">Walk Through Mode</button>
       </div>
 
@@ -3014,6 +3231,7 @@ const state = {
   inventory: {},       // partName -> integer count on hand
   countedParts: {},    // partName -> true (parts that have been counted at least once)
   partLocations: {},   // partName -> 'gun_wall' | 'back_room' | 'shipping_side' (shared across SKUs)
+  partsNeeded: [],     // [{id, partName, type:'resin'|'fdm', addedAt, addedBy, resolvedAt|null}]
   priority: { resin: [], fdm: [] },  // separate lists per printer type
   assignments: {},     // rowKey -> machine name (only for resin queue)
   view: 'queue-resin',
@@ -3038,6 +3256,7 @@ function save() {
     inventory: state.inventory,
     countedParts: state.countedParts,
     partLocations: state.partLocations,
+    partsNeeded: state.partsNeeded,
     priority: state.priority,
     assignments: state.assignments,
     lastSync: new Date().toISOString(),
@@ -3186,6 +3405,7 @@ function load() {
     state.inventory = blob.inventory || {};
     state.countedParts = blob.countedParts || {};
     state.partLocations = blob.partLocations || {};
+    state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
     state.assignments = blob.assignments || {};
     // Migrate priority: was array of {id,name}, now {resin:[], fdm:[]}
     if (Array.isArray(blob.priority)) {
@@ -3409,7 +3629,37 @@ function buildQueue(typeFilter) {
     const enriched = { ...r, _covered: taken, _remaining: need - taken, originalQty: need };
     if (!typeFilter || r.type === typeFilter) visible.push(enriched);
   }
-  return { visible, allRows: allRowsType };
+
+  // Inject any unresolved partsNeeded entries at the TOP of the queue. These
+  // bypass inventory FIFO entirely — they're alerts from the employee, not
+  // demand against inventory. Hitting Done on them flags them as resolved.
+  const needRows = [];
+  for (const need of (state.partsNeeded || [])) {
+    if (need.resolvedAt) continue;
+    if (typeFilter && need.type !== typeFilter) continue;
+    needRows.push({
+      key: `__need__${need.id}`,
+      orderId: `__need__${need.id}`,
+      date: need.addedAt || new Date(0).toISOString(),
+      customer: 'Part Needed',
+      sku: '',
+      part: need.partName,
+      qty: 1,
+      item: 'Requested by employee',
+      notes: '',
+      type: need.type,
+      _isNeed: true,
+      _needId: need.id,
+      _covered: 0,
+      _remaining: 1,
+      originalQty: 1,
+    });
+  }
+  // Sort needs oldest-first so multiple alerts stay in order, then prepend
+  needRows.sort((a, b) => new Date(a.date) - new Date(b.date));
+  const finalVisible = [...needRows, ...visible];
+
+  return { visible: finalVisible, allRows: allRowsType };
 }
 
 // Total demand per part across all open orders (ignores inventory)
@@ -3636,12 +3886,16 @@ function renderQueue(type) {
     const qtyHtml = partial
       ? `<span class="qty-badge ${showQty>1?'multi':''}" title="Need ${r.originalQty}, ${r._covered} from stock">×${showQty}<sup style="font-size:9px;color:var(--green);margin-left:3px;">−${r._covered}</sup></span>`
       : `<span class="qty-badge ${showQty>1?'multi':''}">×${showQty}</span>`;
+    const needRowClass = r._isNeed ? ' queue-row-need' : '';
+    const customerCell = r._isNeed
+      ? `<div class="qcell qcell-customer"><span class="queue-need-tag">Part Needed</span></div>`
+      : `<div class="qcell qcell-customer">${escapeHtml(r.customer)}</div>`;
     html += `
-      <div class="queue-row ${rowClass}" data-key="${escapeAttr(r.key)}">
+      <div class="queue-row ${rowClass}${needRowClass}" data-key="${escapeAttr(r.key)}">
         <div class="qcell qcell-num">${i+1}</div>
         <div class="qcell qcell-date">${dateStr}</div>
         <div class="qcell qcell-age ${agedClass}"><span class="badge">${age}d</span></div>
-        <div class="qcell qcell-customer">${escapeHtml(r.customer)}</div>
+        ${customerCell}
         <div class="qcell qcell-sku">${escapeHtml(r.sku)}</div>
         <div class="qcell qcell-part">${escapeHtml(r.part)}</div>
         <div class="qcell qcell-qty">${qtyHtml}</div>
@@ -3657,6 +3911,21 @@ function renderQueue(type) {
       const key = row.dataset.key;
       const clicked = built.visible.find(r => r.key === key);
       if (!clicked) return;
+      // Part-needed alerts: skip the plate modal, no inventory change. Mark resolved.
+      if (clicked._isNeed) {
+        const need = (state.partsNeeded || []).find(n => n.id === clicked._needId);
+        if (need) {
+          need.resolvedAt = new Date().toISOString();
+          save();
+        }
+        row.classList.add('removing');
+        setTimeout(() => {
+          renderQueue();
+          renderSidebarCounts();
+          toast(`Resolved request: ${clicked.part}`);
+        }, 220);
+        return;
+      }
       confirmPrintPlate(clicked, (qty) => {
         row.classList.add('removing');
         setTimeout(() => printPlate(clicked, qty), 220);
@@ -3721,8 +3990,11 @@ function renderKanban(filtered, allVisible) {
         const showQty = r._remaining;
         const partial = r._covered > 0;
         const qtyTitle = partial ? `Need ${r.originalQty}, ${r._covered} from stock` : '';
+        const needClass = r._isNeed ? ' kanban-card-need' : '';
+        const needTag = r._isNeed ? '<div class="kanban-card-need-tag">Part Needed</div>' : '';
         html += `
-          <div class="kanban-card ${agedClass}" draggable="true" data-key="${escapeAttr(r.key)}">
+          <div class="kanban-card ${agedClass}${needClass}" draggable="true" data-key="${escapeAttr(r.key)}">
+            ${needTag}
             <div class="kanban-card-top">
               <div class="kanban-card-part" title="${escapeAttr(r.part)}">${escapeHtml(r.part)}</div>
               <div class="kanban-card-qty ${showQty>1?'multi':''}" ${qtyTitle?`title="${qtyTitle}"`:''}>×${showQty}</div>
@@ -3792,6 +4064,22 @@ function renderKanban(filtered, allVisible) {
       const key = card.dataset.key;
       const clicked = allVisible.find(r => r.key === key);
       if (!clicked) return;
+      // Part-needed alerts: no plate modal, no inventory change. Mark resolved.
+      if (clicked._isNeed) {
+        const need = (state.partsNeeded || []).find(n => n.id === clicked._needId);
+        if (need) {
+          need.resolvedAt = new Date().toISOString();
+          save();
+        }
+        card.classList.add('removing');
+        delete state.assignments[key];
+        setTimeout(() => {
+          renderQueue();
+          renderSidebarCounts();
+          toast(`Resolved request: ${clicked.part}`);
+        }, 220);
+        return;
+      }
       confirmPrintPlate(clicked, (qty) => {
         card.classList.add('removing');
         delete state.assignments[key];
@@ -5483,6 +5771,160 @@ const WT = {
 
 document.getElementById('btn-walkthrough').addEventListener('click', () => WT.start());
 document.getElementById('btn-walkthrough-mobile').addEventListener('click', () => WT.start());
+
+// ============================================================
+// PART NEEDED (mobile inventory landing)
+// Employee types a part name, autocompletes from library, sends to queues.
+// Resolved items stay on her "Sent today" list with a green badge.
+// ============================================================
+const PN = {
+  selectedPart: null,  // {name, type} from autocomplete picks; null if free-text
+  matches: [],
+
+  init() {
+    const input = document.getElementById('part-needed-input');
+    const list  = document.getElementById('part-needed-autocomplete');
+    const btn   = document.getElementById('part-needed-add');
+    if (!input || !list || !btn) return;
+
+    const refreshMatches = () => {
+      const q = input.value.trim().toLowerCase();
+      const catalog = globalPartsCatalog();
+      // Show up to 10 matches. If empty input, show top-used 10.
+      let matches;
+      if (q === '') {
+        matches = catalog.slice(0, 10);
+      } else {
+        matches = catalog.filter(e => e.name.toLowerCase().includes(q)).slice(0, 10);
+      }
+      this.matches = matches;
+
+      if (matches.length === 0 && q !== '') {
+        list.innerHTML = '<div class="pn-ac-empty">No match — exact name will be sent as-is</div>';
+        list.hidden = false;
+        return;
+      }
+      if (matches.length === 0) {
+        list.hidden = true;
+        return;
+      }
+      list.innerHTML = matches.map(m =>
+        `<div class="pn-ac-item" data-name="${escapeAttr(m.name)}" data-type="${m.type}">
+           ${escapeHtml(m.name)}<span class="pn-ac-type">${m.type}</span>
+         </div>`
+      ).join('');
+      list.hidden = false;
+    };
+
+    const validate = () => {
+      const v = input.value.trim();
+      btn.disabled = v.length === 0;
+    };
+
+    input.addEventListener('focus', () => {
+      refreshMatches();
+    });
+    input.addEventListener('input', () => {
+      // Typing dissociates the selected catalog part (in case user starts over)
+      this.selectedPart = null;
+      refreshMatches();
+      validate();
+    });
+    input.addEventListener('blur', () => {
+      // Delay so a click on a list item can register
+      setTimeout(() => { list.hidden = true; }, 200);
+    });
+
+    list.addEventListener('click', (e) => {
+      const item = e.target.closest('.pn-ac-item');
+      if (!item) return;
+      const name = item.dataset.name;
+      const type = item.dataset.type === 'fdm' ? 'fdm' : 'resin';
+      input.value = name;
+      this.selectedPart = { name, type };
+      list.hidden = true;
+      validate();
+    });
+
+    btn.addEventListener('click', () => this.send());
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); if (!btn.disabled) this.send(); }
+    });
+
+    validate();
+    this.renderSentToday();
+  },
+
+  send() {
+    const input = document.getElementById('part-needed-input');
+    const v = input.value.trim();
+    if (!v) return;
+
+    // Determine type: from the catalog entry if user picked one, otherwise from
+    // any catalog match for the typed name, otherwise default to 'resin'.
+    let type = 'resin';
+    if (this.selectedPart && this.selectedPart.name === v) {
+      type = this.selectedPart.type;
+    } else {
+      const catalog = globalPartsCatalog();
+      const match = catalog.find(e => e.name.toLowerCase() === v.toLowerCase());
+      if (match) type = match.type;
+    }
+
+    const id = `need-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+    if (!Array.isArray(state.partsNeeded)) state.partsNeeded = [];
+    state.partsNeeded.push({
+      id,
+      partName: v,
+      type,
+      addedAt: new Date().toISOString(),
+      addedBy: (_fbUser && _fbUser.email) ? _fbUser.email : '',
+      resolvedAt: null,
+    });
+    save();
+    input.value = '';
+    this.selectedPart = null;
+    document.getElementById('part-needed-add').disabled = true;
+    document.getElementById('part-needed-autocomplete').hidden = true;
+    this.renderSentToday();
+    renderQueue();
+    renderSidebarCounts();
+    toast(`Sent "${v}" to queue`);
+  },
+
+  renderSentToday() {
+    const list = document.getElementById('part-needed-sent-list');
+    if (!list) return;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const items = (state.partsNeeded || [])
+      .filter(n => new Date(n.addedAt).getTime() >= todayStart.getTime())
+      .sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+
+    if (items.length === 0) {
+      list.innerHTML = '<div class="part-needed-sent-empty">Nothing sent today yet.</div>';
+      return;
+    }
+    list.innerHTML = items.map(n => {
+      const time = new Date(n.addedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const resolved = !!n.resolvedAt;
+      const metaClass = resolved ? 'resolved' : '';
+      const metaTxt = resolved ? '✓ Resolved' : time;
+      return `<div class="part-needed-sent-item ${resolved ? 'resolved' : ''}">
+        <div class="pn-sent-name">${escapeHtml(n.partName)}</div>
+        <div class="pn-sent-meta ${metaClass}">${metaTxt}</div>
+      </div>`;
+    }).join('');
+  },
+};
+PN.init();
+
+// Refresh the Sent Today list when the user navigates to Inventory.
+document.querySelectorAll('.nav-item[data-view="inventory"]').forEach(el => {
+  el.addEventListener('click', () => {
+    if (typeof PN !== 'undefined' && PN.renderSentToday) PN.renderSentToday();
+  });
+});
 document.getElementById('wt-exit').addEventListener('click', () => WT.exit());
 
 // Location picker cards
@@ -5604,6 +6046,7 @@ function applyRestoreBlob(blob) {
   state.inventory = blob.inventory || {};
   state.countedParts = blob.countedParts || {};
   state.partLocations = blob.partLocations || {};
+  state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
   state.assignments = blob.assignments || {};
   if (Array.isArray(blob.priority)) {
     state.priority = { resin: blob.priority.map(p => ({...p, type: 'resin'})), fdm: [] };
@@ -5618,6 +6061,8 @@ function applyRestoreBlob(blob) {
   migrateLibrary();
   save();
   renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
+  // Refresh mobile Sent Today list in case partsNeeded changed via cloud sync
+  if (typeof PN !== 'undefined' && PN.renderSentToday) PN.renderSentToday();
 }
 
 // Restore from JSON file
@@ -6074,9 +6519,10 @@ async function doSignOut() {
 load();
 renderQueue();
 renderSidebarCounts();
-// Default view: FDM on mobile (most useful single screen), Resin on desktop.
+// Default view: Inventory on mobile (where Part Needed and Walk Through live),
+// Resin Queue on desktop.
 if (state.appMode === 'mobile') {
-  switchView('queue-fdm');
+  switchView('inventory');
 } else {
   switchView('queue-resin');
 }
