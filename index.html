@@ -2127,6 +2127,7 @@ body.mode-mobile .mobile-only { display: block; }
   letter-spacing: 0.06em;
   min-height: 72px;
   font-weight: 700;
+  margin-bottom: 28px;
 }
 
 /* Part Needed box (mobile inventory landing) */
@@ -6069,14 +6070,25 @@ const MS = {
     document.getElementById('manual-stock-entry-current').textContent = `Current stock: ${current}`;
     const inp = document.getElementById('manual-stock-entry-input');
     inp.value = current;
-    document.getElementById('manual-stock-entry').hidden = false;
-    // Don't auto-focus — that pops keyboard before user is ready; let them tap the field.
+    // Hide the results list so the entry panel sits right under the search box
+    // (instead of below a long list that pushes the entry off-screen).
+    const results = document.getElementById('manual-stock-results');
+    if (results) results.hidden = true;
+    const entry = document.getElementById('manual-stock-entry');
+    entry.hidden = false;
+    // Scroll the entry into view so the user doesn't have to hunt for the
+    // number field after picking a part.
+    requestAnimationFrame(() => {
+      entry.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   },
 
   closeEntry() {
     this.selected = null;
     document.getElementById('manual-stock-entry').hidden = true;
     document.getElementById('manual-stock-entry-input').value = '';
+    // Reshow the search results so the user can pick another part if they want.
+    this.refreshResults();
   },
 
   save() {
