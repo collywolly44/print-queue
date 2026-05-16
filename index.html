@@ -1018,16 +1018,28 @@ body {
   }
   .queue-row.queue-header { display: none; }
   .queue-row {
-    /* Use flex column with explicit ordering so we can rearrange the cells
-       (the DOM order has customer first, but we want part name first). */
-    display: flex;
-    flex-direction: column;
+    /* Grid layout:
+        row 1: part name              | row # (small)
+        row 2: date + age             | DONE (spans rows 2-4)
+        row 3: qty badge              | DONE
+        row 4: customer (small/dim)   | DONE
+    */
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "part      num"
+      "date      done"
+      "qty       done"
+      "customer  done";
+    column-gap: 12px;
+    row-gap: 3px;
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 6px;
     margin-bottom: 6px;
-    padding: 8px 12px 10px;
+    padding: 10px 12px;
     position: relative;
+    align-items: center;
   }
   .queue-row:hover { background: var(--panel); }
   .queue-row.row-aged-1 { border-left: 3px solid var(--yellow-warn); }
@@ -1036,100 +1048,86 @@ body {
     border-right: none;
     padding: 0;
     font-size: 14px;
+    min-width: 0;
   }
-  /* Row number in the corner — small, out of the way */
   .qcell-num {
-    position: absolute;
-    top: 6px;
-    right: 10px;
-    font-size: 9px;
+    grid-area: num;
+    font-size: 10px;
     color: var(--ink-faint);
-    order: 99;  /* doesn't matter, it's positioned */
+    align-self: start;
+    text-align: right;
+    padding-top: 2px;
   }
-  /* PART NAME FIRST — the focus */
   .qcell-part {
-    order: 1;
-    display: block;
+    grid-area: part;
     font-size: 18px;
     font-weight: 700;
     color: var(--amber);
-    margin-bottom: 4px;
     line-height: 1.2;
     background: none;
     padding: 0;
     border-radius: 0;
+    word-break: break-word;
   }
-  /* Date + age second, compact line under the part name */
   .qcell-date {
-    order: 2;
-    display: inline-block;
+    grid-area: date;
     font-size: 12px;
     color: var(--ink);
-    margin: 0 8px 4px 0;
     font-weight: 600;
     font-family: 'JetBrains Mono', monospace;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .qcell-age {
-    order: 3;
-    display: inline-block;
-    margin: 0 0 4px 0;
-    vertical-align: baseline;
+    display: inline;
+    margin: 0;
   }
   .qcell-age .badge {
     font-size: 10px;
     padding: 2px 6px;
   }
-  /* Qty + Done in a horizontal row */
   .qcell-qty {
-    order: 4;
-    display: inline-block;
-    margin: 4px 12px 0 0;
-    vertical-align: middle;
+    grid-area: qty;
+    margin: 0;
   }
   .qty-badge {
     font-size: 16px;
     padding: 2px 10px;
   }
+  .qcell-customer {
+    grid-area: customer;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-dim);
+    margin: 0;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    word-break: break-word;
+  }
+  .qcell-customer::before { content: none; }
+  .qcell-sku { display: none; }
+  .qcell-sku::before { content: none; }
   .qcell-action {
-    order: 5;
-    display: inline-block;
-    margin: 4px 0 0 0;
+    grid-area: done;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
   }
   .btn-done {
-    width: auto;
-    padding: 8px 18px;
-    font-size: 12px;
-    min-height: 36px;
+    padding: 14px 22px;
+    font-size: 14px;
+    min-height: 64px;
     border-color: var(--green);
     color: var(--green);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
   }
   .btn-done:active {
     background: var(--green);
     color: #0a1c0d;
   }
-  /* Customer name LAST — small, dim, plain */
-  .qcell-customer {
-    order: 10;
-    display: block;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--ink-dim);
-    margin: 6px 0 0 0;
-    letter-spacing: 0.02em;
-    line-height: 1.2;
-  }
-  .qcell-customer::before { content: none; }
-  /* SKU — hide on mobile, it clutters; available on desktop */
-  .qcell-sku {
-    order: 11;
-    display: inline-block;
-    font-size: 10px;
-    color: var(--ink-faint);
-    margin: 2px 0 0 0;
-  }
-  .qcell-sku::before { content: none; }
-  /* Group qty + done on one line by wrapping them in a row */
-  .qcell-qty, .qcell-action { vertical-align: middle; }
 
   /* Priority block on mobile */
   .priority-block { margin-bottom: 14px; }
@@ -3381,7 +3379,7 @@ body.mode-mobile .mobile-only { display: block; }
       <input type="number" id="plate-modal-input" min="0" step="1" value="1">
       <button class="btn plate-step-btn" id="plate-modal-plus">+</button>
     </div>
-    <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);margin-top:10px;letter-spacing:0.06em;">Lower the number for partial prints. Enter 0 to skip adding any.</div>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);margin-top:10px;letter-spacing:0.06em;line-height:1.5;">Lower the number for partial prints, raise it if you printed more than the usual yield. If you change the number, it'll be saved as this part's new yield for next time. Enter 0 to skip adding any.</div>
     <div class="modal-actions" style="margin-top:20px;">
       <button class="btn btn-ghost" id="plate-modal-cancel">Cancel</button>
       <button class="btn btn-primary" id="plate-modal-confirm">Confirm</button>
@@ -3435,7 +3433,7 @@ body.mode-mobile .mobile-only { display: block; }
 
     <div class="wt-input-row">
       <div class="wt-input-label">Count</div>
-      <input type="text" inputmode="numeric" class="wt-input" id="wt-input" readonly value="0">
+      <input type="text" inputmode="numeric" class="wt-input" id="wt-input" readonly value="" placeholder="—">
     </div>
 
     <div class="wt-numpad">
@@ -4392,13 +4390,42 @@ function printPlate(clicked, qtyOverride) {
     state.countedParts[part] = true; // printing implies we know the count
   }
 
+  // If the user typed a different number than the saved yield, update the
+  // yield PERMANENTLY everywhere this part appears (this SKU and any other
+  // SKU using the same part name). Skip if they typed 0 — that's likely a
+  // "just remove this from the queue" action, not a real yield change.
+  let yieldUpdatedCount = 0;
+  if (qty > 0 && qty !== yld) {
+    for (const otherSku of Object.keys(state.library)) {
+      const otherLib = state.library[otherSku];
+      if (!otherLib || !Array.isArray(otherLib.parts)) continue;
+      let touched = false;
+      otherLib.parts = otherLib.parts.map(p => {
+        const pname = (typeof p === 'string') ? p : (p && p.name);
+        if (pname !== part) return p;
+        const obj = (typeof p === 'string')
+          ? { name: p, yield: qty, qty: 1, type: 'resin' }
+          : { ...p, yield: qty };
+        touched = true;
+        return obj;
+      });
+      if (touched) yieldUpdatedCount++;
+    }
+  }
+
   save();
   renderQueue();
   renderInventory();
+  renderLibrary();
   renderSidebarCounts();
 
-  if (qty === 0) toast(`No units added for ${part}`);
-  else toast(`+${qty} ${part} → inventory (stock: ${Number(state.inventory[part] || 0)})`);
+  if (qty === 0) {
+    toast(`No units added for ${part}`);
+  } else if (yieldUpdatedCount > 0) {
+    toast(`+${qty} ${part} · new plate yield saved (${yieldUpdatedCount} SKU${yieldUpdatedCount === 1 ? '' : 's'})`);
+  } else {
+    toast(`+${qty} ${part} → inventory (stock: ${Number(state.inventory[part] || 0)})`);
+  }
 }
 
 // Open the print-plate confirmation modal with an adjustable qty.
@@ -5999,8 +6026,9 @@ const WT = {
   },
 
   renderInput() {
-    const display = this.pendingValue === '' ? '0' : this.pendingValue;
-    document.getElementById('wt-input').value = display;
+    // Show blank instead of '0' when nothing has been typed yet — clearer
+    // signal that this part hasn't been counted yet.
+    document.getElementById('wt-input').value = this.pendingValue;
   },
 
   appendDigit(d) {
