@@ -5526,7 +5526,7 @@ function importCSV(text) {
     }
     return -1;
   };
-  const idCol   = findCol('order id','order_id','id','');
+  const idCol   = findCol('order #','order#','order id','order_id','order number','id');
   const dateCol = findCol('order date','date','order_date');
   const itemCol = findCol('item name','item','product');
   const qtyCol  = findCol('quantity','qty');
@@ -5539,6 +5539,9 @@ function importCSV(text) {
   }
 
   const newOrders = [];
+  // Track duplicate IDs within a single CSV — same (orderId, sku, item) can
+  // appear twice as separate line items. We disambiguate with a per-key counter.
+  const idCounts = {};
   let imported = 0;
   let skipped = 0;
   for (let i = 1; i < rows.length; i++) {
@@ -5553,8 +5556,17 @@ function importCSV(text) {
     const cust = (r[custCol] || '').trim();
     const orderId = idCol >= 0 ? (r[idCol] || '').trim() : '';
     const finalSku = sku || `[NO-SKU] ${item.slice(0,50)}`;
-    // Generate stable row id from row index + order id + sku + item
-    const id = `${orderId}-${i}-${finalSku}`.replace(/[^a-zA-Z0-9-]/g, '_');
+    // Build a STABLE row ID from Order # + SKU + Item Name (first 60 chars).
+    // Critically, we do NOT use the row index — ShipStation reorders line
+    // items between exports, so row index would make every line look "new"
+    // on the next import.
+    // If the same (orderId, sku, item) appears more than once (e.g. ordered
+    // 2× of the same SKU as two line items rather than qty=2), we suffix a
+    // counter to keep IDs unique within the CSV.
+    const baseKey = `${orderId}|${finalSku}|${item.slice(0,60)}`.replace(/[^a-zA-Z0-9|]/g, '_');
+    idCounts[baseKey] = (idCounts[baseKey] || 0) + 1;
+    const dup = idCounts[baseKey];
+    const id = dup === 1 ? baseKey : `${baseKey}|${dup}`;
     newOrders.push({
       id, date: date.toISOString(), sku: finalSku, qty,
       customer: cust, item,
