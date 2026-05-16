@@ -3040,6 +3040,7 @@ body.mode-mobile .mobile-only { display: block; }
 
     <div class="sidebar-footer">
       <div class="sidebar-footer-row"><span>Last sync</span><span id="last-sync">—</span></div>
+      <div class="sidebar-footer-row"><span>Last import</span><span id="last-import">—</span></div>
       <div class="sidebar-footer-row"><span>Storage</span><span>Browser</span></div>
     </div>
   </aside>
@@ -3294,11 +3295,24 @@ body.mode-mobile .mobile-only { display: block; }
         </div>
       </div>
 
+      <div class="section-title">Current data</div>
+      <div id="import-status-card" style="background:var(--panel);border:1px solid var(--line-bright);border-left:4px solid var(--green);border-radius:4px;padding:16px 18px;margin-bottom:18px;">
+        <div id="import-status-content" style="font-size:13px;color:var(--ink);line-height:1.6;">
+          Loading…
+        </div>
+      </div>
+
       <div class="section-title">Load CSV</div>
 
-      <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px 18px;margin-bottom:16px;font-size:13px;color:var(--ink-dim);">
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px 18px;margin-bottom:14px;font-size:13px;color:var(--ink-dim);">
         Upload each CSV as a complete snapshot of pending orders. Any order that was present before but isn't in the new CSV is treated as shipped — its parts are automatically subtracted from inventory. New orders get added to the queues.
       </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <button class="filter-chip active" data-import-mode="replace">Sync (detect ships, update inventory)</button>
+        <button class="filter-chip" data-import-mode="replace-no-inv">Sync without inventory change</button>
+      </div>
+      <div id="import-mode-hint" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.04em;margin-bottom:14px;line-height:1.5;"></div>
 
       <div class="import-zone" id="import-zone">
         <div class="import-icon">[ + ]</div>
@@ -3506,6 +3520,8 @@ const state = {
   appMode: null,           // 'desktop' | 'mobile' (auto-detected by screen size, override via button)
   invOrderSnapshot: null,  // [partName, ...] frozen sort order for the Inventory page
   libOrderSnapshot: null,  // [sku, ...] frozen sort order for the Parts Library page
+  lastImport: null,        // { at, orderCount, added, shipped, oldestOrderDate, newestOrderDate }
+  importMode: 'replace',   // 'replace' (normal) | 'replace-no-inv' (skip inventory subtraction)
 };
 
 function save() {
@@ -3518,6 +3534,7 @@ function save() {
     partsNeeded: state.partsNeeded,
     priority: state.priority,
     assignments: state.assignments,
+    lastImport: state.lastImport,
     lastSync: new Date().toISOString(),
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
@@ -3677,6 +3694,7 @@ function load() {
       };
     }
     if (blob.lastSync) updateLastSync(blob.lastSync);
+    state.lastImport = blob.lastImport || null;
     migrateLibrary();
   } catch (e) { console.error('Load failed', e); }
 }
@@ -3830,6 +3848,84 @@ function updateLastSync(iso) {
   const d = new Date(iso);
   const fmt = d.toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
   document.getElementById('last-sync').textContent = fmt;
+}
+
+// Renders the "Last import" sidebar footer entry + the big "Current data"
+// card on the Import / Settings page. Call after any import or on load.
+function renderImportStatus() {
+  const li = state.lastImport;
+  const sidebarEl = document.getElementById('last-import');
+  const cardEl    = document.getElementById('import-status-content');
+
+  if (!li || !li.at) {
+    if (sidebarEl) sidebarEl.textContent = 'Never';
+    if (cardEl) {
+      cardEl.innerHTML = `
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">No imports yet</div>
+        <div style="color:var(--ink-dim);">Drop a CSV file below to load orders.</div>`;
+    }
+    return;
+  }
+
+  const importDate = new Date(li.at);
+  const now = new Date();
+  const ageMs = now - importDate;
+  const ageHours = Math.floor(ageMs / 3600000);
+  const ageMinutes = Math.floor((ageMs % 3600000) / 60000);
+  let ageStr;
+  if (ageMs < 60000) ageStr = 'just now';
+  else if (ageHours < 1) ageStr = `${ageMinutes}m ago`;
+  else if (ageHours < 24) ageStr = `${ageHours}h ago`;
+  else ageStr = `${Math.floor(ageHours / 24)}d ago`;
+
+  const sidebarFmt = importDate.toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  if (sidebarEl) sidebarEl.textContent = sidebarFmt;
+
+  if (cardEl) {
+    const fullDateFmt = importDate.toLocaleString('en-US', {
+      weekday:'short', month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit'
+    });
+    const oldestStr = li.oldestOrderDate
+      ? new Date(li.oldestOrderDate).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+      : '—';
+    const newestStr = li.newestOrderDate
+      ? new Date(li.newestOrderDate).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+      : '—';
+
+    // Highlight stale data — if imported >36h ago, the data is probably outdated
+    const isStale = ageMs > 36 * 3600000;
+    const accentColor = isStale ? 'var(--yellow-warn)' : 'var(--green)';
+    const card = document.getElementById('import-status-card');
+    if (card) card.style.borderLeftColor = accentColor;
+    const staleNote = isStale
+      ? `<div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--yellow-warn);letter-spacing:0.06em;margin-top:10px;">⚠ Data is more than 36 hours old — consider importing a fresh CSV.</div>`
+      : '';
+
+    cardEl.innerHTML = `
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">Last import</div>
+      <div style="font-size:15px;font-weight:600;color:var(--ink);margin-bottom:2px;">${fullDateFmt}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:${isStale ? 'var(--yellow-warn)' : 'var(--ink-dim)'};letter-spacing:0.04em;margin-bottom:14px;">${ageStr}</div>
+
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;font-size:12px;color:var(--ink-dim);">
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:3px;">Orders in CSV</div>
+          <div style="font-size:18px;font-weight:700;color:var(--ink);font-family:'JetBrains Mono',monospace;">${li.orderCount.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:3px;">Newly added</div>
+          <div style="font-size:18px;font-weight:700;color:${li.added > 0 ? 'var(--green)' : 'var(--ink-dim)'};font-family:'JetBrains Mono',monospace;">${li.added.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:3px;">Shipped (removed)</div>
+          <div style="font-size:18px;font-weight:700;color:${li.shipped > 0 ? 'var(--amber)' : 'var(--ink-dim)'};font-family:'JetBrains Mono',monospace;">${li.shipped.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:3px;">Order date range</div>
+          <div style="font-size:13px;color:var(--ink);font-family:'JetBrains Mono',monospace;">${oldestStr}<br>→ ${newestStr}</div>
+        </div>
+      </div>
+      ${staleNote}`;
+  }
 }
 
 // ============================================================
@@ -5436,6 +5532,7 @@ function renderSidebarCounts() {
   document.getElementById('nav-inventory-count').textContent = invCount;
   document.getElementById('nav-orders-count').textContent = state.orders.length.toLocaleString();
   renderSidebarPriority();
+  renderImportStatus();
 }
 
 // Render the permanent Priority list (Part Needed items waiting to be placed).
@@ -5579,11 +5676,15 @@ function importCSV(text) {
   const shippedSubtractions = {}; // part -> total qty subtracted
 
   // The new CSV is the complete snapshot of pending orders.
-  // Anything in state.orders not in newOrders has shipped → subtract its parts from inventory.
+  // Anything in state.orders not in newOrders has shipped.
+  // In 'replace-no-inv' mode we DON'T subtract from inventory (user just
+  // wants to refresh order IDs / sync the order list without touching stock).
+  const skipInvChange = state.importMode === 'replace-no-inv';
   const newIds = new Set(newOrders.map(o => o.id));
   for (const old of state.orders) {
     if (newIds.has(old.id)) continue;
     shippedCount++;
+    if (skipInvChange) continue;
     const lib = state.library[old.sku];
     const parts = (lib && lib.parts) ? lib.parts : [];
     for (const partObj of parts) {
@@ -5607,6 +5708,17 @@ function importCSV(text) {
   // Re-sort orders
   state.orders.sort((a,b) => new Date(a.date) - new Date(b.date));
 
+  // Record metadata about this import so the user can see what data the app
+  // is using and verify imports are happening as expected.
+  state.lastImport = {
+    at: new Date().toISOString(),
+    orderCount: newOrders.length,
+    added,
+    shipped: shippedCount,
+    oldestOrderDate: newOrders.length > 0 ? newOrders[0].date : null,
+    newestOrderDate: newOrders.length > 0 ? newOrders[newOrders.length - 1].date : null,
+  };
+
   save();
   renderQueue();
   renderLibrary();
@@ -5616,7 +5728,9 @@ function importCSV(text) {
 
   // Compose a useful toast: how many added, how many shipped, brief inventory summary
   let msg = `Synced: ${added} new · ${shippedCount} shipped`;
-  if (shippedCount > 0) {
+  if (skipInvChange) {
+    msg += ` · inventory untouched`;
+  } else if (shippedCount > 0) {
     const subParts = Object.keys(shippedSubtractions).length;
     msg += ` · −${subParts} part type${subParts !== 1 ? 's' : ''} from inventory`;
   }
@@ -6458,6 +6572,24 @@ document.getElementById('btn-resort-library').addEventListener('click', () => {
 });
 document.getElementById('btn-backup').addEventListener('click', exportBackup);
 
+// Import-mode chip wiring (Sync vs Sync without inventory change)
+const IMPORT_MODE_HINTS = {
+  'replace': 'Normal mode: orders missing from the new CSV are treated as shipped, and their parts are subtracted from inventory automatically.',
+  'replace-no-inv': '⚠ Special mode: orders still get added/removed, but inventory is left unchanged. Use this after a manual stock count, or when refreshing order IDs after an app update.',
+};
+function applyImportMode(mode) {
+  state.importMode = mode;
+  document.querySelectorAll('[data-import-mode]').forEach(x => {
+    x.classList.toggle('active', x.dataset.importMode === mode);
+  });
+  const hint = document.getElementById('import-mode-hint');
+  if (hint) hint.textContent = IMPORT_MODE_HINTS[mode] || '';
+}
+document.querySelectorAll('[data-import-mode]').forEach(b => {
+  b.addEventListener('click', () => applyImportMode(b.dataset.importMode));
+});
+applyImportMode(state.importMode || 'replace');
+
 // Shared: apply a blob (from file or snapshot) into live state.
 function applyRestoreBlob(blob) {
   state.orders = blob.orders || [];
@@ -6477,6 +6609,7 @@ function applyRestoreBlob(blob) {
   } else {
     state.priority = { resin: [], fdm: [] };
   }
+  state.lastImport = blob.lastImport || null;
   migrateLibrary();
   save();
   renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
