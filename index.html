@@ -4494,6 +4494,15 @@ function renderLibrary() {
   }
 
   let html = '';
+  // Precompute the printer + location dropdown option lists ONCE per render
+  // instead of rebuilding identical HTML for every part row. With ~1000 part
+  // rows, this saves a noticeable amount of work on every library open.
+  const PRINTER_OPTIONS_TEMPLATE = MACHINES.filter(m => m !== 'unassigned')
+    .map(m => `<option value="${m}">${MACHINE_LABELS[m]}</option>`)
+    .join('');
+  const LOCATION_OPTIONS_TEMPLATE = LOCATIONS.filter(l => l !== '')
+    .map(l => `<option value="${l}">${LOCATION_LABELS[l]}</option>`)
+    .join('');
   filtered.forEach(r => {
     const statusLabel = r.status === 'needs' ? 'Needs Parts'
       : r.status === 'defined' ? 'Defined' : 'Unused';
@@ -4508,14 +4517,14 @@ function renderLibrary() {
         const ptype = (typeof p === 'string') ? 'resin'
                     : (p.type === 'fdm' ? 'fdm' : 'resin');
         const pprinter = (typeof p === 'string' || !p.printer) ? '' : p.printer;
-        const printerOptions = MACHINES.filter(m => m !== 'unassigned')
-          .map(m => `<option value="${m}"${pprinter === m ? ' selected' : ''}>${MACHINE_LABELS[m]}</option>`)
-          .join('');
+        const printerOptions = pprinter
+          ? PRINTER_OPTIONS_TEMPLATE.replace(`value="${pprinter}"`, `value="${pprinter}" selected`)
+          : PRINTER_OPTIONS_TEMPLATE;
         const printerHidden = ptype === 'fdm' ? ' style="visibility:hidden;"' : '';
         const ploc = partLocation(pname);
-        const locOptions = LOCATIONS.filter(l => l !== '')
-          .map(l => `<option value="${l}"${ploc === l ? ' selected' : ''}>${LOCATION_LABELS[l]}</option>`)
-          .join('');
+        const locOptions = ploc
+          ? LOCATION_OPTIONS_TEMPLATE.replace(`value="${ploc}"`, `value="${ploc}" selected`)
+          : LOCATION_OPTIONS_TEMPLATE;
         partsHtml += `
           <div class="lib-part-row" data-idx="${idx}">
             <div class="lib-autocomplete-wrap">
@@ -5710,11 +5719,29 @@ function switchView(name) {
     const el = document.getElementById(`view-${v}`);
     if (el) el.classList.toggle('hidden', v !== name);
   });
-  if (name === 'queue-resin') renderQueue('resin');
-  else if (name === 'queue-fdm') renderQueue('fdm');
-  else if (name === 'library') renderLibrary();
-  else if (name === 'inventory') renderInventory();
-  else if (name === 'orders') renderOrders();
+  // Defer the heavy renders to the next frame so the tab/page switch paints
+  // instantly first, then the content fills in. This makes the click feel
+  // immediate even if the render takes ~500ms.
+  const doRender = () => {
+    if (name === 'queue-resin') renderQueue('resin');
+    else if (name === 'queue-fdm') renderQueue('fdm');
+    else if (name === 'library') renderLibrary();
+    else if (name === 'inventory') renderInventory();
+    else if (name === 'orders') renderOrders();
+  };
+  // Show a brief placeholder for the library (the heaviest view) so the user
+  // sees feedback if the render takes more than one frame.
+  if (name === 'library') {
+    const container = document.getElementById('library-container');
+    if (container && !container._fastPath) {
+      container._fastPath = true;  // mark as rendered-once so we know it's not first-load
+    } else if (container && container.children.length === 0) {
+      container.innerHTML = '<div class="empty"><div class="empty-mark">…</div><div class="empty-sub">Loading parts library…</div></div>';
+    }
+  }
+  // requestAnimationFrame guarantees the DOM repaint with the view change
+  // before we kick off the expensive render.
+  requestAnimationFrame(() => requestAnimationFrame(doRender));
 }
 
 document.querySelectorAll('.nav-item').forEach(el => {
