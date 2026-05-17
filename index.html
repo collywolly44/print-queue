@@ -5808,8 +5808,11 @@ function buildBackupBlob() {
     library: state.library,
     inventory: state.inventory,
     countedParts: state.countedParts,
+    partLocations: state.partLocations,
+    partsNeeded: state.partsNeeded,
     priority: state.priority,
     assignments: state.assignments,
+    lastImport: state.lastImport,
     exportedAt: new Date().toISOString(),
   };
 }
@@ -6600,7 +6603,14 @@ function applyRestoreBlob(blob) {
   state.library = blob.library || {};
   state.inventory = blob.inventory || {};
   state.countedParts = blob.countedParts || {};
-  state.partLocations = blob.partLocations || {};
+  // partLocations: if the incoming blob doesn't have the field at all (e.g.
+  // an older backup or a save from a stale device that predates the feature),
+  // KEEP whatever we already have rather than wiping. If the blob explicitly
+  // includes the field (even as {}), trust that and replace.
+  if (Object.prototype.hasOwnProperty.call(blob, 'partLocations')) {
+    state.partLocations = blob.partLocations || {};
+  }
+  // else: leave state.partLocations alone — protects against accidental wipes
   state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
   state.assignments = blob.assignments || {};
   if (Array.isArray(blob.priority)) {
