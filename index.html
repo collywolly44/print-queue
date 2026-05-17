@@ -2837,6 +2837,63 @@ body.mode-mobile .mobile-only { display: block; }
 }
 .wt-save:active { background: var(--amber-bright); }
 
+/* ====== LOCATE PARTS PICKER ====== */
+.locate-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+  margin-bottom: 4px;
+}
+.locate-btn {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 32px;
+  letter-spacing: 0.04em;
+  padding: 28px 12px;
+  border-radius: 8px;
+  border: 2px solid var(--line-bright);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 110px;
+  touch-action: manipulation;
+  line-height: 1.05;
+  text-align: center;
+  transition: all 0.12s;
+}
+.locate-btn:hover, .locate-btn:active {
+  background: rgba(108,191,126,0.12);
+  border-color: var(--green);
+  color: var(--green);
+}
+.locate-btn-clear {
+  grid-column: 1 / -1;
+  font-size: 22px;
+  min-height: 64px;
+  padding: 14px 12px;
+  color: var(--ink-dim);
+  border-color: var(--line);
+}
+.locate-btn-clear:hover, .locate-btn-clear:active {
+  border-color: var(--red);
+  color: var(--red);
+  background: rgba(232,93,74,0.08);
+}
+/* "Already set" hint when a button matches the current location */
+.locate-btn.current {
+  background: rgba(108,191,126,0.18);
+  border-color: var(--green);
+  color: var(--green);
+}
+.locate-btn.current::after {
+  content: ' ✓';
+  font-size: 0.8em;
+}
+@media (max-width: 480px) {
+  .locate-btn { font-size: 26px; min-height: 90px; padding: 22px 10px; }
+  .locate-btn-clear { font-size: 18px; min-height: 56px; }
+}
+
 /* Adjust for very small phones */
 @media (max-width: 480px) {
   /* The Walk Through overlay needs to fit on a phone without scrolling so
@@ -3175,6 +3232,12 @@ body.mode-mobile .mobile-only { display: block; }
         <!-- Uncounted Parts button (top-priority action) -->
         <button class="btn btn-primary inv-mobile-btn" id="btn-walkthrough-mobile">Uncounted Parts</button>
 
+        <!-- Locate Parts button — only shown to the gridiron account -->
+        <button class="btn inv-mobile-btn inv-locate-btn" id="btn-locate-mobile" hidden style="background:var(--panel);border:1px solid var(--green);color:var(--green);">
+          Locate Parts
+          <span id="btn-locate-count" style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;margin-left:8px;opacity:0.8;"></span>
+        </button>
+
         <!-- Part Needed input -->
         <div class="part-needed-box">
           <div class="part-needed-label">Part needed</div>
@@ -3469,6 +3532,42 @@ body.mode-mobile .mobile-only { display: block; }
       <button class="wt-nav-btn" id="wt-prev">← Prev</button>
       <button class="wt-nav-btn wt-skip" id="wt-skip">Skip</button>
       <button class="wt-nav-btn wt-save" id="wt-save">Save → Next</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============== LOCATE PARTS OVERLAY (gridiron only) ============== -->
+<div class="wt-overlay" id="locate-overlay">
+  <div class="wt-bar">
+    <button class="wt-exit" id="locate-exit" aria-label="Back to Inventory">←</button>
+    <div class="wt-progress" style="flex:1;">
+      <div id="locate-title" style="font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:0.04em;color:var(--ink);">Locate Parts</div>
+      <div class="wt-progress-text" id="locate-progress-text">—</div>
+    </div>
+  </div>
+
+  <div class="wt-card" id="locate-card">
+    <div class="wt-status-row">
+      <span class="wt-status-badge" id="locate-status-badge" style="background:rgba(108,191,126,0.18);color:var(--green);">Where is this part?</span>
+      <span class="wt-demand" id="locate-stock"></span>
+    </div>
+    <div class="wt-part-name" id="locate-part-name">—</div>
+
+    <div class="wt-skus-label">Used in</div>
+    <div class="wt-skus" id="locate-skus">—</div>
+
+    <!-- Big location picker buttons -->
+    <div class="locate-picker" id="locate-picker">
+      <button class="locate-btn" data-loc="gun_wall">Gun Wall</button>
+      <button class="locate-btn" data-loc="back_room">Back Room</button>
+      <button class="locate-btn" data-loc="shipping_side">Shipping Side</button>
+      <button class="locate-btn locate-btn-clear" data-loc="">Clear / Unset</button>
+    </div>
+
+    <div class="wt-nav-row" style="margin-top:14px;">
+      <button class="wt-nav-btn" id="locate-prev">← Prev</button>
+      <button class="wt-nav-btn wt-skip" id="locate-skip">Skip →</button>
+      <button class="wt-nav-btn" id="locate-filter" style="grid-column:span 1;">All / Unset only</button>
     </div>
   </div>
 </div>
@@ -5859,7 +5958,11 @@ function switchView(name) {
     if (name === 'queue-resin') renderQueue('resin');
     else if (name === 'queue-fdm') renderQueue('fdm');
     else if (name === 'library') renderLibrary();
-    else if (name === 'inventory') renderInventory();
+    else if (name === 'inventory') {
+      renderInventory();
+      // Refresh the gridiron-only Locate button (visibility + counter)
+      if (typeof updateLocateButton === 'function') updateLocateButton();
+    }
     else if (name === 'orders') renderOrders();
   };
   // Show a brief placeholder for the library (the heaviest view) so the user
@@ -6490,6 +6593,195 @@ const MS = {
 };
 MS.init();
 
+// ============================================================
+// LOCATE PARTS — gridiron-only mobile workflow
+// Walks through every distinct part name in the library and lets the user
+// assign a location with one tap. Auto-advances after each save.
+// ============================================================
+const LOC = {
+  idx: 0,
+  parts: [],          // [{ name, skus: [sku, sku, ...], stock }]
+  filterMode: 'unset', // 'unset' | 'all'
+
+  // Build the list of every distinct part name across all SKUs in the library.
+  buildList() {
+    const partToSkus = new Map();
+    for (const sku of Object.keys(state.library)) {
+      const lib = state.library[sku];
+      if (!lib || !Array.isArray(lib.parts)) continue;
+      for (const p of lib.parts) {
+        const name = (typeof p === 'string') ? p : (p && p.name);
+        if (!name) continue;
+        if (!partToSkus.has(name)) partToSkus.set(name, []);
+        if (!partToSkus.get(name).includes(sku)) partToSkus.get(name).push(sku);
+      }
+    }
+    // Also include any inventory parts (in case a part has stock but no SKU uses it)
+    for (const partName of Object.keys(state.inventory || {})) {
+      if (!partToSkus.has(partName)) partToSkus.set(partName, []);
+    }
+    let list = [];
+    for (const [name, skus] of partToSkus.entries()) {
+      list.push({
+        name,
+        skus,
+        stock: Number(state.inventory[name] || 0),
+        currentLoc: partLocation(name),
+      });
+    }
+    // Sort: parts WITHOUT location first, then alphabetical
+    list.sort((a, b) => {
+      const aHas = a.currentLoc ? 1 : 0;
+      const bHas = b.currentLoc ? 1 : 0;
+      if (aHas !== bHas) return aHas - bHas;  // unset first
+      return a.name.localeCompare(b.name);
+    });
+    if (this.filterMode === 'unset') {
+      list = list.filter(p => !p.currentLoc);
+    }
+    return list;
+  },
+
+  // How many parts still need a location? Used by the button counter.
+  countUnset() {
+    const seen = new Set();
+    for (const sku of Object.keys(state.library)) {
+      const lib = state.library[sku];
+      if (!lib || !Array.isArray(lib.parts)) continue;
+      for (const p of lib.parts) {
+        const name = (typeof p === 'string') ? p : (p && p.name);
+        if (!name) continue;
+        seen.add(name);
+      }
+    }
+    for (const partName of Object.keys(state.inventory || {})) seen.add(partName);
+    let unset = 0;
+    for (const name of seen) {
+      if (!partLocation(name)) unset++;
+    }
+    return unset;
+  },
+
+  start() {
+    this.parts = this.buildList();
+    this.idx = 0;
+    if (this.parts.length === 0) {
+      toast(this.filterMode === 'unset' ? 'All parts are located. ✓' : 'No parts in library yet.');
+      return;
+    }
+    document.getElementById('locate-overlay').classList.add('show');
+    this.render();
+  },
+
+  exit() {
+    document.getElementById('locate-overlay').classList.remove('show');
+    updateLocateButton();  // refresh the button counter on the inventory landing
+  },
+
+  render() {
+    if (this.parts.length === 0) {
+      // ran out — close
+      this.exit();
+      toast('All set ✓');
+      return;
+    }
+    if (this.idx < 0) this.idx = 0;
+    if (this.idx >= this.parts.length) this.idx = this.parts.length - 1;
+    const p = this.parts[this.idx];
+    document.getElementById('locate-part-name').textContent = p.name;
+    document.getElementById('locate-progress-text').textContent =
+      `${this.idx + 1} / ${this.parts.length}${this.filterMode === 'unset' ? ' unset' : ''}`;
+
+    const skuTags = p.skus.length
+      ? p.skus.slice(0, 12).map(s => `<span class="wt-sku-tag">${escapeHtml(s)}</span>`).join('')
+      + (p.skus.length > 12 ? `<span class="wt-sku-tag">+${p.skus.length - 12} more</span>` : '')
+      : '<span style="color:var(--ink-faint);">No SKU uses this part</span>';
+    document.getElementById('locate-skus').innerHTML = skuTags;
+
+    document.getElementById('locate-stock').textContent = `Stock: ${p.stock}`;
+
+    // Mark the current location button as already-set
+    const cur = partLocation(p.name);
+    document.querySelectorAll('#locate-picker .locate-btn').forEach(btn => {
+      btn.classList.toggle('current', btn.dataset.loc === cur);
+    });
+
+    // Update filter button label
+    const fbtn = document.getElementById('locate-filter');
+    if (fbtn) fbtn.textContent = this.filterMode === 'unset' ? 'Show all' : 'Unset only';
+  },
+
+  pick(loc) {
+    if (this.parts.length === 0) return;
+    const p = this.parts[this.idx];
+    setPartLocation(p.name, loc || '');
+    p.currentLoc = loc || '';
+    save();
+    // In 'unset' mode, parts that get a location should drop off the list —
+    // remove them rather than just advancing so the count stays accurate.
+    if (this.filterMode === 'unset' && loc) {
+      this.parts.splice(this.idx, 1);
+      // Stay at the same index — next part shifts into place
+      this.render();
+    } else {
+      // Advance to next
+      this.idx++;
+      this.render();
+    }
+  },
+
+  prev() {
+    if (this.idx > 0) {
+      this.idx--;
+      this.render();
+    }
+  },
+
+  skip() {
+    this.idx++;
+    this.render();
+  },
+
+  toggleFilter() {
+    this.filterMode = this.filterMode === 'unset' ? 'all' : 'unset';
+    this.parts = this.buildList();
+    this.idx = 0;
+    this.render();
+  },
+};
+
+// Wire the Locate overlay
+(function wireLocate() {
+  const btn = document.getElementById('btn-locate-mobile');
+  if (btn) btn.addEventListener('click', () => LOC.start());
+  const exitBtn = document.getElementById('locate-exit');
+  if (exitBtn) exitBtn.addEventListener('click', () => LOC.exit());
+  document.querySelectorAll('#locate-picker .locate-btn').forEach(b => {
+    b.addEventListener('click', () => LOC.pick(b.dataset.loc));
+  });
+  const prevBtn = document.getElementById('locate-prev');
+  if (prevBtn) prevBtn.addEventListener('click', () => LOC.prev());
+  const skipBtn = document.getElementById('locate-skip');
+  if (skipBtn) skipBtn.addEventListener('click', () => LOC.skip());
+  const filterBtn = document.getElementById('locate-filter');
+  if (filterBtn) filterBtn.addEventListener('click', () => LOC.toggleFilter());
+})();
+
+// Show the Locate button only for the gridiron account, and keep its counter
+// fresh whenever the inventory page is shown or data changes.
+function updateLocateButton() {
+  const btn = document.getElementById('btn-locate-mobile');
+  if (!btn) return;
+  const username = (_fbUser && _fbUser.email) ? displayName(_fbUser.email).toLowerCase() : '';
+  const isGridiron = username === 'gridiron';
+  btn.hidden = !isGridiron;
+  if (isGridiron) {
+    const unset = LOC.countUnset();
+    const countEl = document.getElementById('btn-locate-count');
+    if (countEl) countEl.textContent = unset > 0 ? `· ${unset} unset` : '· all set ✓';
+  }
+}
+
 // Refresh the Sent Today list when the user navigates to Inventory.
 document.querySelectorAll('.nav-item[data-view="inventory"]').forEach(el => {
   el.addEventListener('click', () => {
@@ -6867,6 +7159,8 @@ async function initFirebase() {
         document.getElementById('auth-overlay').classList.remove('hidden');
         document.getElementById('cloud-status').hidden = true;
       }
+      // Refresh the gridiron-only Locate button based on who's signed in
+      if (typeof updateLocateButton === 'function') updateLocateButton();
     });
 
     document.getElementById('auth-footer').textContent = 'Enter credentials to continue';
