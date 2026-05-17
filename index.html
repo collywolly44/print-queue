@@ -5636,8 +5636,10 @@ function importCSV(text) {
   }
 
   const newOrders = [];
-  // Track duplicate IDs within a single CSV — same (orderId, sku, item) can
-  // appear twice as separate line items. We disambiguate with a per-key counter.
+  // Track duplicate IDs within a single CSV — same (customer, sku, item, day)
+  // can appear twice as separate line items (same customer ordering the same
+  // thing twice in one day, or a 2-quantity broken into 2 line items). We
+  // disambiguate with a per-key counter so each row gets a unique ID.
   const idCounts = {};
   let imported = 0;
   let skipped = 0;
@@ -5653,20 +5655,22 @@ function importCSV(text) {
     const cust = (r[custCol] || '').trim();
     const orderId = idCol >= 0 ? (r[idCol] || '').trim() : '';
     const finalSku = sku || `[NO-SKU] ${item.slice(0,50)}`;
-    // Build a STABLE row ID from Order # + SKU + Item Name (first 60 chars).
-    // Critically, we do NOT use the row index — ShipStation reorders line
-    // items between exports, so row index would make every line look "new"
-    // on the next import.
-    // If the same (orderId, sku, item) appears more than once (e.g. ordered
-    // 2× of the same SKU as two line items rather than qty=2), we suffix a
-    // counter to keep IDs unique within the CSV.
-    const baseKey = `${orderId}|${finalSku}|${item.slice(0,60)}`.replace(/[^a-zA-Z0-9|]/g, '_');
+    // Build a STABLE row ID from Customer + SKU + Item Name + Order Date (day).
+    // Critically, we do NOT use the Order # because ShipStation reassigns
+    // line items to a different Order # when orders get combined. With this
+    // scheme, the same physical line item keeps the same ID across combines.
+    // We fall back to Order # if customer is missing (rare guest checkouts).
+    const dateDay = date.toISOString().slice(0, 10);  // YYYY-MM-DD
+    const idSource = cust
+      ? `${cust}|${finalSku}|${item.slice(0,60)}|${dateDay}`
+      : `${orderId}|${finalSku}|${item.slice(0,60)}|${dateDay}`;
+    const baseKey = idSource.replace(/[^a-zA-Z0-9|]/g, '_');
     idCounts[baseKey] = (idCounts[baseKey] || 0) + 1;
     const dup = idCounts[baseKey];
     const id = dup === 1 ? baseKey : `${baseKey}|${dup}`;
     newOrders.push({
       id, date: date.toISOString(), sku: finalSku, qty,
-      customer: cust, item,
+      customer: cust, item, orderId,
     });
     imported++;
   }
