@@ -2026,6 +2026,31 @@ body {
 body.mode-mobile .nav-item[data-mobile="hide"] { display: none; }
 body.mode-mobile .view-mobile-hidden { display: none !important; }
 
+/* ============================================================
+   GRIDIRON LOCKDOWN
+   When signed in as gridiron, only the mobile Inventory landing
+   is visible. Everything else (sidebar, other views, cloud-status
+   pill) is hidden. Works on every device size — gridiron is
+   confined to one workflow.
+   ============================================================ */
+body.is-gridiron .sidebar { display: none !important; }
+body.is-gridiron .cloud-status { display: none !important; }
+body.is-gridiron #view-queue-resin,
+body.is-gridiron #view-queue-fdm,
+body.is-gridiron #view-library,
+body.is-gridiron #view-orders,
+body.is-gridiron #view-import { display: none !important; }
+/* Force inventory view to be visible regardless of switchView state */
+body.is-gridiron #view-inventory { display: block !important; }
+/* Hide the desktop inventory content; show only the mobile landing */
+body.is-gridiron .inv-desktop-only,
+body.is-gridiron .view-mobile-hidden { display: none !important; }
+body.is-gridiron .inv-mobile-landing { display: block !important; }
+/* App layout: drop the sidebar column entirely */
+body.is-gridiron .app { grid-template-columns: 1fr !important; }
+/* Hide the Locate Parts button (it's collin-only) explicitly under gridiron */
+body.is-gridiron #btn-locate-mobile { display: none !important; }
+
 /* Permanent Priority panel in the sidebar (where Part Needed lands).
    Items are draggable into the resin kanban or the FDM queue. */
 .sidebar-priority {
@@ -6767,18 +6792,31 @@ const LOC = {
   if (filterBtn) filterBtn.addEventListener('click', () => LOC.toggleFilter());
 })();
 
-// Show the Locate button only for the gridiron account, and keep its counter
+// Show the Locate button only for the collin account, and keep its counter
 // fresh whenever the inventory page is shown or data changes.
 function updateLocateButton() {
   const btn = document.getElementById('btn-locate-mobile');
   if (!btn) return;
   const username = (_fbUser && _fbUser.email) ? displayName(_fbUser.email).toLowerCase() : '';
-  const isGridiron = username === 'gridiron';
-  btn.hidden = !isGridiron;
-  if (isGridiron) {
+  const isCollin = username === 'collin';
+  btn.hidden = !isCollin;
+  if (isCollin) {
     const unset = LOC.countUnset();
     const countEl = document.getElementById('btn-locate-count');
     if (countEl) countEl.textContent = unset > 0 ? `· ${unset} unset` : '· all set ✓';
+  }
+}
+
+// Account-based UI lockdown. When signed in as gridiron, the body gets the
+// `is-gridiron` class which (via CSS) hides everything except the mobile
+// Inventory landing. Also force-navigates to Inventory so URL state can't
+// linger on a hidden view.
+function applyAccountLockdown() {
+  const username = (_fbUser && _fbUser.email) ? displayName(_fbUser.email).toLowerCase() : '';
+  const isGridiron = username === 'gridiron';
+  document.body.classList.toggle('is-gridiron', isGridiron);
+  if (isGridiron && state.view !== 'inventory') {
+    switchView('inventory');
   }
 }
 
@@ -7159,8 +7197,9 @@ async function initFirebase() {
         document.getElementById('auth-overlay').classList.remove('hidden');
         document.getElementById('cloud-status').hidden = true;
       }
-      // Refresh the gridiron-only Locate button based on who's signed in
+      // Refresh per-account UI gating
       if (typeof updateLocateButton === 'function') updateLocateButton();
+      if (typeof applyAccountLockdown === 'function') applyAccountLockdown();
     });
 
     document.getElementById('auth-footer').textContent = 'Enter credentials to continue';
