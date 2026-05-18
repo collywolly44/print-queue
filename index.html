@@ -2026,6 +2026,58 @@ body {
 body.mode-mobile .nav-item[data-mobile="hide"] { display: none; }
 body.mode-mobile .view-mobile-hidden { display: none !important; }
 
+/* Gridiron-only header bar inside the mobile inventory landing.
+   Shown only when body.is-gridiron (since the corner cloud-status pill is
+   hidden for that account, we need a visible sign-out button here). */
+body.is-gridiron .gridiron-bar { display: flex !important; }
+.gridiron-bar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line-bright);
+  border-radius: 6px;
+  margin-bottom: 20px;
+  box-sizing: border-box;
+}
+.gridiron-bar-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.gridiron-bar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+}
+.gridiron-signout {
+  background: var(--panel);
+  border: 1px solid var(--line-bright);
+  color: var(--ink-dim);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-height: 36px;
+}
+.gridiron-signout:active {
+  background: var(--red);
+  border-color: var(--red);
+  color: var(--bg);
+}
 /* ============================================================
    GRIDIRON LOCKDOWN
    When signed in as gridiron, only the mobile Inventory landing
@@ -3252,6 +3304,15 @@ body.mode-mobile .mobile-only { display: block; }
     <section id="view-inventory" class="hidden">
       <!-- Mobile-only landing -->
       <div class="mobile-only inv-mobile-landing">
+        <!-- Gridiron-only header bar (since the cloud-status pill is hidden for that account) -->
+        <div class="gridiron-bar" id="gridiron-bar" style="display:none;">
+          <div class="gridiron-bar-user">
+            <span class="gridiron-bar-dot"></span>
+            <span id="gridiron-bar-name">—</span>
+          </div>
+          <button class="gridiron-signout" id="gridiron-signout" aria-label="Sign out">Sign out</button>
+        </div>
+
         <div class="inv-mobile-title">Inventory</div>
 
         <!-- Uncounted Parts button (top-priority action) -->
@@ -6815,6 +6876,9 @@ function applyAccountLockdown() {
   const username = (_fbUser && _fbUser.email) ? displayName(_fbUser.email).toLowerCase() : '';
   const isGridiron = username === 'gridiron';
   document.body.classList.toggle('is-gridiron', isGridiron);
+  // Set the username text in the gridiron bar
+  const nameEl = document.getElementById('gridiron-bar-name');
+  if (nameEl) nameEl.textContent = username.toUpperCase();
   if (isGridiron && state.view !== 'inventory') {
     switchView('inventory');
   }
@@ -7509,6 +7573,20 @@ document.getElementById('cloud-signout').addEventListener('click', () => {
     onConfirm: doSignOut,
   });
 });
+
+// Gridiron's dedicated sign-out button (since the corner cloud-status pill is
+// hidden for that account). Works identically — just visible in the locked
+// down inventory landing.
+const gridironSignout = document.getElementById('gridiron-signout');
+if (gridironSignout) {
+  gridironSignout.addEventListener('click', () => {
+    confirmModal({
+      title: 'Sign out?',
+      text: 'You will need to sign in again.',
+      onConfirm: doSignOut,
+    });
+  });
+}
 
 // Kick off Firebase init
 if (!window.OFFLINE_MODE) {
