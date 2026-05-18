@@ -2570,6 +2570,29 @@ body.mode-mobile .mobile-only { display: block; }
   font-weight: 700;
 }
 .pn-sent-meta.resolved { color: var(--green); }
+.pn-sent-delete {
+  width: 36px;
+  height: 36px;
+  margin-left: 8px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-faint);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pn-sent-delete:hover, .pn-sent-delete:active {
+  border-color: var(--red);
+  color: var(--red);
+  background: rgba(232,93,74,0.08);
+}
 .part-needed-sent-empty {
   text-align: center;
   font-family: 'JetBrains Mono', monospace;
@@ -3375,9 +3398,7 @@ body.mode-mobile .mobile-only { display: block; }
         <div class="page-actions">
           <button class="btn btn-primary" id="btn-walkthrough" title="Big-button counting mode for walking through inventory">Uncounted Parts</button>
           <button class="btn btn-ghost" id="btn-resort-inventory" title="Re-sort by priority (uncounted first, oldest order first)">Re-sort by priority</button>
-          <button class="btn btn-ghost" id="btn-reset-uncounted" title="Mark every part as uncounted (does NOT change stock numbers)">Reset all to uncounted</button>
           <button class="btn btn-ghost" id="btn-export-inventory">Export CSV</button>
-          <button class="btn btn-ghost" id="btn-zero-inventory">Zero all stock</button>
         </div>
       </div>
 
@@ -6198,21 +6219,6 @@ document.getElementById('btn-resort-inventory').addEventListener('click', () => 
   renderInventory();
   toast('Inventory re-sorted by priority');
 });
-document.getElementById('btn-reset-uncounted').addEventListener('click', () => {
-  const total = Object.keys(state.countedParts || {}).length;
-  if (total === 0) { toast('Nothing is counted yet — nothing to reset.', 'error'); return; }
-  confirmModal({
-    title: `Reset all ${total} counted parts to uncounted?`,
-    text: 'This marks every part as "not counted" — it does NOT change stock numbers. You can then re-walk inventory.',
-    onConfirm: () => {
-      state.countedParts = {};
-      save();
-      renderInventory(); renderQueue(); renderSidebarCounts();
-      toast(`Reset ${total} parts to uncounted`);
-    },
-  });
-});
-
 // ============================================================
 // WALK THROUGH MODE — full-screen inventory entry for phones
 // ============================================================
@@ -6539,11 +6545,29 @@ const PN = {
       const resolved = !!n.resolvedAt;
       const metaClass = resolved ? 'resolved' : '';
       const metaTxt = resolved ? '✓ Resolved' : time;
-      return `<div class="part-needed-sent-item ${resolved ? 'resolved' : ''}">
+      return `<div class="part-needed-sent-item ${resolved ? 'resolved' : ''}" data-need-id="${escapeAttr(n.id)}">
         <div class="pn-sent-name">${escapeHtml(n.partName)}</div>
         <div class="pn-sent-meta ${metaClass}">${metaTxt}</div>
+        <button class="pn-sent-delete" data-need-id="${escapeAttr(n.id)}" aria-label="Delete this request" title="Delete">×</button>
       </div>`;
     }).join('');
+
+    // Wire delete buttons
+    list.querySelectorAll('.pn-sent-delete').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.needId;
+        const idx = state.partsNeeded.findIndex(n => n.id === id);
+        if (idx === -1) return;
+        const name = state.partsNeeded[idx].partName;
+        state.partsNeeded.splice(idx, 1);
+        save();
+        PN.renderSentToday();
+        renderQueue();
+        renderSidebarCounts();
+        toast(`Removed "${name}" from Part Needed`);
+      });
+    });
   },
 };
 PN.init();
@@ -6925,19 +6949,6 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') { e.preventDefault(); WT.exit(); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); WT.prev(); }
   else if (e.key === 'ArrowRight') { e.preventDefault(); WT.skip(); }
-});
-
-document.getElementById('btn-zero-inventory').addEventListener('click', () => {
-  confirmModal({
-    title: 'Zero out all stock?',
-    text: 'This sets every part\'s stock to 0. Cannot be undone unless you have a backup.',
-    onConfirm: () => {
-      state.inventory = {};
-      save();
-      renderInventory(); renderQueue(); renderSidebarCounts();
-      toast('All stock zeroed');
-    },
-  });
 });
 
 // Import
