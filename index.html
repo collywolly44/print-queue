@@ -4508,9 +4508,13 @@ function renderKanban(filtered, allVisible) {
   if (!board) return;
 
   // Clean up stale assignments (orders that have shipped / been covered).
+  // We preserve any synthetic group keys (`__group__...`) even if no current
+  // row matches — they may be valid for a future render where that part
+  // re-appears in demand.
   const liveKeys = new Set(allVisible.map(r => r.key));
   let pruned = false;
   for (const k of Object.keys(state.assignments)) {
+    if (k.startsWith('__group__')) continue;  // keep group-level assignments
     if (!liveKeys.has(k)) {
       delete state.assignments[k];
       pruned = true;
@@ -4518,11 +4522,82 @@ function renderKanban(filtered, allVisible) {
   }
   if (pruned) save();
 
-  // Group filtered rows by their machine assignment.
-  // Priority: explicit assignment > part's preferred printer > 'unassigned'.
-  const byMachine = Object.fromEntries(MACHINES.map(m => [m, []]));
-  for (const r of filtered) {
+  // ============================================================
+  // GROUPING: collapse multiple orders for the same part into one card.
+  // Each grouped card shows the total remaining qty (demand minus inventory
+  // FIFO) plus the count of unique customers + oldest order date.
+  // Part Needed rows (_isNeed) stay un-grouped — they have their own
+  // identity (per-need.id) and the user explicitly placed them via drag.
+  // ============================================================
+  const needs = filtered.filter(r => r._isNeed);
+  const orders = filtered.filter(r => !r._isNeed);
+  // Group regular rows by part name
+  const byPart = new Map();
+  for (const r of orders) {
+    const key = r.part;
+    if (!byPart.has(key)) {
+      byPart.set(key, {
+        rows: [],
+        totalRemaining: 0,
+        totalOriginal: 0,
+        oldestDate: r.date,
+        oldestRow: r,
+        customers: new Set(),
+        skus: new Set(),
+        anyAssignedMachine: null,  // first explicit assignment we see
+      });
+    }
+    const g = byPart.get(key);
+    g.rows.push(r);
+    g.totalRemaining += r._remaining;
+    g.totalOriginal += r.originalQty;
+    if (new Date(r.date) < new Date(g.oldestDate)) {
+      g.oldestDate = r.date;
+      g.oldestRow = r;
+    }
+    if (r.customer) g.customers.add(r.customer);
+    if (r.sku) g.skus.add(r.sku);
     const manual = state.assignments[r.key];
+    if (manual && !g.anyAssignedMachine) g.anyAssignedMachine = manual;
+  }
+  // Build grouped pseudo-rows that have the same shape as regular rows so the
+  // rest of the kanban code is mostly unchanged. We give each group a
+  // synthetic key (`__group__partName`) so drop-target assignments work.
+  const groupedRows = [];
+  for (const [partName, g] of byPart.entries()) {
+    const oldest = g.oldestRow;
+    groupedRows.push({
+      // Synthetic key for assignment tracking + drag/drop
+      key: `__group__${partName}`,
+      // Real first-row id for compatibility (Done uses this for SKU lookup)
+      orderId: oldest.orderId,
+      part: partName,
+      sku: oldest.sku,
+      customer: oldest.customer,
+      item: oldest.item,
+      date: g.oldestDate,
+      qty: g.totalOriginal,           // total qty across all orders
+      originalQty: g.totalOriginal,
+      _remaining: g.totalRemaining,
+      _covered: Math.max(0, g.totalOriginal - g.totalRemaining),
+      _isGroup: true,
+      _customerCount: g.customers.size,
+      _orderCount: g.rows.length,
+      _underlyingRows: g.rows,
+      _anyAssigned: g.anyAssignedMachine,
+    });
+  }
+  // Keep Part Needed cards on top (oldest-need first), then groups (oldest-order first)
+  groupedRows.sort((a, b) => new Date(a.date) - new Date(b.date));
+  needs.sort((a, b) => new Date(a.date) - new Date(b.date));
+  const finalRows = [...needs, ...groupedRows];
+
+  // Group rows by their machine assignment.
+  // For groups, the synthetic key isn't in state.assignments yet — we fall
+  // back to the part's preferred printer per the Parts Library.
+  const byMachine = Object.fromEntries(MACHINES.map(m => [m, []]));
+  for (const r of finalRows) {
+    const manual = state.assignments[r.key] || (r._isGroup ? r._anyAssigned : null);
     let target;
     if (manual && MACHINES.includes(manual)) {
       target = manual;
@@ -4553,9 +4628,28 @@ function renderKanban(filtered, allVisible) {
         const dateStr = new Date(r.date).toLocaleDateString('en-US', { month:'short', day:'numeric' });
         const showQty = r._remaining;
         const partial = r._covered > 0;
-        const qtyTitle = partial ? `Need ${r.originalQty}, ${r._covered} from stock` : '';
+        const qtyTitle = partial ? `Total needed ${r.originalQty}, ${r._covered} from stock` : '';
         const needClass = r._isNeed ? ' kanban-card-need' : '';
         const needTag = r._isNeed ? '<div class="kanban-card-need-tag">Part Needed</div>' : '';
+        // For grouped cards, show customer count + order count instead of a single customer.
+        // For Part Needed cards and any non-group fallback, show the customer name.
+        let metaCustomer;
+        if (r._isGroup) {
+          const orderLabel = r._orderCount === 1 ? '1 order' : `${r._orderCount} orders`;
+          const custLabel = r._customerCount === 1 ? '1 customer' : `${r._customerCount} customers`;
+          metaCustomer = `${orderLabel} · ${custLabel}`;
+        } else {
+          metaCustomer = escapeHtml(r.customer);
+        }
+        // For grouped cards, the SKU footer just says "Multiple SKUs" when >1
+        let skuText;
+        if (r._isGroup) {
+          // Unique SKU count
+          const uniqueSkus = new Set(r._underlyingRows.map(u => u.sku));
+          skuText = uniqueSkus.size === 1 ? [...uniqueSkus][0] : `${uniqueSkus.size} SKUs`;
+        } else {
+          skuText = r.sku;
+        }
         html += `
           <div class="kanban-card ${agedClass}${needClass}" draggable="true" data-key="${escapeAttr(r.key)}">
             ${needTag}
@@ -4564,11 +4658,11 @@ function renderKanban(filtered, allVisible) {
               <div class="kanban-card-qty ${showQty>1?'multi':''}" ${qtyTitle?`title="${qtyTitle}"`:''}>×${showQty}</div>
             </div>
             <div class="kanban-card-meta">
-              <div class="kanban-card-customer" title="${escapeAttr(r.customer)}">${escapeHtml(r.customer)}</div>
+              <div class="kanban-card-customer" title="${escapeAttr(typeof metaCustomer === 'string' ? metaCustomer : '')}">${metaCustomer}</div>
               <div class="kanban-card-date"><strong>${dateStr}</strong> · ${age}d</div>
             </div>
             <div class="kanban-card-bottom">
-              <div class="kanban-card-sku" title="${escapeAttr(r.sku)}">${escapeHtml(r.sku)}</div>
+              <div class="kanban-card-sku" title="${escapeAttr(skuText)}">${escapeHtml(skuText)}</div>
               <button class="kanban-done">Done</button>
             </div>
           </div>`;
@@ -4651,7 +4745,9 @@ function renderKanban(filtered, allVisible) {
       e.stopPropagation();
       const card = btn.closest('.kanban-card');
       const key = card.dataset.key;
-      const clicked = allVisible.find(r => r.key === key);
+      // Look in finalRows first (which includes the grouped pseudo-rows), then fall
+      // back to allVisible for any non-grouped Part-Needed rows.
+      const clicked = finalRows.find(r => r.key === key) || allVisible.find(r => r.key === key);
       if (!clicked) return;
       // Part-needed alerts: no plate modal, no inventory change. Mark resolved.
       if (clicked._isNeed) {
@@ -4669,6 +4765,10 @@ function renderKanban(filtered, allVisible) {
         }, 220);
         return;
       }
+      // For grouped cards, the plate modal uses the part's saved yield as the
+      // default — same as before. printPlate adds to inventory; FIFO across
+      // the underlying orders happens automatically on next renderQueue since
+      // buildQueue re-runs the FIFO math from scratch.
       confirmPrintPlate(clicked, (qty) => {
         card.classList.add('removing');
         delete state.assignments[key];
