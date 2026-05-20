@@ -654,6 +654,27 @@ body {
   background: var(--green);
   color: #0a1c0d;
 }
+.pr-need-tag {
+  display: inline-block;
+  padding: 2px 6px;
+  background: var(--amber);
+  color: #1a1408;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: 2px;
+  margin-bottom: 6px;
+  white-space: nowrap;
+}
+.paint-row-card.is-from-need {
+  border-color: var(--amber);
+  border-left-color: var(--amber);
+}
+.paint-mobile-card.is-from-need {
+  border-left-color: var(--amber);
+}
 
 .kanban-help {
   font-family: 'JetBrains Mono', monospace;
@@ -5852,11 +5873,16 @@ function renderPaintRow(allKanbanRows) {
       const fromMachine = info.fromMachine && MACHINE_LABELS[info.fromMachine] ? MACHINE_LABELS[info.fromMachine] : null;
       const ageStr = at ? `${daysBetween(at, new Date())}d ago` : '';
       const fromStr = fromMachine ? ` · ${fromMachine}` : '';
+      const isFromNeed = !!info.fromNeedId;
+      const needTag = isFromNeed ? '<div class="pr-need-tag">From Part Needed · no inventory</div>' : '';
+      const doneLabel = isFromNeed ? 'Done · Mark resolved' : 'Done · → Inventory';
+      const fromNeedClass = isFromNeed ? ' is-from-need' : '';
       html += `
-        <div class="paint-row-card" draggable="true" data-paint-part="${escapeAttr(partName)}">
+        <div class="paint-row-card${fromNeedClass}" draggable="true" data-paint-part="${escapeAttr(partName)}">
+          ${needTag}
           <div class="pr-part">${escapeHtml(partName)}</div>
           <div class="pr-meta">${ageStr}${fromStr}</div>
-          <button class="pr-done">Done · → Inventory</button>
+          <button class="pr-done">${doneLabel}</button>
         </div>`;
     }
     body.innerHTML = html;
@@ -5869,32 +5895,45 @@ function renderPaintRow(allKanbanRows) {
       const card = btn.closest('.paint-row-card');
       const partName = card.dataset.paintPart;
       const paintInfo = state.paintParts[partName] || {};
+      const fromNeedId = paintInfo.fromNeedId;
+
+      // PATH A: came from a Part Needed → resolve the need, log to history,
+      // remove from paint, but DO NOT add anything to inventory. The original
+      // request was for one specific piece, not a full plate; adding plate
+      // yield would inflate inventory by 3-6x what was actually needed.
+      if (fromNeedId) {
+        const need = (state.partsNeeded || []).find(n => n.id === fromNeedId);
+        if (need && !need.resolvedAt) {
+          need.resolvedAt = new Date().toISOString();
+          if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
+          state.completedOrders.push({
+            at: need.resolvedAt,
+            partName,
+            qty: 1,
+            sku: '',
+            customer: 'Part Needed (painted)',
+            originalOrderDate: need.addedAt || null,
+            kind: 'need',
+          });
+        }
+        delete state.paintParts[partName];
+        save();
+        renderQueue('resin');
+        renderSidebarPriority();
+        renderSidebarCounts();
+        toast(`Resolved & painted: ${partName}`);
+        return;
+      }
+
+      // PATH B: regular paint → plate modal → add yield to inventory
       const lib = findFirstSkuUsingPart(partName);
       const clicked = {
         part: partName,
         sku: lib || '',
-        customer: paintInfo.fromNeedId ? 'Part Needed (painted)' : 'Paint queue',
+        customer: 'Paint queue',
         date: paintInfo.at || new Date().toISOString(),
       };
       confirmPrintPlate(clicked, (qty) => {
-        // If this paint card came from a Part Needed, resolve that need now
-        const fromNeedId = paintInfo.fromNeedId;
-        if (fromNeedId) {
-          const need = (state.partsNeeded || []).find(n => n.id === fromNeedId);
-          if (need && !need.resolvedAt) {
-            need.resolvedAt = new Date().toISOString();
-            if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
-            state.completedOrders.push({
-              at: need.resolvedAt,
-              partName,
-              qty: 1,
-              sku: '',
-              customer: 'Part Needed',
-              originalOrderDate: need.addedAt || null,
-              kind: 'need',
-            });
-          }
-        }
         delete state.paintParts[partName];
         save();
         printPlate(clicked, qty);
@@ -5915,77 +5954,86 @@ function renderPaintRow(allKanbanRows) {
     });
   });
 
-  // Wire the drop zone — accept regular kanban cards (move INTO paint) and
-  // accept other paint cards (no-op, but prevents browser default).
-  // CRITICAL: wire these listeners ONCE per element, not every render. Otherwise
-  // dragover/drop handlers stack up — after N renders, every mouse-move during
-  // a drag fires N handlers, which is the cause of the >13-card slowdown.
-  if (!body._dropHandlersWired) {
-    body.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      body.classList.add('drag-over');
-    });
-    body.addEventListener('dragleave', (e) => {
-      if (!body.contains(e.relatedTarget)) body.classList.remove('drag-over');
-    });
-    body.addEventListener('drop', (e) => {
-      e.preventDefault();
-      body.classList.remove('drag-over');
-      const paintPart = e.dataTransfer.getData('application/x-paint-part');
-      if (paintPart) return; // dropping a paint card back into paint — no-op
-      const fallback = e.dataTransfer.getData('text/plain');
-      let partName = null;
-      let sourceMachine = null;
-      let needId = null;
+  // Wire individual paint-card drag/drop. Drop-zone listeners are wired once
+  // globally below — see wirePaintDropZone() near app boot.
+}
 
-      if (fallback && fallback.startsWith('need:')) {
-        // Part Needed → Paint
-        needId = fallback.slice(5);
-        const need = (state.partsNeeded || []).find(n => n.id === needId);
-        if (!need) return;
-        partName = need.partName;
-        if (need.placedMachine && MACHINES.includes(need.placedMachine)) {
-          sourceMachine = need.placedMachine;
-        }
-        need.placedAt = new Date().toISOString();
-        need.placedQueue = 'paint';
-      } else {
-        const key = fallback;
-        if (!key) return;
-        // Re-read the queue at drop time (closure-captured rows would be stale)
-        const currentQueue = buildQueue('resin');
-        const row = (currentQueue.all || []).find(r => r.key === key);
-        if (!row) return;
-        partName = row.part;
-        const manual = state.assignments[key];
-        if (manual && MACHINES.includes(manual)) sourceMachine = manual;
-        else {
-          const preferred = preferredPrinterForPart(partName);
-          sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
-        }
-        // CLEAR any column assignment so the dropped card doesn't linger in
-        // its old column (especially Unassigned). Also clear the synthetic
-        // group key in case this was a grouped card.
-        delete state.assignments[key];
-        delete state.assignments[`__group__${partName}`];
+// One-time wiring for the Paint row drop zone. Wired at app boot so the drop
+// works even if the resin view hasn't rendered yet.
+function wirePaintDropZone() {
+  const body = document.getElementById('paint-row-body');
+  if (!body || body._dropHandlersWired) return;
+  body._dropHandlersWired = true;
+
+  body.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    body.classList.add('drag-over');
+  });
+  body.addEventListener('dragleave', (e) => {
+    if (!body.contains(e.relatedTarget)) body.classList.remove('drag-over');
+  });
+  body.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    body.classList.remove('drag-over');
+    const paintPart = e.dataTransfer.getData('application/x-paint-part');
+    if (paintPart) return; // dropping a paint card back into paint — no-op
+    const fallback = e.dataTransfer.getData('text/plain');
+    if (!fallback) return;
+
+    let partName = null;
+    let sourceMachine = null;
+    let needId = null;
+
+    if (fallback.startsWith('need:')) {
+      // Part Needed → Paint
+      needId = fallback.slice(5);
+      const need = (state.partsNeeded || []).find(n => n.id === needId);
+      if (!need) return;
+      partName = need.partName;
+      if (need.placedMachine && MACHINES.includes(need.placedMachine)) {
+        sourceMachine = need.placedMachine;
       }
+      need.placedAt = new Date().toISOString();
+      need.placedQueue = 'paint';
+    } else {
+      const key = fallback;
+      const currentQueue = buildQueue('resin');
+      const row = (currentQueue.all || []).find(r => r.key === key);
+      if (!row) return;
+      partName = row.part;
+      const manual = state.assignments[key];
+      if (manual && MACHINES.includes(manual)) sourceMachine = manual;
+      else {
+        const preferred = preferredPrinterForPart(partName);
+        sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
+      }
+      // Clear assignment so the card leaves its column
+      delete state.assignments[key];
+      delete state.assignments[`__group__${partName}`];
+    }
 
-      if (!partName) return;
-      if (!state.paintParts) state.paintParts = {};
-      state.paintParts[partName] = {
-        at: new Date().toISOString(),
-        fromMachine: sourceMachine,
-        fromNeedId: needId,
-      };
-      save();
-      renderQueue('resin');
-      renderSidebarPriority();
-      renderSidebarCounts();
-      toast(`"${partName}" → Paint`);
-    });
-    body._dropHandlersWired = true;
-  }
+    if (!partName) return;
+    if (!state.paintParts) state.paintParts = {};
+    state.paintParts[partName] = {
+      at: new Date().toISOString(),
+      fromMachine: sourceMachine,
+      fromNeedId: needId,
+    };
+    save();
+    renderQueue('resin');
+    renderSidebarPriority();
+    renderSidebarCounts();
+    toast(`"${partName}" → Paint`);
+  });
+}
+
+// Wire at boot
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', wirePaintDropZone);
+} else {
+  wirePaintDropZone();
 }
 
 // Helper: find any SKU that uses a given part name (for printPlate sku lookup)
@@ -6030,16 +6078,21 @@ function renderPaintMobile() {
     const at = info.at ? new Date(info.at) : null;
     const ageStr = at ? `${daysBetween(at, new Date())}d waiting` : 'waiting';
     const fromMachine = info.fromMachine && MACHINE_LABELS[info.fromMachine] ? MACHINE_LABELS[info.fromMachine] : null;
-    const fromStr = fromMachine ? ` · ${fromMachine}` : (info.fromNeedId ? ' · Part Needed' : '');
+    const isFromNeed = !!info.fromNeedId;
+    const fromStr = fromMachine ? ` · ${fromMachine}` : (isFromNeed ? ' · Part Needed' : '');
+    const needTag = isFromNeed ? '<div class="pr-need-tag" style="margin-bottom:6px;">From Part Needed · no inventory</div>' : '';
+    const doneLabel = isFromNeed ? 'Done' : 'Done';
+    const fromNeedClass = isFromNeed ? ' is-from-need' : '';
     html += `
-      <div class="paint-mobile-card" data-paint-part="${escapeAttr(partName)}">
+      <div class="paint-mobile-card${fromNeedClass}" data-paint-part="${escapeAttr(partName)}">
         <div class="paint-mobile-info">
+          ${needTag}
           <div class="paint-mobile-name">${escapeHtml(partName)}</div>
           <div class="paint-mobile-meta">${ageStr}${fromStr}</div>
         </div>
         <div class="paint-mobile-actions">
           <button class="paint-mobile-trash" data-paint-trash aria-label="Remove from paint without adding to inventory">🗑</button>
-          <button class="paint-mobile-done" data-paint-done>Done</button>
+          <button class="paint-mobile-done" data-paint-done>${doneLabel}</button>
         </div>
       </div>`;
   }
@@ -6055,32 +6108,42 @@ function renderPaintMobile() {
       doneBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const paintInfo = state.paintParts[partName] || {};
+        const fromNeedId = paintInfo.fromNeedId;
+
+        // PATH A: came from Part Needed → no inventory, just resolve + remove
+        if (fromNeedId) {
+          const need = (state.partsNeeded || []).find(n => n.id === fromNeedId);
+          if (need && !need.resolvedAt) {
+            need.resolvedAt = new Date().toISOString();
+            if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
+            state.completedOrders.push({
+              at: need.resolvedAt,
+              partName,
+              qty: 1,
+              sku: '',
+              customer: 'Part Needed (painted)',
+              originalOrderDate: need.addedAt || null,
+              kind: 'need',
+            });
+          }
+          delete state.paintParts[partName];
+          save();
+          renderPaintMobile();
+          renderSidebarPriority();
+          renderSidebarCounts();
+          toast(`Resolved & painted: ${partName}`);
+          return;
+        }
+
+        // PATH B: regular paint → plate modal → inventory
         const lib = findFirstSkuUsingPart(partName);
         const clicked = {
           part: partName,
           sku: lib || '',
-          customer: paintInfo.fromNeedId ? 'Part Needed (painted)' : 'Paint queue',
+          customer: 'Paint queue',
           date: paintInfo.at || new Date().toISOString(),
         };
         confirmPrintPlate(clicked, (qty) => {
-          // If this came from a Part Needed, resolve it
-          const fromNeedId = paintInfo.fromNeedId;
-          if (fromNeedId) {
-            const need = (state.partsNeeded || []).find(n => n.id === fromNeedId);
-            if (need && !need.resolvedAt) {
-              need.resolvedAt = new Date().toISOString();
-              if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
-              state.completedOrders.push({
-                at: need.resolvedAt,
-                partName,
-                qty: 1,
-                sku: '',
-                customer: 'Part Needed',
-                originalOrderDate: need.addedAt || null,
-                kind: 'need',
-              });
-            }
-          }
           delete state.paintParts[partName];
           save();
           printPlate(clicked, qty);
