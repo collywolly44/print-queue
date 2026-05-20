@@ -1890,9 +1890,117 @@ body {
   border-radius: 1px;
 }
 
+/* Gridiron lockdown hides everything except mobile inventory. The Paint
+   nav item is for Collin only — hide for everyone else. */
+body:not(.is-collin) .nav-collin-only { display: none !important; }
+
 /* ============================================================
-   SLA SORTER STYLES
+   PAINT QUEUE (mobile-first)
    ============================================================ */
+.paint-mobile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 720px;
+}
+.paint-mobile-card {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line-bright);
+  border-left: 4px solid #b86bd9;  /* paint purple */
+  border-radius: 6px;
+  padding: 16px 16px 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+  overflow: hidden;
+  /* Touch-swipe slide */
+  transition: transform 0.18s ease, opacity 0.18s ease;
+  touch-action: pan-y;  /* allow vertical scroll but capture horizontal */
+}
+.paint-mobile-card.removing {
+  opacity: 0;
+  transform: translateX(-120%);
+}
+.paint-mobile-info { min-width: 0; }
+.paint-mobile-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--amber);
+  line-height: 1.2;
+  word-break: break-word;
+  margin-bottom: 4px;
+}
+.paint-mobile-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.04em;
+}
+.paint-mobile-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.paint-mobile-trash {
+  width: 44px;
+  height: 56px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-faint);
+  border-radius: 4px;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.paint-mobile-trash:active {
+  background: rgba(232,93,74,0.12);
+  border-color: var(--red);
+  color: var(--red);
+}
+.paint-mobile-done {
+  background: transparent;
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 18px 22px;
+  border-radius: 4px;
+  min-height: 56px;
+  min-width: 84px;
+  cursor: pointer;
+}
+.paint-mobile-done:active {
+  background: var(--green);
+  color: #0a1c0d;
+}
+
+/* Swipe gesture visualization (red trash icon shows under as user swipes left) */
+.paint-mobile-card::before {
+  content: '✕ DELETE';
+  position: absolute;
+  right: 18px;
+  top: 0; bottom: 0;
+  display: flex;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--red);
+  opacity: 0;
+  pointer-events: none;
+}
+.paint-mobile-card.swiping::before { opacity: 1; }
+
 .sla-progress {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -3850,6 +3958,10 @@ body.mode-mobile .mobile-only { display: block; }
         <span>Vehicle Tagger</span>
         <span class="nav-item-num" id="nav-sla-count">0</span>
       </div>
+      <div class="nav-item nav-collin-only" data-view="paint" data-mobile="show">
+        <span>Paint</span>
+        <span class="nav-item-num" id="nav-paint-count">0</span>
+      </div>
       <div class="nav-item" data-view="inventory" data-mobile="show">
         <span>Inventory</span>
         <span class="nav-item-num" id="nav-inventory-count">0</span>
@@ -4018,6 +4130,23 @@ body.mode-mobile .mobile-only { display: block; }
       </div>
 
       <div id="library-container"></div>
+    </section>
+
+    <!-- =========== PAINT QUEUE VIEW (Collin only) =========== -->
+    <section id="view-paint" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Paint Queue</h1>
+          <div class="page-sub">Printed parts waiting to be painted · oldest first</div>
+        </div>
+      </div>
+      <div class="paint-mobile-list" id="paint-mobile-list">
+        <div class="empty" style="padding:60px 20px;text-align:center;">
+          <div class="empty-mark">∅</div>
+          <div class="empty-title">Paint queue is empty</div>
+          <div class="empty-sub">Drag printed cards from the Resin queue's Paint row to fill this up.</div>
+        </div>
+      </div>
     </section>
 
     <!-- =========== INVENTORY VIEW =========== -->
@@ -5699,6 +5828,9 @@ function renderKanban(filtered, allVisible) {
   // PAINT ROW: render cards + wire drop target
   // ============================================================
   renderPaintRow(finalRows);
+  // Keep the mobile Paint queue in sync (it may not be visible right now,
+  // but the next time the user switches to it, it'll be current)
+  if (typeof renderPaintMobile === 'function') renderPaintMobile();
 }
 
 function renderPaintRow(allKanbanRows) {
@@ -5785,71 +5917,75 @@ function renderPaintRow(allKanbanRows) {
 
   // Wire the drop zone — accept regular kanban cards (move INTO paint) and
   // accept other paint cards (no-op, but prevents browser default).
-  body.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    body.classList.add('drag-over');
-  });
-  body.addEventListener('dragleave', (e) => {
-    if (!body.contains(e.relatedTarget)) body.classList.remove('drag-over');
-  });
-  body.addEventListener('drop', (e) => {
-    e.preventDefault();
-    body.classList.remove('drag-over');
-    // Where is the drop from?
-    const paintPart = e.dataTransfer.getData('application/x-paint-part');
-    if (paintPart) return; // dropping a paint card back into paint — no-op
-    const fallback = e.dataTransfer.getData('text/plain');
-    // Two card types can be dropped in Paint:
-    //   - a regular kanban card (key is `__group__<part>` or per-row key)
-    //   - a Part Needed card (text/plain = 'need:<id>')
-    let partName = null;
-    let sourceMachine = null;
-    let needId = null;
+  // CRITICAL: wire these listeners ONCE per element, not every render. Otherwise
+  // dragover/drop handlers stack up — after N renders, every mouse-move during
+  // a drag fires N handlers, which is the cause of the >13-card slowdown.
+  if (!body._dropHandlersWired) {
+    body.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      body.classList.add('drag-over');
+    });
+    body.addEventListener('dragleave', (e) => {
+      if (!body.contains(e.relatedTarget)) body.classList.remove('drag-over');
+    });
+    body.addEventListener('drop', (e) => {
+      e.preventDefault();
+      body.classList.remove('drag-over');
+      const paintPart = e.dataTransfer.getData('application/x-paint-part');
+      if (paintPart) return; // dropping a paint card back into paint — no-op
+      const fallback = e.dataTransfer.getData('text/plain');
+      let partName = null;
+      let sourceMachine = null;
+      let needId = null;
 
-    if (fallback && fallback.startsWith('need:')) {
-      // Part Needed → Paint
-      needId = fallback.slice(5);
-      const need = (state.partsNeeded || []).find(n => n.id === needId);
-      if (!need) return;
-      partName = need.partName;
-      // Source machine = wherever the need was placed (if any)
-      if (need.placedMachine && MACHINES.includes(need.placedMachine)) {
-        sourceMachine = need.placedMachine;
+      if (fallback && fallback.startsWith('need:')) {
+        // Part Needed → Paint
+        needId = fallback.slice(5);
+        const need = (state.partsNeeded || []).find(n => n.id === needId);
+        if (!need) return;
+        partName = need.partName;
+        if (need.placedMachine && MACHINES.includes(need.placedMachine)) {
+          sourceMachine = need.placedMachine;
+        }
+        need.placedAt = new Date().toISOString();
+        need.placedQueue = 'paint';
+      } else {
+        const key = fallback;
+        if (!key) return;
+        // Re-read the queue at drop time (closure-captured rows would be stale)
+        const currentQueue = buildQueue('resin');
+        const row = (currentQueue.all || []).find(r => r.key === key);
+        if (!row) return;
+        partName = row.part;
+        const manual = state.assignments[key];
+        if (manual && MACHINES.includes(manual)) sourceMachine = manual;
+        else {
+          const preferred = preferredPrinterForPart(partName);
+          sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
+        }
+        // CLEAR any column assignment so the dropped card doesn't linger in
+        // its old column (especially Unassigned). Also clear the synthetic
+        // group key in case this was a grouped card.
+        delete state.assignments[key];
+        delete state.assignments[`__group__${partName}`];
       }
-      // Mark the need as PLACED so the sidebar Priority panel hides it.
-      // Without this, the need would still show in the sidebar AND in Paint
-      // at the same time (the "duplicate" the user was seeing).
-      need.placedAt = new Date().toISOString();
-      need.placedQueue = 'paint';
-    } else {
-      const key = fallback;
-      if (!key) return;
-      const row = allKanbanRows.find(r => r.key === key);
-      if (!row) return;
-      partName = row.part;
-      const manual = state.assignments[key];
-      if (manual && MACHINES.includes(manual)) sourceMachine = manual;
-      else {
-        const preferred = preferredPrinterForPart(partName);
-        sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
-      }
-      delete state.assignments[key];
-    }
 
-    if (!partName) return;
-    if (!state.paintParts) state.paintParts = {};
-    state.paintParts[partName] = {
-      at: new Date().toISOString(),
-      fromMachine: sourceMachine,
-      fromNeedId: needId,  // remember the need so we can resolve it on Done
-    };
-    save();
-    renderQueue('resin');
-    renderSidebarPriority();
-    renderSidebarCounts();
-    toast(`"${partName}" → Paint`);
-  });
+      if (!partName) return;
+      if (!state.paintParts) state.paintParts = {};
+      state.paintParts[partName] = {
+        at: new Date().toISOString(),
+        fromMachine: sourceMachine,
+        fromNeedId: needId,
+      };
+      save();
+      renderQueue('resin');
+      renderSidebarPriority();
+      renderSidebarCounts();
+      toast(`"${partName}" → Paint`);
+    });
+    body._dropHandlersWired = true;
+  }
 }
 
 // Helper: find any SKU that uses a given part name (for printPlate sku lookup)
@@ -5864,6 +6000,170 @@ function findFirstSkuUsingPart(partName) {
   }
   return '';
 }
+
+// ============================================================
+// MOBILE PAINT QUEUE
+// ============================================================
+function renderPaintMobile() {
+  const list = document.getElementById('paint-mobile-list');
+  if (!list) return;
+  const paintParts = state.paintParts || {};
+  // Oldest first (parts that have been waiting longest at the top)
+  const entries = Object.entries(paintParts).sort((a, b) => {
+    const aT = a[1] && a[1].at ? new Date(a[1].at).getTime() : 0;
+    const bT = b[1] && b[1].at ? new Date(b[1].at).getTime() : 0;
+    return aT - bT;
+  });
+
+  if (entries.length === 0) {
+    list.innerHTML = `
+      <div class="empty" style="padding:60px 20px;text-align:center;">
+        <div class="empty-mark">∅</div>
+        <div class="empty-title">Paint queue is empty</div>
+        <div class="empty-sub">Drag printed cards from the Resin queue's Paint row to fill this up.</div>
+      </div>`;
+    return;
+  }
+
+  let html = '';
+  for (const [partName, info] of entries) {
+    const at = info.at ? new Date(info.at) : null;
+    const ageStr = at ? `${daysBetween(at, new Date())}d waiting` : 'waiting';
+    const fromMachine = info.fromMachine && MACHINE_LABELS[info.fromMachine] ? MACHINE_LABELS[info.fromMachine] : null;
+    const fromStr = fromMachine ? ` · ${fromMachine}` : (info.fromNeedId ? ' · Part Needed' : '');
+    html += `
+      <div class="paint-mobile-card" data-paint-part="${escapeAttr(partName)}">
+        <div class="paint-mobile-info">
+          <div class="paint-mobile-name">${escapeHtml(partName)}</div>
+          <div class="paint-mobile-meta">${ageStr}${fromStr}</div>
+        </div>
+        <div class="paint-mobile-actions">
+          <button class="paint-mobile-trash" data-paint-trash aria-label="Remove from paint without adding to inventory">🗑</button>
+          <button class="paint-mobile-done" data-paint-done>Done</button>
+        </div>
+      </div>`;
+  }
+  list.innerHTML = html;
+
+  // Wire each card
+  list.querySelectorAll('.paint-mobile-card').forEach(card => {
+    const partName = card.dataset.paintPart;
+
+    // Done → plate-yield modal → inventory + remove from paint
+    const doneBtn = card.querySelector('[data-paint-done]');
+    if (doneBtn) {
+      doneBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const paintInfo = state.paintParts[partName] || {};
+        const lib = findFirstSkuUsingPart(partName);
+        const clicked = {
+          part: partName,
+          sku: lib || '',
+          customer: paintInfo.fromNeedId ? 'Part Needed (painted)' : 'Paint queue',
+          date: paintInfo.at || new Date().toISOString(),
+        };
+        confirmPrintPlate(clicked, (qty) => {
+          // If this came from a Part Needed, resolve it
+          const fromNeedId = paintInfo.fromNeedId;
+          if (fromNeedId) {
+            const need = (state.partsNeeded || []).find(n => n.id === fromNeedId);
+            if (need && !need.resolvedAt) {
+              need.resolvedAt = new Date().toISOString();
+              if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
+              state.completedOrders.push({
+                at: need.resolvedAt,
+                partName,
+                qty: 1,
+                sku: '',
+                customer: 'Part Needed',
+                originalOrderDate: need.addedAt || null,
+                kind: 'need',
+              });
+            }
+          }
+          delete state.paintParts[partName];
+          save();
+          printPlate(clicked, qty);
+          renderPaintMobile();
+          renderSidebarPriority();
+        });
+      });
+    }
+
+    // Trash → confirm → remove from paint (no inventory change)
+    const trashBtn = card.querySelector('[data-paint-trash]');
+    if (trashBtn) {
+      trashBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        confirmModal({
+          title: `Remove "${partName}" from Paint?`,
+          text: 'It will be removed from the paint queue without adding anything to inventory. The original order will go back to needing this part.',
+          onConfirm: () => {
+            card.classList.add('removing');
+            const paintInfo = state.paintParts[partName] || {};
+            const fromNeedId = paintInfo.fromNeedId;
+            delete state.paintParts[partName];
+            // If it came from a Part Needed, un-place it so it goes back to the sidebar
+            if (fromNeedId) {
+              const need = (state.partsNeeded || []).find(n => n.id === fromNeedId);
+              if (need) {
+                delete need.placedAt;
+                delete need.placedQueue;
+              }
+            }
+            save();
+            renderSidebarPriority();
+            renderSidebarCounts();
+            renderQueue('resin');
+            setTimeout(() => {
+              renderPaintMobile();
+              toast(`Removed "${partName}" from Paint`);
+            }, 200);
+          },
+        });
+      });
+    }
+
+    // Swipe-left-to-delete gesture (touchstart / touchmove / touchend)
+    let startX = null;
+    let currentDx = 0;
+    let active = false;
+    card.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      // Don't start a swipe on a button tap
+      if (e.target.closest('button')) return;
+      startX = e.touches[0].clientX;
+      currentDx = 0;
+      active = true;
+    }, { passive: true });
+    card.addEventListener('touchmove', (e) => {
+      if (!active || startX === null) return;
+      const dx = e.touches[0].clientX - startX;
+      // Only respond to left swipe (negative dx)
+      if (dx < 0) {
+        currentDx = Math.max(dx, -200);  // cap at -200
+        card.style.transform = `translateX(${currentDx}px)`;
+        card.classList.toggle('swiping', currentDx < -40);
+      }
+    }, { passive: true });
+    card.addEventListener('touchend', () => {
+      if (!active) return;
+      active = false;
+      const dx = currentDx;
+      currentDx = 0;
+      card.classList.remove('swiping');
+      if (dx < -100) {
+        // Trigger delete (with confirmation, same as trash button)
+        card.style.transform = '';
+        trashBtn && trashBtn.click();
+      } else {
+        // Snap back
+        card.style.transform = '';
+      }
+    });
+  });
+}
+
 
 // Execute one plate print: deposit `qty` units into inventory.
 // qty defaults to plate yield; user can override (e.g. partial print).
@@ -7286,6 +7586,12 @@ function renderSidebarCounts() {
   const invCount = Object.values(state.inventory).filter(v => Number(v) > 0).length;
   document.getElementById('nav-inventory-count').textContent = invCount;
   document.getElementById('nav-orders-count').textContent = state.orders.length.toLocaleString();
+  // Paint queue count
+  const paintCountEl = document.getElementById('nav-paint-count');
+  if (paintCountEl) {
+    const pc = Object.keys(state.paintParts || {}).length;
+    paintCountEl.textContent = pc;
+  }
   renderSidebarPriority();
   renderImportStatus();
 }
@@ -7650,7 +7956,7 @@ function switchView(name) {
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.view === name);
   });
-  ['dashboard','queue-resin','queue-fdm','library','sla-sorter','inventory','orders','import'].forEach(v => {
+  ['dashboard','queue-resin','queue-fdm','library','sla-sorter','paint','inventory','orders','import'].forEach(v => {
     const el = document.getElementById(`view-${v}`);
     if (el) el.classList.toggle('hidden', v !== name);
   });
@@ -7669,6 +7975,7 @@ function switchView(name) {
     else if (name === 'orders') renderOrders();
     else if (name === 'dashboard') renderDashboard();
     else if (name === 'sla-sorter') renderSlaSorter();
+    else if (name === 'paint') renderPaintMobile();
   };
   // Show a brief placeholder for the library (the heaviest view) so the user
   // sees feedback if the render takes more than one frame.
@@ -8497,7 +8804,9 @@ function updateLocateButton() {
 function applyAccountLockdown() {
   const username = (_fbUser && _fbUser.email) ? displayName(_fbUser.email).toLowerCase() : '';
   const isGridiron = username === 'gridiron';
+  const isCollin = username === 'collin';
   document.body.classList.toggle('is-gridiron', isGridiron);
+  document.body.classList.toggle('is-collin', isCollin);
   // Set the username text in the gridiron bar
   const nameEl = document.getElementById('gridiron-bar-name');
   if (nameEl) nameEl.textContent = username.toUpperCase();
