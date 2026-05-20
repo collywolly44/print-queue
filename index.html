@@ -2119,6 +2119,22 @@ body:not(.is-collin) .nav-collin-only { display: none !important; }
   font-weight: 700;
   letter-spacing: 0.04em;
   margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sla-parts-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 2px;
+  background: rgba(240,168,48,0.15);
+  color: var(--amber);
+  text-transform: uppercase;
+  cursor: help;
 }
 .sla-card-name {
   font-size: 13px;
@@ -5999,19 +6015,32 @@ function wirePaintDropZone() {
       need.placedQueue = 'paint';
     } else {
       const key = fallback;
-      const currentQueue = buildQueue('resin');
-      const row = (currentQueue.all || []).find(r => r.key === key);
-      if (!row) return;
-      partName = row.part;
-      const manual = state.assignments[key];
-      if (manual && MACHINES.includes(manual)) sourceMachine = manual;
-      else {
-        const preferred = preferredPrinterForPart(partName);
-        sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
+      // Grouped resin cards have a synthetic key `__group__<partName>` and
+      // aren't in buildQueue's allRows. Extract part name directly in that case.
+      if (key.startsWith('__group__')) {
+        partName = key.slice('__group__'.length);
+        // Find a representative row to grab the source machine
+        const manual = state.assignments[key];
+        if (manual && MACHINES.includes(manual)) sourceMachine = manual;
+        else {
+          const preferred = preferredPrinterForPart(partName);
+          sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
+        }
+        delete state.assignments[key];
+      } else {
+        const currentQueue = buildQueue('resin');
+        const row = (currentQueue.allRows || []).find(r => r.key === key);
+        if (!row) return;
+        partName = row.part;
+        const manual = state.assignments[key];
+        if (manual && MACHINES.includes(manual)) sourceMachine = manual;
+        else {
+          const preferred = preferredPrinterForPart(partName);
+          sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
+        }
+        delete state.assignments[key];
+        delete state.assignments[`__group__${partName}`];
       }
-      // Clear assignment so the card leaves its column
-      delete state.assignments[key];
-      delete state.assignments[`__group__${partName}`];
     }
 
     if (!partName) return;
@@ -7345,18 +7374,35 @@ function renderSlaSorter() {
       const o = state.orders.find(x => x.sku === sku);
       if (o) name = o.item || '';
     }
+    // Count distinct parts in this SKU's recipe. More parts = more complex =
+    // more likely to be a vehicle. Sum part qty too so dual-grips count double.
+    let partCount = 0;
+    if (Array.isArray(lib.parts)) {
+      for (const p of lib.parts) {
+        const q = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
+        partCount += q;
+      }
+    }
     return {
       sku,
       name,
       isVehicle: !!lib.isVehicle,
       _earliest: earliestBySku[sku] !== undefined ? earliestBySku[sku] : FAR_FUTURE,
       _openOrders: ordersBySku[sku] || 0,
+      _partCount: partCount,
     };
   });
 
-  // Sort: standard SKUs first (untagged), by oldest open order, then vehicles
+  // Sort: standard SKUs first (untagged) — within them, BIGGEST part count first
+  // (which correlates with vehicle-ness / price tier). Vehicles already tagged
+  // fall to the bottom, sorted by oldest open order so any retagging needs
+  // surface to the top of that group.
   rows.sort((a, b) => {
     if (a.isVehicle !== b.isVehicle) return a.isVehicle ? 1 : -1;
+    if (!a.isVehicle && !b.isVehicle) {
+      // both standard — biggest part count first
+      if (b._partCount !== a._partCount) return b._partCount - a._partCount;
+    }
     return a._earliest - b._earliest;
   });
 
@@ -7395,10 +7441,14 @@ function renderSlaSorter() {
     const orderInfo = r._openOrders > 0
       ? `${r._openOrders} open order${r._openOrders === 1 ? '' : 's'} · oldest ${r._earliest === FAR_FUTURE ? '—' : new Date(r._earliest).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
       : 'No open orders';
+    // Part-count badge: higher = more complex = more likely a vehicle
+    const partsBadge = r._partCount > 0
+      ? `<span class="sla-parts-badge" title="Total parts (incl. qty) in this SKU's recipe">${r._partCount} parts</span>`
+      : '';
     html += `
       <div class="sla-card${r.isVehicle ? ' is-set' : ''}" data-sla-sku="${escapeAttr(r.sku)}">
         <div class="sla-card-info">
-          <div class="sla-card-sku">${escapeHtml(r.sku)}</div>
+          <div class="sla-card-sku">${escapeHtml(r.sku)} ${partsBadge}</div>
           <div class="sla-card-name">${escapeHtml(r.name || '(no product name)')}</div>
           <div class="sla-card-meta">${orderInfo}</div>
         </div>
