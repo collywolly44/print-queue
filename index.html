@@ -5291,10 +5291,52 @@ function renderQueue(type) {
       <div class="qcell">Action</div>
     </div>`;
 
+  // Re-sort FDM rows by SLA urgency (same logic as resin kanban groups, but
+  // applied per-row since FDM stays per-order rather than grouped). Part Needed
+  // rows always float to the top. Rows with no effective SLA fall to the
+  // bottom and are sorted by oldest-first among themselves.
+  // Pre-compute urgency per row to avoid recomputing during the sort.
+  const fdmTodayMs = today.getTime();
+  filtered.forEach(r => {
+    const sla = r._effectiveSla;
+    if (sla && sla > 0) {
+      const ageMs = fdmTodayMs - new Date(r.date).getTime();
+      const ageDays = Math.max(0, Math.floor(ageMs / 86400000));
+      r._urgency = ageDays / sla;
+      r._hasSLA = true;
+      r._slaDisplayMax = sla;
+    } else {
+      r._urgency = 0;
+      r._hasSLA = false;
+      r._slaDisplayMax = null;
+    }
+  });
+  filtered.sort((a, b) => {
+    // Part Needed rows go first
+    if (a._isNeed && !b._isNeed) return -1;
+    if (!a._isNeed && b._isNeed) return 1;
+    if (a._isNeed && b._isNeed) return new Date(a.date) - new Date(b.date);
+    // SLA-bearing rows above no-SLA rows
+    if (a._hasSLA && !b._hasSLA) return -1;
+    if (!a._hasSLA && b._hasSLA) return 1;
+    // Both have SLAs: higher urgency first
+    if (a._hasSLA && b._hasSLA && b._urgency !== a._urgency) return b._urgency - a._urgency;
+    // Tie or both no-SLA: oldest first
+    return new Date(a.date) - new Date(b.date);
+  });
+
   filtered.forEach((r, i) => {
     const age = daysBetween(new Date(r.date), today);
-    const agedClass = age >= 14 ? 'aged-2' : age >= 7 ? 'aged-1' : '';
-    const rowClass = age >= 14 ? 'row-aged-2' : age >= 7 ? 'row-aged-1' : '';
+    // SLA-aware aging: color by urgency if SLA present, else fall back to raw age
+    let agedClass, rowClass;
+    if (r._hasSLA) {
+      if (r._urgency >= 1.0) { agedClass = 'aged-2'; rowClass = 'row-aged-2'; }
+      else if (r._urgency >= 0.7) { agedClass = 'aged-1'; rowClass = 'row-aged-1'; }
+      else { agedClass = ''; rowClass = ''; }
+    } else {
+      agedClass = age >= 14 ? 'aged-2' : age >= 7 ? 'aged-1' : '';
+      rowClass  = age >= 14 ? 'row-aged-2' : age >= 7 ? 'row-aged-1' : '';
+    }
     const dateStr = new Date(r.date).toLocaleDateString('en-US', { month:'short', day:'numeric' });
     const showQty = r._remaining;
     const partial = r._covered > 0;
@@ -5302,9 +5344,25 @@ function renderQueue(type) {
       ? `<span class="qty-badge ${showQty>1?'multi':''}" title="Need ${r.originalQty}, ${r._covered} from stock">×${showQty}<sup style="font-size:9px;color:var(--green);margin-left:3px;">−${r._covered}</sup></span>`
       : `<span class="qty-badge ${showQty>1?'multi':''}">×${showQty}</span>`;
     const needRowClass = r._isNeed ? ' queue-row-need' : '';
+    // SLA badge for FDM rows — same color rules as resin
+    let slaBadgeHtml = '';
+    if (r._hasSLA && r._slaDisplayMax) {
+      const displayMax = r._slaDisplayMax;
+      const pct = r._urgency;
+      if (pct >= 1.0) {
+        const over = Math.ceil((pct - 1) * displayMax);
+        slaBadgeHtml = `<span class="sla-badge sla-over">SLA · ${over}d OVER</span>`;
+      } else if (pct >= 0.7) {
+        const left = Math.max(0, Math.floor((1 - pct) * displayMax));
+        slaBadgeHtml = `<span class="sla-badge sla-warn">SLA · ${left}d LEFT</span>`;
+      } else {
+        const left = Math.max(0, Math.floor((1 - pct) * displayMax));
+        slaBadgeHtml = `<span class="sla-badge">SLA · ${left}d LEFT</span>`;
+      }
+    }
     const customerCell = r._isNeed
       ? `<div class="qcell qcell-customer"><span class="queue-need-tag">Part Needed</span></div>`
-      : `<div class="qcell qcell-customer">${escapeHtml(r.customer)}</div>`;
+      : `<div class="qcell qcell-customer">${escapeHtml(r.customer)}${slaBadgeHtml ? ' ' + slaBadgeHtml : ''}</div>`;
     html += `
       <div class="queue-row ${rowClass}${needRowClass}" data-key="${escapeAttr(r.key)}">
         <div class="qcell qcell-num">${i+1}</div>
