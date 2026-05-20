@@ -1911,6 +1911,134 @@ body {
   border-radius: 1px;
 }
 
+/* Queue priority threshold sliders */
+.thr-slider-row {
+  display: flex;
+  flex-direction: column;
+}
+.thr-slider-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.thr-slider-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex: 1;
+}
+.thr-slider-value {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 26px;
+  color: var(--amber);
+  letter-spacing: 0.04em;
+}
+.thr-slider-unit {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.thr-slider {
+  width: 100%;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+}
+.thr-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--amber);
+  border: 2px solid var(--bg);
+  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--amber);
+}
+.thr-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--amber);
+  border: 2px solid var(--bg);
+  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--amber);
+}
+.thr-slider-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  margin-top: 6px;
+}
+
+/* Inventory history rows */
+.inv-hist-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 100px 70px 130px 110px;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  align-items: center;
+  font-size: 12px;
+}
+.inv-hist-row:last-child { border-bottom: none; }
+.inv-hist-row.header {
+  background: var(--bg);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.inv-hist-time {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+.inv-hist-part {
+  color: var(--ink);
+  font-weight: 500;
+  word-break: break-word;
+}
+.inv-hist-change {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.inv-hist-delta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+.inv-hist-delta.positive { color: var(--green); }
+.inv-hist-delta.negative { color: var(--red); }
+.inv-hist-reason {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.inv-hist-who {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
 /* Gridiron lockdown hides everything except mobile inventory. The Paint
    nav item is for Collin only — hide for everyone else. */
 body:not(.is-collin) .nav-collin-only { display: none !important; }
@@ -4302,6 +4430,14 @@ body.mode-mobile .mobile-only { display: block; }
       </div>
 
       <div id="inventory-container"></div>
+
+      <div class="section-title" style="margin-top:36px;">Manual inventory changes</div>
+      <div style="font-size:12px;color:var(--ink-dim);margin-bottom:12px;">
+        Recent changes from walk-through counts, manual stock updates, the +/- buttons, deletes, and direct edits. Auto-changes (shipping, plate prints) aren't shown here.
+      </div>
+      <div id="inv-history-container" style="background:var(--panel);border:1px solid var(--line);border-radius:4px;overflow:hidden;">
+        <div class="empty-sub" style="padding:30px;text-align:center;">Loading…</div>
+      </div>
       </div><!-- /.view-mobile-hidden -->
     </section>
 
@@ -4466,6 +4602,31 @@ body.mode-mobile .mobile-only { display: block; }
       <div id="import-status-card" style="background:var(--panel);border:1px solid var(--line-bright);border-left:4px solid var(--green);border-radius:4px;padding:16px 18px;margin-bottom:18px;">
         <div id="import-status-content" style="font-size:13px;color:var(--ink);line-height:1.6;">
           Loading…
+        </div>
+      </div>
+
+      <div class="section-title">Queue priority thresholds</div>
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:18px 22px;margin-bottom:18px;">
+        <div style="font-size:12px;color:var(--ink-dim);line-height:1.5;margin-bottom:18px;">
+          Orders older than these thresholds get pushed to the top of the queue (below Part Needed cards). Bump these UP when you're catching up to keep the queue manageable; bump them DOWN to surface more late orders.
+        </div>
+        <div class="thr-slider-row">
+          <div class="thr-slider-label">
+            <span class="thr-slider-name">Standard orders</span>
+            <span class="thr-slider-value" id="thr-std-value">18</span>
+            <span class="thr-slider-unit">days</span>
+          </div>
+          <input type="range" min="3" max="60" step="1" value="18" id="thr-std" class="thr-slider">
+          <div class="thr-slider-hint">Ship-promise: 15-20 business days (you state 20 on your site)</div>
+        </div>
+        <div class="thr-slider-row" style="margin-top:18px;">
+          <div class="thr-slider-label">
+            <span class="thr-slider-name">Vehicle orders</span>
+            <span class="thr-slider-value" id="thr-veh-value">28</span>
+            <span class="thr-slider-unit">days</span>
+          </div>
+          <input type="range" min="7" max="90" step="1" value="28" id="thr-veh" class="thr-slider">
+          <div class="thr-slider-hint">Ship-promise: 30-45 business days (you state 30-45 on your site)</div>
         </div>
       </div>
 
@@ -4727,7 +4888,40 @@ const state = {
   importMode: 'replace',   // 'replace' (normal) | 'replace-no-inv' (skip inventory subtraction)
   completedOrders: [],     // [{at, partName, qty, sku, customer, originalOrderDate, kind: 'print'|'need'}]
   paintParts: {},          // partName -> { at, qty, fromMachine } for parts waiting to be painted
+  shippedHistory: [],      // [{at, sku, item, customer, qty}] — orders that shipped (disappeared from CSV)
+  inventoryHistory: [],    // [{at, partName, delta, before, after, reason, who}] — manual stock changes
+  overdueStandard: 18,     // days — standard orders past this age get prioritized
+  overdueVehicle: 28,      // days — vehicle orders past this age get prioritized
 };
+
+// Log a manual inventory change to state.inventoryHistory. Use BEFORE
+// modifying state.inventory so we can capture the prior value accurately.
+// Call this only for MANUAL changes (walk-through count save, +/- buttons,
+// stock-update screen, reset, delete) — NOT for automatic changes like
+// shipping subtractions or plate-yield deposits (those are already covered
+// by completedOrders + shippedHistory).
+function logInventoryChange(partName, before, after, reason) {
+  if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
+  const b = Number(before) || 0;
+  const a = Number(after) || 0;
+  if (a === b) return;  // no-op
+  const who = (typeof _fbUser !== 'undefined' && _fbUser && _fbUser.email)
+    ? displayName(_fbUser.email)
+    : '';
+  state.inventoryHistory.push({
+    at: new Date().toISOString(),
+    partName,
+    delta: a - b,
+    before: b,
+    after: a,
+    reason: reason || 'manual',
+    who,
+  });
+  // Cap at 2000 entries to keep storage bounded
+  if (state.inventoryHistory.length > 2000) {
+    state.inventoryHistory = state.inventoryHistory.slice(-2000);
+  }
+}
 
 function save() {
   const blob = {
@@ -4742,6 +4936,10 @@ function save() {
     lastImport: state.lastImport,
     completedOrders: state.completedOrders,
     paintParts: state.paintParts,
+    shippedHistory: state.shippedHistory,
+    inventoryHistory: state.inventoryHistory,
+    overdueStandard: state.overdueStandard,
+    overdueVehicle: state.overdueVehicle,
     lastSync: new Date().toISOString(),
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
@@ -4893,6 +5091,10 @@ function load() {
     state.assignments = blob.assignments || {};
     state.completedOrders = Array.isArray(blob.completedOrders) ? blob.completedOrders : [];
     state.paintParts = blob.paintParts || {};
+    state.shippedHistory = Array.isArray(blob.shippedHistory) ? blob.shippedHistory : [];
+    state.inventoryHistory = Array.isArray(blob.inventoryHistory) ? blob.inventoryHistory : [];
+    if (typeof blob.overdueStandard === 'number') state.overdueStandard = blob.overdueStandard;
+    if (typeof blob.overdueVehicle === 'number') state.overdueVehicle = blob.overdueVehicle;
     // Migrate priority: was array of {id,name}, now {resin:[], fdm:[]}
     if (Array.isArray(blob.priority)) {
       state.priority = { resin: blob.priority.map(p => ({...p, type: 'resin'})), fdm: [] };
@@ -5467,13 +5669,16 @@ function renderQueue(type) {
   //   2. Overdue orders (standard >18d OR vehicle >28d) — past the timeframes
   //      we promise customers; they jump to the top below needs
   //   3. Everything else, oldest order first
+  // Use user-configurable thresholds from state (default 18 standard, 28 vehicle)
+  const stdThr = state.overdueStandard || 18;
+  const vehThr = state.overdueVehicle || 28;
   filtered.sort((a, b) => {
     if (a._isNeed && !b._isNeed) return -1;
     if (!a._isNeed && b._isNeed) return 1;
     const aAge = daysBetween(new Date(a.date), today);
     const bAge = daysBetween(new Date(b.date), today);
-    const aOverdue = (!a._orderIsVehicle && aAge >= 18) || (a._orderIsVehicle && aAge >= 28);
-    const bOverdue = (!b._orderIsVehicle && bAge >= 18) || (b._orderIsVehicle && bAge >= 28);
+    const aOverdue = (!a._orderIsVehicle && aAge >= stdThr) || (a._orderIsVehicle && aAge >= vehThr);
+    const bOverdue = (!b._orderIsVehicle && bAge >= stdThr) || (b._orderIsVehicle && bAge >= vehThr);
     if (aOverdue && !bOverdue) return -1;
     if (!aOverdue && bOverdue) return 1;
     return new Date(a.date) - new Date(b.date);
@@ -5651,14 +5856,16 @@ function renderKanban(filtered, allVisible) {
   }
   // Resin queue ordering:
   //   1. Part Needed cards (oldest first)
-  //   2. Overdue groups (standard >18d OR vehicle >28d) — past our promised
-  //      timeframes, so they jump to top below needs
+  //   2. Overdue groups — past our user-configurable thresholds (default 18d
+  //      standard / 28d vehicle), so they jump to top below needs
   //   3. Everything else, oldest first
+  const resinStdThr = state.overdueStandard || 18;
+  const resinVehThr = state.overdueVehicle || 28;
   groupedRows.sort((a, b) => {
     const aAge = daysBetween(new Date(a.date), todayForUrgency);
     const bAge = daysBetween(new Date(b.date), todayForUrgency);
-    const aOverdue = (!a._orderIsVehicle && aAge >= 18) || (a._orderIsVehicle && aAge >= 28);
-    const bOverdue = (!b._orderIsVehicle && bAge >= 18) || (b._orderIsVehicle && bAge >= 28);
+    const aOverdue = (!a._orderIsVehicle && aAge >= resinStdThr) || (a._orderIsVehicle && aAge >= resinVehThr);
+    const bOverdue = (!b._orderIsVehicle && bAge >= resinStdThr) || (b._orderIsVehicle && bAge >= resinVehThr);
     if (aOverdue && !bOverdue) return -1;
     if (!aOverdue && bOverdue) return 1;
     return new Date(a.date) - new Date(b.date);
@@ -7134,9 +7341,11 @@ function renderInventory() {
       const raw = String(val ?? '').trim();
       if (raw === '') return; // empty doesn't mark counted; the user hasn't entered anything
       const n = Math.max(0, Math.floor(Number(raw) || 0));
+      const before = Number(state.inventory[part] || 0);
       if (n === 0) delete state.inventory[part];
       else state.inventory[part] = n;
       state.countedParts[part] = true; // auto-mark counted on any numeric entry
+      logInventoryChange(part, before, n, 'inventory-edit');
       save();
       renderQueue();
       renderInventory();
@@ -7209,7 +7418,9 @@ function renderInventory() {
               });
             }
             // Strip inventory, location, counted flag, and any pending Part Needed
+            const beforeStock = Number(state.inventory[part] || 0);
             delete state.inventory[part];
+            logInventoryChange(part, beforeStock, 0, 'delete');
             delete state.countedParts[part];
             if (state.partLocations) delete state.partLocations[part];
             if (Array.isArray(state.partsNeeded)) {
@@ -7226,6 +7437,57 @@ function renderInventory() {
       });
     }
   });
+  renderInventoryHistory();
+}
+
+function renderInventoryHistory() {
+  const container = document.getElementById('inv-history-container');
+  if (!container) return;
+  const entries = (state.inventoryHistory || []).slice().reverse(); // newest first
+  if (entries.length === 0) {
+    container.innerHTML = `<div class="empty-sub" style="padding:30px;text-align:center;">No manual inventory changes yet. Edits from walk-through, stock update, +/-, and delete will appear here.</div>`;
+    return;
+  }
+  const REASON_LABEL = {
+    'walkthrough': 'Walk-through',
+    'manual-stock': 'Stock update',
+    'inventory-edit': '+/- edit',
+    'delete': 'Deleted',
+    'manual': 'Manual',
+  };
+  const cap = 100;
+  const visible = entries.slice(0, cap);
+  let html = `
+    <div class="inv-hist-row header">
+      <div>When</div>
+      <div>Part</div>
+      <div>Change</div>
+      <div style="text-align:center;">Delta</div>
+      <div>Reason</div>
+      <div>Who</div>
+    </div>`;
+  for (const e of visible) {
+    const at = new Date(e.at);
+    const timeStr = `${at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · ${at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    const delta = Number(e.delta) || 0;
+    const deltaClass = delta > 0 ? 'positive' : (delta < 0 ? 'negative' : '');
+    const deltaStr = delta > 0 ? `+${delta}` : `${delta}`;
+    const reason = REASON_LABEL[e.reason] || e.reason || '—';
+    const who = e.who || '—';
+    html += `
+      <div class="inv-hist-row">
+        <div class="inv-hist-time">${escapeHtml(timeStr)}</div>
+        <div class="inv-hist-part">${escapeHtml(e.partName || '')}</div>
+        <div class="inv-hist-change">${e.before} → ${e.after}</div>
+        <div class="inv-hist-delta ${deltaClass}">${deltaStr}</div>
+        <div class="inv-hist-reason">${escapeHtml(reason)}</div>
+        <div class="inv-hist-who">${escapeHtml(who)}</div>
+      </div>`;
+  }
+  if (entries.length > cap) {
+    html += `<div class="empty-sub" style="padding:14px;text-align:center;">…and ${entries.length - cap} more older changes.</div>`;
+  }
+  container.innerHTML = html;
 }
 
 
@@ -7513,12 +7775,14 @@ function renderDashboard() {
   document.getElementById('dash-stat-printed-sub').textContent =
     _dashRangeDays === 'all' ? 'all time' : `last ${_dashRangeDays} days`;
 
-  // Shipped count from last import
-  const shipped = state.lastImport ? state.lastImport.shipped : 0;
+  // Shipped count — sum qty from shippedHistory within the dashboard range,
+  // not just the last import. Matches the Top 10 Shipped panel below.
+  const shipped = (state.shippedHistory || [])
+    .filter(s => new Date(s.at) >= cutoff)
+    .reduce((sum, s) => sum + (Number(s.qty) || 0), 0);
   document.getElementById('dash-stat-shipped').textContent = shipped.toLocaleString();
-  document.getElementById('dash-stat-shipped-sub').textContent = state.lastImport
-    ? `import ${new Date(state.lastImport.at).toLocaleDateString('en-US', {month:'short', day:'numeric'})}`
-    : 'no imports yet';
+  document.getElementById('dash-stat-shipped-sub').textContent =
+    _dashRangeDays === 'all' ? 'all time' : `last ${_dashRangeDays} days`;
 
   // Open orders count
   document.getElementById('dash-stat-open').textContent = state.orders.length.toLocaleString();
@@ -7604,26 +7868,26 @@ function renderDashboard() {
   }
 
   // === Top 10 shipped products ===
-  // From the last import — shipped = orders that disappeared. We approximate by
-  // looking at the most-shipped SKUs over time using completedOrders (kind=print
-  // counts what we printed, which is a proxy for shipping demand). For "shipped
-  // products" we want product SKU/name. Use the library item names.
+  // From real shipping data: each CSV import logs orders that disappeared to
+  // state.shippedHistory. We filter by the range and aggregate by SKU/product
+  // name so the user sees the actual top sellers (not the same data as
+  // "Top 10 printed parts").
   const shippedTotals = {};
-  for (const c of completed) {
-    // Aggregate by product (item name), not part — what customers actually buy
-    const lib = state.library[c.sku];
-    const productName = (lib && lib.name) ? lib.name : c.sku || c.partName;
+  for (const s of (state.shippedHistory || [])) {
+    if (new Date(s.at) < cutoff) continue;
+    const lib = state.library[s.sku];
+    const productName = (lib && lib.name) ? lib.name : (s.item || s.sku || '(no name)');
     if (!shippedTotals[productName]) {
-      shippedTotals[productName] = { qty: 0, sku: c.sku };
+      shippedTotals[productName] = { qty: 0, sku: s.sku };
     }
-    shippedTotals[productName].qty += (c.qty || 0);
+    shippedTotals[productName].qty += (Number(s.qty) || 0);
   }
   const topShipped = Object.entries(shippedTotals)
     .sort((a, b) => b[1].qty - a[1].qty)
     .slice(0, 10);
   const topShippedEl = document.getElementById('dash-top-shipped');
   if (topShipped.length === 0) {
-    topShippedEl.innerHTML = `<div class="empty-sub" style="padding:20px;text-align:center;">Nothing shipped in this range yet.</div>`;
+    topShippedEl.innerHTML = `<div class="empty-sub" style="padding:20px;text-align:center;">No shipments in this range yet.<br><span style="font-size:11px;color:var(--ink-faint);">Tracking starts with the next CSV import.</span></div>`;
   } else {
     topShippedEl.innerHTML = topShipped.map(([name, info], i) => `
       <div class="dash-top10-row">
@@ -7904,9 +8168,20 @@ function importCSV(text) {
   // wants to refresh order IDs / sync the order list without touching stock).
   const skipInvChange = state.importMode === 'replace-no-inv';
   const newIds = new Set(newOrders.map(o => o.id));
+  const nowIso = new Date().toISOString();
+  if (!Array.isArray(state.shippedHistory)) state.shippedHistory = [];
   for (const old of state.orders) {
     if (newIds.has(old.id)) continue;
     shippedCount++;
+    // Log every shipped order to history so the dashboard's "Top 10 shipped
+    // products" can show real shipped data (not a proxy from prints)
+    state.shippedHistory.push({
+      at: nowIso,
+      sku: old.sku || '',
+      item: old.item || '',
+      customer: old.customer || '',
+      qty: Number(old.qty) || 1,
+    });
     if (skipInvChange) continue;
     const lib = state.library[old.sku];
     const parts = (lib && lib.parts) ? lib.parts : [];
@@ -7922,6 +8197,10 @@ function importCSV(text) {
       else state.inventory[part] = next;
       shippedSubtractions[part] = (shippedSubtractions[part] || 0) + sub;
     }
+  }
+  // Cap shipped history at 5000 entries to prevent unbounded growth
+  if (state.shippedHistory.length > 5000) {
+    state.shippedHistory = state.shippedHistory.slice(-5000);
   }
   // Count truly-new orders
   const existingIds = new Set(state.orders.map(o => o.id));
@@ -8034,6 +8313,10 @@ function buildBackupBlob() {
     lastImport: state.lastImport,
     completedOrders: state.completedOrders,
     paintParts: state.paintParts,
+    shippedHistory: state.shippedHistory,
+    inventoryHistory: state.inventoryHistory,
+    overdueStandard: state.overdueStandard,
+    overdueVehicle: state.overdueVehicle,
     exportedAt: new Date().toISOString(),
   };
 }
@@ -8435,9 +8718,11 @@ const WT = {
     }
     const part = this.parts[this.idx];
     const n = Math.max(0, Math.floor(Number(this.pendingValue) || 0));
+    const before = Number(state.inventory[part] || 0);
     if (n === 0) delete state.inventory[part];
     else state.inventory[part] = n;
     state.countedParts[part] = true;
+    logInventoryChange(part, before, n, 'walkthrough');
     save();
     this.next();
   },
@@ -8704,9 +8989,11 @@ const MS = {
     const raw = document.getElementById('manual-stock-entry-input').value.trim();
     if (raw === '') { toast('Enter a number', 'error'); return; }
     const n = Math.max(0, Math.floor(Number(raw) || 0));
+    const before = Number(state.inventory[partName] || 0);
     if (n === 0) delete state.inventory[partName];
     else state.inventory[partName] = n;
     state.countedParts[partName] = true;
+    logInventoryChange(partName, before, n, 'manual-stock');
     save();
     renderQueue();
     renderInventory();
@@ -9022,6 +9309,44 @@ document.querySelectorAll('[data-import-mode]').forEach(b => {
 });
 applyImportMode(state.importMode || 'replace');
 
+// Threshold sliders — adjust the days at which standard/vehicle orders get
+// pushed to the top of the queue. Saved to state.overdueStandard /
+// state.overdueVehicle. Re-renders the queue immediately on change so the user
+// can see the effect.
+(function wireThresholdSliders() {
+  const stdSlider = document.getElementById('thr-std');
+  const stdVal = document.getElementById('thr-std-value');
+  const vehSlider = document.getElementById('thr-veh');
+  const vehVal = document.getElementById('thr-veh-value');
+  if (!stdSlider || !vehSlider) return;
+  // Initialize from state
+  const initStd = state.overdueStandard || 18;
+  const initVeh = state.overdueVehicle || 28;
+  stdSlider.value = initStd; stdVal.textContent = initStd;
+  vehSlider.value = initVeh; vehVal.textContent = initVeh;
+  // Live update
+  stdSlider.addEventListener('input', () => {
+    const v = parseInt(stdSlider.value, 10) || 18;
+    stdVal.textContent = v;
+    state.overdueStandard = v;
+  });
+  stdSlider.addEventListener('change', () => {
+    save();
+    renderQueue();
+    renderSidebarCounts();
+  });
+  vehSlider.addEventListener('input', () => {
+    const v = parseInt(vehSlider.value, 10) || 28;
+    vehVal.textContent = v;
+    state.overdueVehicle = v;
+  });
+  vehSlider.addEventListener('change', () => {
+    save();
+    renderQueue();
+    renderSidebarCounts();
+  });
+})();
+
 // Shared: apply a blob (from file or snapshot) into live state.
 function applyRestoreBlob(blob) {
   state.orders = blob.orders || [];
@@ -9056,6 +9381,14 @@ function applyRestoreBlob(blob) {
   if (Object.prototype.hasOwnProperty.call(blob, 'paintParts')) {
     state.paintParts = blob.paintParts || {};
   }
+  if (Object.prototype.hasOwnProperty.call(blob, 'shippedHistory')) {
+    state.shippedHistory = Array.isArray(blob.shippedHistory) ? blob.shippedHistory : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(blob, 'inventoryHistory')) {
+    state.inventoryHistory = Array.isArray(blob.inventoryHistory) ? blob.inventoryHistory : [];
+  }
+  if (typeof blob.overdueStandard === 'number') state.overdueStandard = blob.overdueStandard;
+  if (typeof blob.overdueVehicle === 'number') state.overdueVehicle = blob.overdueVehicle;
   migrateLibrary();
   save();
   renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
