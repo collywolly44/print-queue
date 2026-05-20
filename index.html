@@ -1745,8 +1745,29 @@ body {
   padding: 12px 18px 14px;
   border-top: 1px solid var(--line);
   align-items: center;
+  flex-wrap: wrap;
 }
-.lib-card-foot .lib-input { flex: 1; }
+.lib-card-foot .lib-notes { flex: 1; min-width: 160px; }
+.lib-sla-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: help;
+}
+.lib-sla-label .lib-sla {
+  width: 60px;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--amber);
+  font-weight: 700;
+  padding: 6px 8px;
+}
 
 .lib-sku {
   font-family: 'JetBrains Mono', monospace;
@@ -2691,6 +2712,33 @@ body.mode-mobile .sidebar-priority { display: none; }
   text-transform: uppercase;
   border-radius: 3px;
   margin-bottom: 6px;
+}
+.sla-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  background: rgba(120,140,160,0.18);
+  color: var(--ink-dim);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-radius: 3px;
+  margin-bottom: 6px;
+  margin-left: 4px;
+}
+.sla-badge.sla-warn {
+  background: rgba(240,168,48,0.22);
+  color: var(--amber);
+}
+.sla-badge.sla-over {
+  background: rgba(232,93,74,0.22);
+  color: var(--red);
+  animation: sla-pulse 2.4s ease-in-out infinite;
+}
+@keyframes sla-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 /* .mobile-only is the inverse — hidden on desktop, shown on mobile */
 .mobile-only { display: none; }
@@ -4679,10 +4727,34 @@ function buildQueue(typeFilter) {
   // of typeFilter) since inventory is shared between resin & FDM. We then
   // emit only the rows matching typeFilter.
   // typeFilter: 'resin' | 'fdm' | undefined (no filter)
+
+  // Precompute the EFFECTIVE SLA per shipping orderId. Since we ship a
+  // multi-item order together, the whole order is effectively constrained by
+  // the LONGEST individual SLA in it. A 14-day SKU shipped alongside a 30-day
+  // SKU has an effective deadline of 30 days because we wait for the slowest.
+  // Orders without any SKU SLA → effective SLA stays null (no urgency).
+  const effectiveSlaByShipId = {};
+  for (const o of state.orders) {
+    const shipId = o.orderId || o.id;  // fall back to per-line id if no ship ID
+    const lib = state.library[o.sku];
+    const sla = (lib && lib.maxDays && lib.maxDays > 0) ? lib.maxDays : null;
+    if (sla === null) {
+      // Keep existing value (if other lines in same ship had an SLA) — don't overwrite with null
+      if (!(shipId in effectiveSlaByShipId)) effectiveSlaByShipId[shipId] = null;
+    } else {
+      const existing = effectiveSlaByShipId[shipId];
+      effectiveSlaByShipId[shipId] = (existing === null || existing === undefined)
+        ? sla
+        : Math.max(existing, sla);
+    }
+  }
+
   const allRowsAll = [];
   for (const o of state.orders) {
     const lib = state.library[o.sku];
     if (!lib || !lib.parts || lib.parts.length === 0) continue;
+    const shipId = o.orderId || o.id;
+    const effectiveSla = effectiveSlaByShipId[shipId] || null;
     for (const partObj of lib.parts) {
       const part = (typeof partObj === 'string') ? partObj : partObj.name;
       if (!part) continue;
@@ -4698,6 +4770,8 @@ function buildQueue(typeFilter) {
         sku: o.sku, part, qty: totalUnitsNeeded, item: o.item,
         notes: lib.notes || '',
         type: ptype,
+        _shipId: shipId,
+        _effectiveSla: effectiveSla,  // SLA actually applicable to this row
       });
     }
   }
@@ -4835,6 +4909,7 @@ function libraryRows() {
       sku, name,
       parts: lib.parts || [],
       notes: lib.notes || '',
+      maxDays: lib.maxDays || null,
       status: libraryStatus(sku, inOrdersSet.has(sku)),
       _earliest: earliestBySku[sku] !== undefined ? earliestBySku[sku] : FAR_FUTURE,
     };
@@ -5114,9 +5189,31 @@ function renderKanban(filtered, allVisible) {
   // Build grouped pseudo-rows that have the same shape as regular rows so the
   // rest of the kanban code is mostly unchanged. We give each group a
   // synthetic key (`__group__partName`) so drop-target assignments work.
+  // Also compute "urgency" = highest (ageInDays / effectiveSla) across all
+  // underlying orders. Each row's effectiveSla is set in buildQueue and reflects
+  // the LONGEST SLA across all items in that shipping order (since we ship
+  // multi-item orders together, the slowest item drives the whole order's
+  // deadline). Orders with no SLA contribute urgency=0.
+  const todayForUrgency = new Date(); todayForUrgency.setHours(0,0,0,0);
   const groupedRows = [];
   for (const [partName, g] of byPart.entries()) {
     const oldest = g.oldestRow;
+    let maxUrgency = 0;
+    let urgencyHasSLA = false;
+    let urgencyDisplayMax = null;
+    for (const r of g.rows) {
+      const effSla = r._effectiveSla;
+      if (!effSla || effSla <= 0) continue;
+      const age = daysBetween(new Date(r.date), todayForUrgency);
+      const u = age / effSla;
+      if (u > maxUrgency) {
+        maxUrgency = u;
+        urgencyDisplayMax = effSla;
+      } else if (urgencyDisplayMax === null) {
+        urgencyDisplayMax = effSla;
+      }
+      urgencyHasSLA = true;
+    }
     groupedRows.push({
       // Synthetic key for assignment tracking + drag/drop
       key: `__group__${partName}`,
@@ -5136,10 +5233,24 @@ function renderKanban(filtered, allVisible) {
       _orderCount: g.rows.length,
       _underlyingRows: g.rows,
       _anyAssigned: g.anyAssignedMachine,
+      _urgency: maxUrgency,
+      _hasSLA: urgencyHasSLA,
+      _slaDisplayMax: urgencyDisplayMax,  // the SLA used for display (matches worst-urgency row)
     });
   }
-  // Keep Part Needed cards on top (oldest-need first), then groups (oldest-order first)
-  groupedRows.sort((a, b) => new Date(a.date) - new Date(b.date));
+  // Sort grouped rows by URGENCY descending. Groups WITHOUT any SLA-bearing
+  // order get urgency=0 and fall to the bottom — they're sorted among themselves
+  // by oldest order first (the previous behaviour).
+  groupedRows.sort((a, b) => {
+    if (a._hasSLA && !b._hasSLA) return -1;
+    if (!a._hasSLA && b._hasSLA) return 1;
+    if (a._hasSLA && b._hasSLA) {
+      if (b._urgency !== a._urgency) return b._urgency - a._urgency;
+    }
+    // Tie or no SLA on either: fall back to oldest order first
+    return new Date(a.date) - new Date(b.date);
+  });
+  // Part Needed cards always stay on top, sorted by oldest-need first (no SLA logic per user request)
   needs.sort((a, b) => new Date(a.date) - new Date(b.date));
   const finalRows = [...needs, ...groupedRows];
 
@@ -5175,15 +5286,41 @@ function renderKanban(filtered, allVisible) {
     } else {
       rows.forEach(r => {
         const age = daysBetween(new Date(r.date), today);
-        const agedClass = age >= 14 ? 'aged-2' : age >= 7 ? 'aged-1' : '';
+        // SLA-aware aging: if the group has an SLA, color by urgency instead
+        // of raw age. Otherwise fall back to raw-age 7d/14d thresholds.
+        let agedClass;
+        if (r._hasSLA) {
+          if (r._urgency >= 1.0) agedClass = 'aged-2';        // past SLA — red
+          else if (r._urgency >= 0.7) agedClass = 'aged-1';   // approaching — yellow
+          else agedClass = '';
+        } else {
+          agedClass = age >= 14 ? 'aged-2' : age >= 7 ? 'aged-1' : '';
+        }
         const dateStr = new Date(r.date).toLocaleDateString('en-US', { month:'short', day:'numeric' });
         const showQty = r._remaining;
         const partial = r._covered > 0;
         const qtyTitle = partial ? `Total needed ${r.originalQty}, ${r._covered} from stock` : '';
         const needClass = r._isNeed ? ' kanban-card-need' : '';
         const needTag = r._isNeed ? '<div class="kanban-card-need-tag">Part Needed</div>' : '';
+        // SLA badge: show "12 / 14d" or "5d over" depending on state.
+        // displayMax is the effective SLA used for the worst-urgency underlying
+        // order (which is what we're warning about).
+        let slaBadge = '';
+        if (r._hasSLA && r._slaDisplayMax) {
+          const displayMax = r._slaDisplayMax;
+          const pct = r._urgency;
+          if (pct >= 1.0) {
+            const over = Math.ceil((pct - 1) * displayMax);
+            slaBadge = `<div class="sla-badge sla-over">SLA · ${over}d OVER</div>`;
+          } else if (pct >= 0.7) {
+            const left = Math.max(0, Math.floor((1 - pct) * displayMax));
+            slaBadge = `<div class="sla-badge sla-warn">SLA · ${left}d LEFT</div>`;
+          } else {
+            const left = Math.max(0, Math.floor((1 - pct) * displayMax));
+            slaBadge = `<div class="sla-badge">SLA · ${left}d LEFT</div>`;
+          }
+        }
         // For grouped cards, show customer count + order count instead of a single customer.
-        // For Part Needed cards and any non-group fallback, show the customer name.
         let metaCustomer;
         if (r._isGroup) {
           const orderLabel = r._orderCount === 1 ? '1 order' : `${r._orderCount} orders`;
@@ -5192,10 +5329,8 @@ function renderKanban(filtered, allVisible) {
         } else {
           metaCustomer = escapeHtml(r.customer);
         }
-        // For grouped cards, the SKU footer just says "Multiple SKUs" when >1
         let skuText;
         if (r._isGroup) {
-          // Unique SKU count
           const uniqueSkus = new Set(r._underlyingRows.map(u => u.sku));
           skuText = uniqueSkus.size === 1 ? [...uniqueSkus][0] : `${uniqueSkus.size} SKUs`;
         } else {
@@ -5204,6 +5339,7 @@ function renderKanban(filtered, allVisible) {
         html += `
           <div class="kanban-card ${agedClass}${needClass}" draggable="true" data-key="${escapeAttr(r.key)}">
             ${needTag}
+            ${slaBadge}
             <div class="kanban-card-top">
               <div class="kanban-card-part" title="${escapeAttr(r.part)}">${escapeHtml(r.part)}</div>
               <div class="kanban-card-qty ${showQty>1?'multi':''}" ${qtyTitle?`title="${qtyTitle}"`:''}>×${showQty}</div>
@@ -5379,21 +5515,37 @@ function renderPaintRow(allKanbanRows) {
       e.stopPropagation();
       const card = btn.closest('.paint-row-card');
       const partName = card.dataset.paintPart;
-      // Build a pseudo-clicked object for confirmPrintPlate. Find any matching
-      // order in allKanbanRows to grab a representative SKU.
+      const paintInfo = state.paintParts[partName] || {};
       const lib = findFirstSkuUsingPart(partName);
       const clicked = {
         part: partName,
         sku: lib || '',
-        customer: 'Paint queue',
-        date: state.paintParts[partName]?.at || new Date().toISOString(),
+        customer: paintInfo.fromNeedId ? 'Part Needed (painted)' : 'Paint queue',
+        date: paintInfo.at || new Date().toISOString(),
       };
       confirmPrintPlate(clicked, (qty) => {
-        // Remove from paint AFTER inventory update
+        // If this paint card came from a Part Needed, resolve that need now
+        const fromNeedId = paintInfo.fromNeedId;
+        if (fromNeedId) {
+          const need = (state.partsNeeded || []).find(n => n.id === fromNeedId);
+          if (need && !need.resolvedAt) {
+            need.resolvedAt = new Date().toISOString();
+            if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
+            state.completedOrders.push({
+              at: need.resolvedAt,
+              partName,
+              qty: 1,
+              sku: '',
+              customer: 'Part Needed',
+              originalOrderDate: need.addedAt || null,
+              kind: 'need',
+            });
+          }
+        }
         delete state.paintParts[partName];
         save();
         printPlate(clicked, qty);
-        // printPlate calls renderQueue which will re-render the paint row
+        renderSidebarPriority();
       });
     });
   });
@@ -5427,36 +5579,48 @@ function renderPaintRow(allKanbanRows) {
     const paintPart = e.dataTransfer.getData('application/x-paint-part');
     if (paintPart) return; // dropping a paint card back into paint — no-op
     const fallback = e.dataTransfer.getData('text/plain');
-    // Could be a regular kanban card (data-key) or a Part Needed (need:id)
-    if (fallback && fallback.startsWith('need:')) return;  // don't put Needs in Paint
-    const key = fallback;
-    if (!key) return;
-    // Find the row to get the part name + machine
-    const row = allKanbanRows.find(r => r.key === key);
-    if (!row) return;
-    // Don't paint Part Needed cards or anything weird
-    if (row._isNeed) {
-      toast('Part Needed cards stay out of Paint.', 'error');
-      return;
-    }
-    const partName = row.part;
-    // Determine the source machine for display
-    const manual = state.assignments[key];
+    // Two card types can be dropped in Paint:
+    //   - a regular kanban card (key is `__group__<part>` or per-row key)
+    //   - a Part Needed card (text/plain = 'need:<id>')
+    let partName = null;
     let sourceMachine = null;
-    if (manual && MACHINES.includes(manual)) sourceMachine = manual;
-    else {
-      const preferred = preferredPrinterForPart(partName);
-      sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
+    let needId = null;
+
+    if (fallback && fallback.startsWith('need:')) {
+      // Part Needed → Paint
+      needId = fallback.slice(5);
+      const need = (state.partsNeeded || []).find(n => n.id === needId);
+      if (!need) return;
+      partName = need.partName;
+      // Source machine = wherever the need was placed (if any)
+      if (need.placedMachine && MACHINES.includes(need.placedMachine)) {
+        sourceMachine = need.placedMachine;
+      }
+    } else {
+      const key = fallback;
+      if (!key) return;
+      const row = allKanbanRows.find(r => r.key === key);
+      if (!row) return;
+      partName = row.part;
+      const manual = state.assignments[key];
+      if (manual && MACHINES.includes(manual)) sourceMachine = manual;
+      else {
+        const preferred = preferredPrinterForPart(partName);
+        sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
+      }
+      delete state.assignments[key];
     }
+
+    if (!partName) return;
     if (!state.paintParts) state.paintParts = {};
     state.paintParts[partName] = {
       at: new Date().toISOString(),
       fromMachine: sourceMachine,
+      fromNeedId: needId,  // remember the need so we can resolve it on Done
     };
-    // Remove any machine assignment so it doesn't drift back if drag-dropped later
-    delete state.assignments[key];
     save();
     renderQueue('resin');
+    renderSidebarPriority();
     renderSidebarCounts();
     toast(`"${partName}" → Paint`);
   });
@@ -5690,6 +5854,11 @@ function renderLibrary() {
         <div class="lib-card-foot">
           <button class="btn btn-sm" data-action="add-part">+ Add part</button>
           <input type="text" class="lib-input lib-notes" value="${escapeAttr(r.notes)}" placeholder="Notes (optional)">
+          <label class="lib-sla-label" title="Maximum days a customer should wait for this product after ordering. Used to rank queue urgency (lower = more urgent if breached). Leave blank for no SLA.">
+            <span>Ship within</span>
+            <input type="number" class="lib-input lib-sla" min="1" max="365" step="1" value="${r.maxDays || ''}" placeholder="—">
+            <span>days</span>
+          </label>
         </div>
       </div>`;
   });
@@ -6052,6 +6221,29 @@ function wireLibraryCards(container) {
       lib.notes = notesInput.value.trim();
       scheduleSave();
     });
+
+    // SLA: max days before shipping. Stored as integer (days) or null/undefined
+    // when blank. Affects queue ordering: higher % SLA used → higher urgency.
+    const slaInput = card.querySelector('.lib-sla');
+    if (slaInput) {
+      slaInput.addEventListener('input', () => {
+        const lib = ensureLibEntry();
+        const v = slaInput.value.trim();
+        if (!v) {
+          delete lib.maxDays;
+        } else {
+          const n = parseInt(v, 10);
+          if (isNaN(n) || n < 1) {
+            delete lib.maxDays;
+          } else {
+            lib.maxDays = Math.min(365, n);
+          }
+        }
+        scheduleSave();
+        // Re-render the queue too so the new urgency takes effect immediately
+        if (typeof renderQueue === 'function') renderQueue();
+      });
+    }
 
     // Delete SKU
     card.querySelector('[data-action="del-sku"]').addEventListener('click', () => {
