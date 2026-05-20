@@ -5464,16 +5464,17 @@ function renderQueue(type) {
 
   // FDM ordering:
   //   1. Part Needed cards
-  //   2. Standard (non-vehicle) orders older than 14 days — these went past
-  //      our 20 business-day promise, so they jump to the top below needs
-  //   3. Everything else, oldest order first (vehicle orders mixed in)
+  //   2. Overdue orders (either standard >14d OR vehicle >30d) — these are
+  //      past the timeframes we promise customers (20 business days standard,
+  //      30-45 business days vehicle), so they jump to the top below needs
+  //   3. Everything else, oldest order first
   filtered.sort((a, b) => {
     if (a._isNeed && !b._isNeed) return -1;
     if (!a._isNeed && b._isNeed) return 1;
     const aAge = daysBetween(new Date(a.date), today);
     const bAge = daysBetween(new Date(b.date), today);
-    const aOverdue = !a._orderIsVehicle && aAge >= 14;
-    const bOverdue = !b._orderIsVehicle && bAge >= 14;
+    const aOverdue = (!a._orderIsVehicle && aAge >= 14) || (a._orderIsVehicle && aAge >= 30);
+    const bOverdue = (!b._orderIsVehicle && bAge >= 14) || (b._orderIsVehicle && bAge >= 30);
     if (aOverdue && !bOverdue) return -1;
     if (!aOverdue && bOverdue) return 1;
     return new Date(a.date) - new Date(b.date);
@@ -5651,14 +5652,15 @@ function renderKanban(filtered, allVisible) {
   }
   // Resin queue ordering:
   //   1. Part Needed cards (oldest first)
-  //   2. Standard (non-vehicle) groups older than 14 days — past our standard
-  //      20 business-day promise, so they jump to top below needs
+  //   2. Overdue groups (standard >14d OR vehicle >30d) — past our promised
+  //      timeframes (20 business days standard, 30-45 business days vehicle),
+  //      so they jump to top below needs
   //   3. Everything else, oldest first
   groupedRows.sort((a, b) => {
     const aAge = daysBetween(new Date(a.date), todayForUrgency);
     const bAge = daysBetween(new Date(b.date), todayForUrgency);
-    const aOverdue = !a._orderIsVehicle && aAge >= 14;
-    const bOverdue = !b._orderIsVehicle && bAge >= 14;
+    const aOverdue = (!a._orderIsVehicle && aAge >= 14) || (a._orderIsVehicle && aAge >= 30);
+    const bOverdue = (!b._orderIsVehicle && bAge >= 14) || (b._orderIsVehicle && bAge >= 30);
     if (aOverdue && !bOverdue) return -1;
     if (!aOverdue && bOverdue) return 1;
     return new Date(a.date) - new Date(b.date);
