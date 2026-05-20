@@ -732,7 +732,7 @@ body {
   background: var(--bg);
   border: 1px solid var(--line-bright);
   border-radius: 3px;
-  padding: 11px 13px;
+  padding: 6px 10px 7px;
   cursor: grab;
   font-size: 14px;
   transition: border-color 0.1s, transform 0.1s, opacity 0.2s;
@@ -747,12 +747,13 @@ body {
 .kanban-card-top {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px;
-  margin-bottom: 7px;
+  margin-bottom: 3px;
 }
 .kanban-card-part {
   font-weight: 700;
   color: var(--ink);
   font-size: 15px;
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -763,9 +764,10 @@ body {
   font-size: 14px;
   color: var(--amber);
   background: rgba(240,168,48,0.12);
-  padding: 3px 9px;
+  padding: 1px 8px;
   border-radius: 2px;
   flex-shrink: 0;
+  line-height: 1.3;
 }
 .kanban-card-qty.multi { color: var(--red); background: rgba(232,93,74,0.15); }
 .kanban-card-meta {
@@ -775,6 +777,7 @@ body {
   font-size: 12px;
   color: var(--ink-faint);
   letter-spacing: 0.02em;
+  line-height: 1.25;
 }
 .kanban-card-customer {
   overflow: hidden;
@@ -795,8 +798,8 @@ body {
 .kanban-card-bottom {
   display: flex; justify-content: space-between; align-items: center;
   gap: 10px;
-  margin-top: 9px;
-  padding-top: 9px;
+  margin-top: 4px;
+  padding-top: 4px;
   border-top: 1px solid var(--line);
 }
 .kanban-card-sku {
@@ -814,7 +817,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  padding: 8px 16px;
+  padding: 4px 14px;
   border-radius: 3px;
   border: 1px solid var(--line-bright);
   background: transparent;
@@ -1767,6 +1770,27 @@ body {
   color: var(--amber);
   font-weight: 700;
   padding: 6px 8px;
+}
+.lib-vehicle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+}
+.lib-vehicle-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--amber);
+  cursor: pointer;
+}
+.lib-vehicle-label:has(input:checked) {
+  color: var(--amber);
 }
 
 .lib-sku {
@@ -3823,7 +3847,7 @@ body.mode-mobile .mobile-only { display: block; }
         <span class="nav-item-num" id="nav-library-count">0</span>
       </div>
       <div class="nav-item" data-view="sla-sorter" data-mobile="hide">
-        <span>SLA Sorter</span>
+        <span>Vehicle Tagger</span>
         <span class="nav-item-num" id="nav-sla-count">0</span>
       </div>
       <div class="nav-item" data-view="inventory" data-mobile="show">
@@ -4237,35 +4261,24 @@ body.mode-mobile .mobile-only { display: block; }
     <section id="view-sla-sorter" class="hidden">
       <div class="page-header">
         <div>
-          <h1 class="page-title">SLA Sorter</h1>
-          <div class="page-sub">Quick-assign shipping deadlines to every SKU</div>
+          <h1 class="page-title">Vehicle Tagger</h1>
+          <div class="page-sub">Tag SKUs as Vehicles (or vehicle-equivalent multi-week projects). Orders containing any vehicle SKU are exempt from the 14-day "push to top" rule.</div>
         </div>
         <div class="page-actions">
           <div class="dash-range">
             <button class="filter-chip active" data-sla-filter="all">All SKUs</button>
-            <button class="filter-chip" data-sla-filter="unset">Unset only</button>
-            <button class="filter-chip" data-sla-filter="set">Already set</button>
+            <button class="filter-chip" data-sla-filter="unset">Standard only</button>
+            <button class="filter-chip" data-sla-filter="set">Vehicles only</button>
           </div>
         </div>
       </div>
 
-      <!-- Progress bar -->
+      <!-- Progress bar (just shows vehicle count vs total) -->
       <div class="sla-progress">
         <div class="sla-progress-bar">
           <div class="sla-progress-fill" id="sla-progress-fill" style="width:0%;"></div>
         </div>
-        <div class="sla-progress-text" id="sla-progress-text">— SKUs with SLA · — without</div>
-      </div>
-
-      <!-- Bucket distribution -->
-      <div class="sla-buckets" id="sla-buckets">
-        <div class="sla-bucket" data-bucket="5"><div class="sla-bucket-label">5d</div><div class="sla-bucket-count" id="sla-bucket-5">0</div></div>
-        <div class="sla-bucket" data-bucket="10"><div class="sla-bucket-label">10d</div><div class="sla-bucket-count" id="sla-bucket-10">0</div></div>
-        <div class="sla-bucket" data-bucket="15"><div class="sla-bucket-label">15d</div><div class="sla-bucket-count" id="sla-bucket-15">0</div></div>
-        <div class="sla-bucket" data-bucket="20"><div class="sla-bucket-label">20d</div><div class="sla-bucket-count" id="sla-bucket-20">0</div></div>
-        <div class="sla-bucket" data-bucket="25"><div class="sla-bucket-label">25d</div><div class="sla-bucket-count" id="sla-bucket-25">0</div></div>
-        <div class="sla-bucket sla-bucket-other"><div class="sla-bucket-label">Other</div><div class="sla-bucket-count" id="sla-bucket-other">0</div></div>
-        <div class="sla-bucket sla-bucket-unset"><div class="sla-bucket-label">Unset</div><div class="sla-bucket-count" id="sla-bucket-unset">0</div></div>
+        <div class="sla-progress-text" id="sla-progress-text">— SKUs tagged as Vehicle</div>
       </div>
 
       <!-- The list of SKUs -->
@@ -4968,25 +4981,16 @@ function buildQueue(typeFilter) {
   // emit only the rows matching typeFilter.
   // typeFilter: 'resin' | 'fdm' | undefined (no filter)
 
-  // Precompute the EFFECTIVE SLA per shipping orderId. Since we ship a
-  // multi-item order together, the whole order is effectively constrained by
-  // the LONGEST individual SLA in it. A 14-day SKU shipped alongside a 30-day
-  // SKU has an effective deadline of 30 days because we wait for the slowest.
-  // Orders without any SKU SLA → effective SLA stays null (no urgency).
-  const effectiveSlaByShipId = {};
+  // Precompute whether each shipping order contains ANY vehicle-tagged SKU.
+  // A multi-item order is treated as a "vehicle order" if any line item is a
+  // vehicle — vehicles always ship together with whatever else is in the order.
+  const hasVehicleByShipId = {};
   for (const o of state.orders) {
-    const shipId = o.orderId || o.id;  // fall back to per-line id if no ship ID
+    const shipId = o.orderId || o.id;
     const lib = state.library[o.sku];
-    const sla = (lib && lib.maxDays && lib.maxDays > 0) ? lib.maxDays : null;
-    if (sla === null) {
-      // Keep existing value (if other lines in same ship had an SLA) — don't overwrite with null
-      if (!(shipId in effectiveSlaByShipId)) effectiveSlaByShipId[shipId] = null;
-    } else {
-      const existing = effectiveSlaByShipId[shipId];
-      effectiveSlaByShipId[shipId] = (existing === null || existing === undefined)
-        ? sla
-        : Math.max(existing, sla);
-    }
+    const isVeh = !!(lib && lib.isVehicle);
+    if (!(shipId in hasVehicleByShipId)) hasVehicleByShipId[shipId] = false;
+    if (isVeh) hasVehicleByShipId[shipId] = true;
   }
 
   const allRowsAll = [];
@@ -4994,7 +4998,7 @@ function buildQueue(typeFilter) {
     const lib = state.library[o.sku];
     if (!lib || !lib.parts || lib.parts.length === 0) continue;
     const shipId = o.orderId || o.id;
-    const effectiveSla = effectiveSlaByShipId[shipId] || null;
+    const orderIsVehicle = hasVehicleByShipId[shipId] || false;
     for (const partObj of lib.parts) {
       const part = (typeof partObj === 'string') ? partObj : partObj.name;
       if (!part) continue;
@@ -5011,7 +5015,7 @@ function buildQueue(typeFilter) {
         notes: lib.notes || '',
         type: ptype,
         _shipId: shipId,
-        _effectiveSla: effectiveSla,  // SLA actually applicable to this row
+        _orderIsVehicle: orderIsVehicle,  // true if this order contains any vehicle SKU
       });
     }
   }
@@ -5150,6 +5154,7 @@ function libraryRows() {
       parts: lib.parts || [],
       notes: lib.notes || '',
       maxDays: lib.maxDays || null,
+      isVehicle: !!lib.isVehicle,
       status: libraryStatus(sku, inOrdersSet.has(sku)),
       _earliest: earliestBySku[sku] !== undefined ? earliestBySku[sku] : FAR_FUTURE,
     };
@@ -5291,14 +5296,20 @@ function renderQueue(type) {
       <div class="qcell">Action</div>
     </div>`;
 
-  // FDM ordering: Part Needed cards first, then by oldest order date.
-  // NOTE: SLA-based sorting was here but temporarily disabled per user request;
-  // the SLA Sorter page still exists and the `_effectiveSla` field is still
-  // computed in buildQueue — they're just not used here. To re-enable, restore
-  // the urgency precompute + sort blocks.
+  // FDM ordering:
+  //   1. Part Needed cards
+  //   2. Standard (non-vehicle) orders older than 14 days — these went past
+  //      our 20 business-day promise, so they jump to the top below needs
+  //   3. Everything else, oldest order first (vehicle orders mixed in)
   filtered.sort((a, b) => {
     if (a._isNeed && !b._isNeed) return -1;
     if (!a._isNeed && b._isNeed) return 1;
+    const aAge = daysBetween(new Date(a.date), today);
+    const bAge = daysBetween(new Date(b.date), today);
+    const aOverdue = !a._orderIsVehicle && aAge >= 14;
+    const bOverdue = !b._orderIsVehicle && bAge >= 14;
+    if (aOverdue && !bOverdue) return -1;
+    if (!aOverdue && bOverdue) return 1;
     return new Date(a.date) - new Date(b.date);
   });
 
@@ -5449,33 +5460,18 @@ function renderKanban(filtered, allVisible) {
   const groupedRows = [];
   for (const [partName, g] of byPart.entries()) {
     const oldest = g.oldestRow;
-    let maxUrgency = 0;
-    let urgencyHasSLA = false;
-    let urgencyDisplayMax = null;
-    for (const r of g.rows) {
-      const effSla = r._effectiveSla;
-      if (!effSla || effSla <= 0) continue;
-      const age = daysBetween(new Date(r.date), todayForUrgency);
-      const u = age / effSla;
-      if (u > maxUrgency) {
-        maxUrgency = u;
-        urgencyDisplayMax = effSla;
-      } else if (urgencyDisplayMax === null) {
-        urgencyDisplayMax = effSla;
-      }
-      urgencyHasSLA = true;
-    }
+    // Group counts as "vehicle" if any underlying row's order is a vehicle order
+    const groupHasVehicle = g.rows.some(r => r._orderIsVehicle);
     groupedRows.push({
       // Synthetic key for assignment tracking + drag/drop
       key: `__group__${partName}`,
-      // Real first-row id for compatibility (Done uses this for SKU lookup)
       orderId: oldest.orderId,
       part: partName,
       sku: oldest.sku,
       customer: oldest.customer,
       item: oldest.item,
       date: g.oldestDate,
-      qty: g.totalOriginal,           // total qty across all orders
+      qty: g.totalOriginal,
       originalQty: g.totalOriginal,
       _remaining: g.totalRemaining,
       _covered: Math.max(0, g.totalOriginal - g.totalRemaining),
@@ -5484,16 +5480,23 @@ function renderKanban(filtered, allVisible) {
       _orderCount: g.rows.length,
       _underlyingRows: g.rows,
       _anyAssigned: g.anyAssignedMachine,
-      _urgency: maxUrgency,
-      _hasSLA: urgencyHasSLA,
-      _slaDisplayMax: urgencyDisplayMax,  // the SLA used for display (matches worst-urgency row)
+      _orderIsVehicle: groupHasVehicle,
     });
   }
-  // Resin queue ordering: Part Needed cards on top, then groups by oldest-order first.
-  // NOTE: SLA-driven urgency sort was here but temporarily disabled per user request.
-  // `_urgency` / `_hasSLA` are still computed above and the SLA Sorter page still
-  // works — they're just not used for ordering or coloring until re-enabled.
-  groupedRows.sort((a, b) => new Date(a.date) - new Date(b.date));
+  // Resin queue ordering:
+  //   1. Part Needed cards (oldest first)
+  //   2. Standard (non-vehicle) groups older than 14 days — past our standard
+  //      20 business-day promise, so they jump to top below needs
+  //   3. Everything else, oldest first
+  groupedRows.sort((a, b) => {
+    const aAge = daysBetween(new Date(a.date), todayForUrgency);
+    const bAge = daysBetween(new Date(b.date), todayForUrgency);
+    const aOverdue = !a._orderIsVehicle && aAge >= 14;
+    const bOverdue = !b._orderIsVehicle && bAge >= 14;
+    if (aOverdue && !bOverdue) return -1;
+    if (!aOverdue && bOverdue) return 1;
+    return new Date(a.date) - new Date(b.date);
+  });
   needs.sort((a, b) => new Date(a.date) - new Date(b.date));
   const finalRows = [...needs, ...groupedRows];
 
@@ -5814,6 +5817,11 @@ function renderPaintRow(allKanbanRows) {
       if (need.placedMachine && MACHINES.includes(need.placedMachine)) {
         sourceMachine = need.placedMachine;
       }
+      // Mark the need as PLACED so the sidebar Priority panel hides it.
+      // Without this, the need would still show in the sidebar AND in Paint
+      // at the same time (the "duplicate" the user was seeing).
+      need.placedAt = new Date().toISOString();
+      need.placedQueue = 'paint';
     } else {
       const key = fallback;
       if (!key) return;
@@ -6072,10 +6080,9 @@ function renderLibrary() {
         <div class="lib-card-foot">
           <button class="btn btn-sm" data-action="add-part">+ Add part</button>
           <input type="text" class="lib-input lib-notes" value="${escapeAttr(r.notes)}" placeholder="Notes (optional)">
-          <label class="lib-sla-label" title="Maximum days a customer should wait for this product after ordering. Used to rank queue urgency (lower = more urgent if breached). Leave blank for no SLA.">
-            <span>Ship within</span>
-            <input type="number" class="lib-input lib-sla" min="1" max="365" step="1" value="${r.maxDays || ''}" placeholder="—">
-            <span>days</span>
+          <label class="lib-vehicle-label" title="Tag this SKU as a vehicle. Vehicle orders are NOT pushed up the queue when they age past 14 days, because vehicles take longer to print and your site quotes 30-45 business days for them.">
+            <input type="checkbox" class="lib-vehicle" ${r.isVehicle ? 'checked' : ''}>
+            <span>Vehicle</span>
           </label>
         </div>
       </div>`;
@@ -6440,25 +6447,19 @@ function wireLibraryCards(container) {
       scheduleSave();
     });
 
-    // SLA: max days before shipping. Stored as integer (days) or null/undefined
-    // when blank. Affects queue ordering: higher % SLA used → higher urgency.
-    const slaInput = card.querySelector('.lib-sla');
-    if (slaInput) {
-      slaInput.addEventListener('input', () => {
+    // Vehicle checkbox: marks this SKU as a vehicle (or vehicle-equivalent
+    // multi-day project). Vehicle orders are NOT pushed to the top of the
+    // queue when they age past 14 days, because they're expected to take longer.
+    const vehicleInput = card.querySelector('.lib-vehicle');
+    if (vehicleInput) {
+      vehicleInput.addEventListener('change', () => {
         const lib = ensureLibEntry();
-        const v = slaInput.value.trim();
-        if (!v) {
-          delete lib.maxDays;
+        if (vehicleInput.checked) {
+          lib.isVehicle = true;
         } else {
-          const n = parseInt(v, 10);
-          if (isNaN(n) || n < 1) {
-            delete lib.maxDays;
-          } else {
-            lib.maxDays = Math.min(365, n);
-          }
+          delete lib.isVehicle;
         }
         scheduleSave();
-        // Re-render the queue too so the new urgency takes effect immediately
         if (typeof renderQueue === 'function') renderQueue();
       });
     }
@@ -6958,11 +6959,10 @@ let _slaFilterMode = 'all'; // 'all' | 'unset' | 'set'
 const SLA_BUCKETS = [5, 10, 15, 20, 25];
 
 function renderSlaSorter() {
-  // Gather every SKU known to the app — from library + from any orders
+  // Gather every SKU known to the app
   const skuSet = new Set(Object.keys(state.library));
   for (const o of state.orders) if (o.sku) skuSet.add(o.sku);
 
-  // Earliest order date per SKU for sorting
   const earliestBySku = {};
   const ordersBySku = {};
   for (const o of state.orders) {
@@ -6974,11 +6974,9 @@ function renderSlaSorter() {
     ordersBySku[o.sku] = (ordersBySku[o.sku] || 0) + 1;
   }
 
-  // Build list of rows
   const FAR_FUTURE = Number.MAX_SAFE_INTEGER;
   let rows = Array.from(skuSet).map(sku => {
     const lib = state.library[sku] || {};
-    // Fallback name from any order if library entry doesn't have one yet
     let name = lib.name || '';
     if (!name) {
       const o = state.orders.find(x => x.sku === sku);
@@ -6987,64 +6985,43 @@ function renderSlaSorter() {
     return {
       sku,
       name,
-      maxDays: lib.maxDays || null,
+      isVehicle: !!lib.isVehicle,
       _earliest: earliestBySku[sku] !== undefined ? earliestBySku[sku] : FAR_FUTURE,
       _openOrders: ordersBySku[sku] || 0,
     };
   });
 
-  // Sort: SKUs WITHOUT SLA first (unset = most urgent to address), then by
-  // oldest-order date within each group. SKUs with no orders go last.
+  // Sort: standard SKUs first (untagged), by oldest open order, then vehicles
   rows.sort((a, b) => {
-    const aUnset = a.maxDays ? 1 : 0;
-    const bUnset = b.maxDays ? 1 : 0;
-    if (aUnset !== bUnset) return aUnset - bUnset;  // unset (0) first
-    return a._earliest - b._earliest;  // older first
+    if (a.isVehicle !== b.isVehicle) return a.isVehicle ? 1 : -1;
+    return a._earliest - b._earliest;
   });
 
-  // Counters (always full set, for the progress + bucket bar)
-  let totalSet = 0;
-  const bucketCounts = { 5: 0, 10: 0, 15: 0, 20: 0, 25: 0, other: 0, unset: 0 };
-  for (const r of rows) {
-    if (r.maxDays) {
-      totalSet++;
-      if (SLA_BUCKETS.includes(r.maxDays)) bucketCounts[r.maxDays]++;
-      else bucketCounts.other++;
-    } else {
-      bucketCounts.unset++;
-    }
-  }
+  let vehicleCount = 0;
+  for (const r of rows) if (r.isVehicle) vehicleCount++;
   const total = rows.length;
+  const standardCount = total - vehicleCount;
 
-  // Update progress bar
-  const pct = total > 0 ? (totalSet / total) * 100 : 0;
+  // Progress bar shows vehicle / total
+  const pct = total > 0 ? (vehicleCount / total) * 100 : 0;
   document.getElementById('sla-progress-fill').style.width = pct.toFixed(1) + '%';
   document.getElementById('sla-progress-text').textContent =
-    `${totalSet} of ${total} SKUs have SLA · ${bucketCounts.unset} unset (${(100 - pct).toFixed(0)}% remaining)`;
+    `${vehicleCount} of ${total} SKUs tagged as Vehicle · ${standardCount} standard`;
 
-  // Update bucket counts
-  for (const b of SLA_BUCKETS) {
-    document.getElementById(`sla-bucket-${b}`).textContent = bucketCounts[b];
-  }
-  document.getElementById('sla-bucket-other').textContent = bucketCounts.other;
-  document.getElementById('sla-bucket-unset').textContent = bucketCounts.unset;
-
-  // Update sidebar nav count
+  // Sidebar nav count: shows how many vehicles tagged (a positive count, not "remaining")
   const navCount = document.getElementById('nav-sla-count');
-  if (navCount) navCount.textContent = bucketCounts.unset;
+  if (navCount) navCount.textContent = vehicleCount;
 
-  // Apply the filter chip
+  // Filter
   let filtered = rows;
-  if (_slaFilterMode === 'unset') filtered = rows.filter(r => !r.maxDays);
-  else if (_slaFilterMode === 'set') filtered = rows.filter(r => !!r.maxDays);
+  if (_slaFilterMode === 'unset') filtered = rows.filter(r => !r.isVehicle);  // standard only
+  else if (_slaFilterMode === 'set') filtered = rows.filter(r => r.isVehicle); // vehicles only
 
-  // Render the list (cap at 500 visible to keep DOM happy; user can filter to scope)
   const list = document.getElementById('sla-list');
   if (filtered.length === 0) {
     list.innerHTML = `<div class="empty" style="padding:40px 20px;text-align:center;">
-      <div class="empty-mark">✓</div>
-      <div class="empty-title">${_slaFilterMode === 'unset' ? 'Every SKU has an SLA' : 'No matching SKUs'}</div>
-      <div class="empty-sub">${_slaFilterMode === 'unset' ? 'Nice work.' : ''}</div>
+      <div class="empty-mark">∅</div>
+      <div class="empty-title">No matching SKUs</div>
     </div>`;
     return;
   }
@@ -7052,120 +7029,52 @@ function renderSlaSorter() {
   const visible = filtered.slice(0, cap);
   let html = '';
   for (const r of visible) {
-    const isSet = !!r.maxDays;
     const orderInfo = r._openOrders > 0
       ? `${r._openOrders} open order${r._openOrders === 1 ? '' : 's'} · oldest ${r._earliest === FAR_FUTURE ? '—' : new Date(r._earliest).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
       : 'No open orders';
-    const otherVal = (isSet && !SLA_BUCKETS.includes(r.maxDays)) ? r.maxDays : '';
-    let buttonsHtml = SLA_BUCKETS.map(b => {
-      const active = r.maxDays === b ? ' active' : '';
-      return `<button class="sla-card-btn${active}" data-sla-set="${b}">${b}d</button>`;
-    }).join('');
     html += `
-      <div class="sla-card${isSet ? ' is-set' : ''}" draggable="true" data-sla-sku="${escapeAttr(r.sku)}">
+      <div class="sla-card${r.isVehicle ? ' is-set' : ''}" data-sla-sku="${escapeAttr(r.sku)}">
         <div class="sla-card-info">
           <div class="sla-card-sku">${escapeHtml(r.sku)}</div>
           <div class="sla-card-name">${escapeHtml(r.name || '(no product name)')}</div>
           <div class="sla-card-meta">${orderInfo}</div>
         </div>
         <div class="sla-card-actions">
-          ${buttonsHtml}
-          <div class="sla-card-other">
-            <input type="number" min="1" max="365" placeholder="—" value="${otherVal}" data-sla-custom>
-            <span class="sla-card-other-label">d</span>
-          </div>
-          <button class="sla-card-clear" data-sla-clear title="Clear SLA">✕</button>
+          <button class="sla-card-btn${r.isVehicle ? ' active' : ''}" data-vehicle-toggle>
+            ${r.isVehicle ? '✓ Vehicle' : 'Tag as Vehicle'}
+          </button>
         </div>
       </div>`;
   }
   if (filtered.length > cap) {
-    html += `<div class="empty-sub" style="text-align:center;padding:16px;">…and ${filtered.length - cap} more. Narrow the filter to see them.</div>`;
+    html += `<div class="empty-sub" style="text-align:center;padding:16px;">…and ${filtered.length - cap} more.</div>`;
   }
   list.innerHTML = html;
 
-  // Wire up the cards
   list.querySelectorAll('.sla-card').forEach(card => {
     const sku = card.dataset.slaSku;
-
-    // Quick buttons (5/10/15/20/25)
-    card.querySelectorAll('[data-sla-set]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const v = parseInt(btn.dataset.slaSet, 10);
-        applySla(sku, v);
-      });
-    });
-
-    // Custom number input
-    const customInput = card.querySelector('[data-sla-custom]');
-    if (customInput) {
-      const apply = () => {
-        const v = parseInt(customInput.value, 10);
-        if (isNaN(v) || v < 1) applySla(sku, null);
-        else applySla(sku, Math.min(365, v));
-      };
-      customInput.addEventListener('blur', apply);
-      customInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); customInput.blur(); }
-      });
-    }
-
-    // Clear button
-    const clearBtn = card.querySelector('[data-sla-clear]');
-    if (clearBtn) clearBtn.addEventListener('click', () => applySla(sku, null));
-
-    // Drag handlers for desktop
-    card.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', `sla-sku:${sku}`);
-      card.classList.add('dragging');
-    });
-    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+    const btn = card.querySelector('[data-vehicle-toggle]');
+    if (btn) btn.addEventListener('click', () => toggleVehicle(sku));
   });
 }
 
-// Set or clear a SKU's SLA. days = null to unset.
-function applySla(sku, days) {
+function toggleVehicle(sku) {
   if (!state.library[sku]) {
-    // Create a stub library entry so we have somewhere to store the value
     const o = state.orders.find(x => x.sku === sku);
     state.library[sku] = { name: o ? o.item : '', parts: [], notes: '' };
   }
-  if (days === null || days === undefined) {
-    delete state.library[sku].maxDays;
+  if (state.library[sku].isVehicle) {
+    delete state.library[sku].isVehicle;
   } else {
-    state.library[sku].maxDays = days;
+    state.library[sku].isVehicle = true;
   }
   save();
-  // Re-render: queue (urgency may have changed) + sorter (this card may need to move)
   renderSlaSorter();
   if (typeof renderQueue === 'function') renderQueue();
   if (typeof renderSidebarCounts === 'function') renderSidebarCounts();
 }
 
-// Wire the buckets as drop zones (drag SKU cards onto a bucket to set their SLA)
-(function wireSlaBuckets() {
-  const wireUp = () => {
-    document.querySelectorAll('.sla-bucket[data-bucket]').forEach(bucket => {
-      bucket.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        bucket.classList.add('drag-over');
-      });
-      bucket.addEventListener('dragleave', () => bucket.classList.remove('drag-over'));
-      bucket.addEventListener('drop', (e) => {
-        e.preventDefault();
-        bucket.classList.remove('drag-over');
-        const raw = e.dataTransfer.getData('text/plain');
-        if (!raw || !raw.startsWith('sla-sku:')) return;
-        const sku = raw.slice(8);
-        const days = parseInt(bucket.dataset.bucket, 10);
-        if (!isNaN(days)) applySla(sku, days);
-      });
-    });
-  };
-  // Try now and again after DOMContentLoaded in case
-  wireUp();
-  document.addEventListener('DOMContentLoaded', wireUp);
-})();
+// (Old SLA bucket drop logic removed — Vehicle Tagger uses a simple toggle button)
 
 // Filter chips
 document.addEventListener('click', (e) => {
@@ -7364,17 +7273,15 @@ function renderSidebarCounts() {
   document.getElementById('nav-queue-resin-count').textContent = resinCount.toLocaleString();
   document.getElementById('nav-queue-fdm-count').textContent   = fdmCount.toLocaleString();
   document.getElementById('nav-library-count').textContent = Object.keys(state.library).length;
-  // SLA unset count for the sidebar nav badge
+  // Vehicle Tagger count for the sidebar nav badge (how many SKUs tagged as Vehicle)
   const slaCountEl = document.getElementById('nav-sla-count');
   if (slaCountEl) {
-    const skuSet = new Set(Object.keys(state.library));
-    for (const o of state.orders) if (o.sku) skuSet.add(o.sku);
-    let unset = 0;
-    for (const sku of skuSet) {
+    let vehicleCount = 0;
+    for (const sku of Object.keys(state.library)) {
       const lib = state.library[sku];
-      if (!lib || !lib.maxDays || lib.maxDays <= 0) unset++;
+      if (lib && lib.isVehicle) vehicleCount++;
     }
-    slaCountEl.textContent = unset;
+    slaCountEl.textContent = vehicleCount;
   }
   const invCount = Object.values(state.inventory).filter(v => Number(v) > 0).length;
   document.getElementById('nav-inventory-count').textContent = invCount;
