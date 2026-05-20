@@ -5291,52 +5291,21 @@ function renderQueue(type) {
       <div class="qcell">Action</div>
     </div>`;
 
-  // Re-sort FDM rows by SLA urgency (same logic as resin kanban groups, but
-  // applied per-row since FDM stays per-order rather than grouped). Part Needed
-  // rows always float to the top. Rows with no effective SLA fall to the
-  // bottom and are sorted by oldest-first among themselves.
-  // Pre-compute urgency per row to avoid recomputing during the sort.
-  const fdmTodayMs = today.getTime();
-  filtered.forEach(r => {
-    const sla = r._effectiveSla;
-    if (sla && sla > 0) {
-      const ageMs = fdmTodayMs - new Date(r.date).getTime();
-      const ageDays = Math.max(0, Math.floor(ageMs / 86400000));
-      r._urgency = ageDays / sla;
-      r._hasSLA = true;
-      r._slaDisplayMax = sla;
-    } else {
-      r._urgency = 0;
-      r._hasSLA = false;
-      r._slaDisplayMax = null;
-    }
-  });
+  // FDM ordering: Part Needed cards first, then by oldest order date.
+  // NOTE: SLA-based sorting was here but temporarily disabled per user request;
+  // the SLA Sorter page still exists and the `_effectiveSla` field is still
+  // computed in buildQueue — they're just not used here. To re-enable, restore
+  // the urgency precompute + sort blocks.
   filtered.sort((a, b) => {
-    // Part Needed rows go first
     if (a._isNeed && !b._isNeed) return -1;
     if (!a._isNeed && b._isNeed) return 1;
-    if (a._isNeed && b._isNeed) return new Date(a.date) - new Date(b.date);
-    // SLA-bearing rows above no-SLA rows
-    if (a._hasSLA && !b._hasSLA) return -1;
-    if (!a._hasSLA && b._hasSLA) return 1;
-    // Both have SLAs: higher urgency first
-    if (a._hasSLA && b._hasSLA && b._urgency !== a._urgency) return b._urgency - a._urgency;
-    // Tie or both no-SLA: oldest first
     return new Date(a.date) - new Date(b.date);
   });
 
   filtered.forEach((r, i) => {
     const age = daysBetween(new Date(r.date), today);
-    // SLA-aware aging: color by urgency if SLA present, else fall back to raw age
-    let agedClass, rowClass;
-    if (r._hasSLA) {
-      if (r._urgency >= 1.0) { agedClass = 'aged-2'; rowClass = 'row-aged-2'; }
-      else if (r._urgency >= 0.7) { agedClass = 'aged-1'; rowClass = 'row-aged-1'; }
-      else { agedClass = ''; rowClass = ''; }
-    } else {
-      agedClass = age >= 14 ? 'aged-2' : age >= 7 ? 'aged-1' : '';
-      rowClass  = age >= 14 ? 'row-aged-2' : age >= 7 ? 'row-aged-1' : '';
-    }
+    const agedClass = age >= 14 ? 'aged-2' : age >= 7 ? 'aged-1' : '';
+    const rowClass = age >= 14 ? 'row-aged-2' : age >= 7 ? 'row-aged-1' : '';
     const dateStr = new Date(r.date).toLocaleDateString('en-US', { month:'short', day:'numeric' });
     const showQty = r._remaining;
     const partial = r._covered > 0;
@@ -5344,25 +5313,9 @@ function renderQueue(type) {
       ? `<span class="qty-badge ${showQty>1?'multi':''}" title="Need ${r.originalQty}, ${r._covered} from stock">×${showQty}<sup style="font-size:9px;color:var(--green);margin-left:3px;">−${r._covered}</sup></span>`
       : `<span class="qty-badge ${showQty>1?'multi':''}">×${showQty}</span>`;
     const needRowClass = r._isNeed ? ' queue-row-need' : '';
-    // SLA badge for FDM rows — same color rules as resin
-    let slaBadgeHtml = '';
-    if (r._hasSLA && r._slaDisplayMax) {
-      const displayMax = r._slaDisplayMax;
-      const pct = r._urgency;
-      if (pct >= 1.0) {
-        const over = Math.ceil((pct - 1) * displayMax);
-        slaBadgeHtml = `<span class="sla-badge sla-over">SLA · ${over}d OVER</span>`;
-      } else if (pct >= 0.7) {
-        const left = Math.max(0, Math.floor((1 - pct) * displayMax));
-        slaBadgeHtml = `<span class="sla-badge sla-warn">SLA · ${left}d LEFT</span>`;
-      } else {
-        const left = Math.max(0, Math.floor((1 - pct) * displayMax));
-        slaBadgeHtml = `<span class="sla-badge">SLA · ${left}d LEFT</span>`;
-      }
-    }
     const customerCell = r._isNeed
       ? `<div class="qcell qcell-customer"><span class="queue-need-tag">Part Needed</span></div>`
-      : `<div class="qcell qcell-customer">${escapeHtml(r.customer)}${slaBadgeHtml ? ' ' + slaBadgeHtml : ''}</div>`;
+      : `<div class="qcell qcell-customer">${escapeHtml(r.customer)}</div>`;
     html += `
       <div class="queue-row ${rowClass}${needRowClass}" data-key="${escapeAttr(r.key)}">
         <div class="qcell qcell-num">${i+1}</div>
@@ -5536,19 +5489,11 @@ function renderKanban(filtered, allVisible) {
       _slaDisplayMax: urgencyDisplayMax,  // the SLA used for display (matches worst-urgency row)
     });
   }
-  // Sort grouped rows by URGENCY descending. Groups WITHOUT any SLA-bearing
-  // order get urgency=0 and fall to the bottom — they're sorted among themselves
-  // by oldest order first (the previous behaviour).
-  groupedRows.sort((a, b) => {
-    if (a._hasSLA && !b._hasSLA) return -1;
-    if (!a._hasSLA && b._hasSLA) return 1;
-    if (a._hasSLA && b._hasSLA) {
-      if (b._urgency !== a._urgency) return b._urgency - a._urgency;
-    }
-    // Tie or no SLA on either: fall back to oldest order first
-    return new Date(a.date) - new Date(b.date);
-  });
-  // Part Needed cards always stay on top, sorted by oldest-need first (no SLA logic per user request)
+  // Resin queue ordering: Part Needed cards on top, then groups by oldest-order first.
+  // NOTE: SLA-driven urgency sort was here but temporarily disabled per user request.
+  // `_urgency` / `_hasSLA` are still computed above and the SLA Sorter page still
+  // works — they're just not used for ordering or coloring until re-enabled.
+  groupedRows.sort((a, b) => new Date(a.date) - new Date(b.date));
   needs.sort((a, b) => new Date(a.date) - new Date(b.date));
   const finalRows = [...needs, ...groupedRows];
 
@@ -5584,40 +5529,15 @@ function renderKanban(filtered, allVisible) {
     } else {
       rows.forEach(r => {
         const age = daysBetween(new Date(r.date), today);
-        // SLA-aware aging: if the group has an SLA, color by urgency instead
-        // of raw age. Otherwise fall back to raw-age 7d/14d thresholds.
-        let agedClass;
-        if (r._hasSLA) {
-          if (r._urgency >= 1.0) agedClass = 'aged-2';        // past SLA — red
-          else if (r._urgency >= 0.7) agedClass = 'aged-1';   // approaching — yellow
-          else agedClass = '';
-        } else {
-          agedClass = age >= 14 ? 'aged-2' : age >= 7 ? 'aged-1' : '';
-        }
+        // Age-based coloring (SLA-driven coloring temporarily disabled per user request)
+        const agedClass = age >= 14 ? 'aged-2' : age >= 7 ? 'aged-1' : '';
         const dateStr = new Date(r.date).toLocaleDateString('en-US', { month:'short', day:'numeric' });
         const showQty = r._remaining;
         const partial = r._covered > 0;
         const qtyTitle = partial ? `Total needed ${r.originalQty}, ${r._covered} from stock` : '';
         const needClass = r._isNeed ? ' kanban-card-need' : '';
         const needTag = r._isNeed ? '<div class="kanban-card-need-tag">Part Needed</div>' : '';
-        // SLA badge: show "12 / 14d" or "5d over" depending on state.
-        // displayMax is the effective SLA used for the worst-urgency underlying
-        // order (which is what we're warning about).
-        let slaBadge = '';
-        if (r._hasSLA && r._slaDisplayMax) {
-          const displayMax = r._slaDisplayMax;
-          const pct = r._urgency;
-          if (pct >= 1.0) {
-            const over = Math.ceil((pct - 1) * displayMax);
-            slaBadge = `<div class="sla-badge sla-over">SLA · ${over}d OVER</div>`;
-          } else if (pct >= 0.7) {
-            const left = Math.max(0, Math.floor((1 - pct) * displayMax));
-            slaBadge = `<div class="sla-badge sla-warn">SLA · ${left}d LEFT</div>`;
-          } else {
-            const left = Math.max(0, Math.floor((1 - pct) * displayMax));
-            slaBadge = `<div class="sla-badge">SLA · ${left}d LEFT</div>`;
-          }
-        }
+        const slaBadge = '';  // SLA badge temporarily disabled
         // For grouped cards, show customer count + order count instead of a single customer.
         let metaCustomer;
         if (r._isGroup) {
