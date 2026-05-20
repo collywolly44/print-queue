@@ -547,6 +547,114 @@ body {
 }
 
 /* Kanban board (Resin machine assignment) */
+.paint-row {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid #b86bd9;  /* purple accent — paint vibe */
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.paint-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.paint-row-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  color: #d8a8ff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.paint-row-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  background: rgba(184,107,217,0.18);
+  color: #d8a8ff;
+  padding: 3px 10px;
+  border-radius: 3px;
+  font-weight: 700;
+}
+.paint-row-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.paint-row-body {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 80px;
+  padding: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.paint-row-body.drag-over {
+  background: rgba(184,107,217,0.08);
+  border-color: #b86bd9;
+}
+.paint-row-empty {
+  width: 100%;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+  padding: 18px 8px;
+}
+.paint-row-card {
+  background: var(--bg);
+  border: 1px solid #b86bd9;
+  border-left: 3px solid #b86bd9;
+  border-radius: 4px;
+  padding: 10px 12px;
+  min-width: 180px;
+  flex: 0 0 auto;
+  cursor: grab;
+  position: relative;
+}
+.paint-row-card .pr-part {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--amber);
+  margin-bottom: 4px;
+  line-height: 1.2;
+  word-break: break-word;
+  max-width: 240px;
+}
+.paint-row-card .pr-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-dim);
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+.paint-row-card .pr-done {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 6px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.paint-row-card .pr-done:hover, .paint-row-card .pr-done:active {
+  background: var(--green);
+  color: #0a1c0d;
+}
+
 .kanban-help {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
@@ -1737,6 +1845,269 @@ body {
   border-radius: 1px;
 }
 
+/* ============================================================
+   DASHBOARD STYLES
+   ============================================================ */
+.dash-range { display: flex; gap: 4px; }
+.dash-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+.dash-tile {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 22px 22px 20px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.dash-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--tile-color, var(--amber)) 0%, transparent 60%);
+  opacity: 0.08;
+  z-index: -1;
+}
+.dash-tile::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0; width: 4px;
+  background: var(--tile-color, var(--amber));
+  border-radius: 8px 0 0 8px;
+}
+.dash-tile-amber { --tile-color: var(--amber); }
+.dash-tile-green { --tile-color: var(--green); }
+.dash-tile-blue  { --tile-color: #4ea3ff; }
+.dash-tile-red   { --tile-color: var(--red); }
+.dash-tile-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.dash-tile-value {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 56px;
+  line-height: 1;
+  color: var(--tile-color, var(--ink));
+  text-shadow: 0 0 18px color-mix(in srgb, var(--tile-color) 30%, transparent);
+  margin-bottom: 8px;
+  letter-spacing: 0.02em;
+}
+.dash-tile-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.04em;
+}
+
+.dash-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.dash-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+}
+.dash-panel-head {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink);
+  font-weight: 700;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.dash-panel-sub {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+/* Bar chart */
+.dash-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 180px;
+  padding: 8px 0 4px;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+.dash-bar {
+  flex: 1;
+  min-width: 6px;
+  background: linear-gradient(180deg, var(--amber) 0%, color-mix(in srgb, var(--amber) 40%, transparent) 100%);
+  border-radius: 3px 3px 0 0;
+  position: relative;
+  transition: filter 0.15s;
+  min-height: 2px;
+}
+.dash-bar:hover { filter: brightness(1.3); }
+.dash-bar .dash-bar-val {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--amber);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.dash-bar:hover .dash-bar-val { opacity: 1; }
+.dash-bar-empty { background: var(--line); }
+
+/* Donut */
+.dash-donut-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.dash-donut {
+  width: 180px;
+  height: 180px;
+}
+.dash-donut-legend {
+  display: flex;
+  gap: 18px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-dim);
+  letter-spacing: 0.06em;
+}
+.dash-donut-legend strong {
+  color: var(--ink);
+  margin-left: 6px;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+}
+.dash-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* Top 10 lists */
+.dash-top10 {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.dash-top10-row {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.dash-top10-row:last-child { border-bottom: none; }
+.dash-top10-rank {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-weight: 700;
+  text-align: right;
+}
+.dash-top10-name {
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 500;
+  word-break: break-word;
+}
+.dash-top10-qty {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  color: var(--amber);
+  letter-spacing: 0.04em;
+}
+
+/* Completed history table */
+.completed-table {
+  display: grid;
+  grid-template-columns: 110px 1fr 100px 90px 1fr 100px;
+  font-size: 12px;
+}
+.completed-row {
+  display: contents;
+}
+.completed-cell {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+}
+.completed-row.completed-head .completed-cell {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 700;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line-bright);
+}
+.completed-mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+.completed-part {
+  font-weight: 600;
+  color: var(--amber);
+}
+.completed-qty {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  color: var(--ink);
+}
+.completed-kind {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: rgba(108,191,126,0.15);
+  color: var(--green);
+  display: inline-block;
+}
+.completed-kind.need {
+  background: rgba(240,168,48,0.15);
+  color: var(--amber);
+}
+
+@media (max-width: 1100px) {
+  .dash-tiles { grid-template-columns: repeat(2, 1fr); }
+  .dash-grid-2 { grid-template-columns: 1fr; }
+  .completed-table { grid-template-columns: 80px 1fr 60px 70px 70px; }
+  .completed-cell:nth-child(5n+5) { display: none; }  /* hide customer on narrow screens */
+}
+
 .danger-card {
   background: var(--panel);
   border: 1px solid rgba(232,93,74,0.2);
@@ -2142,6 +2513,41 @@ body.is-gridiron #btn-locate-mobile { display: none !important; }
   margin-bottom: 10px;
   line-height: 1.4;
 }
+.sidebar-priority-add {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.sidebar-priority-add input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--ink);
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 3px;
+  font-family: 'Inter', sans-serif;
+  min-width: 0;
+}
+.sidebar-priority-add input:focus { outline: none; border-color: var(--amber); }
+.sidebar-priority-add button {
+  background: var(--amber);
+  color: #1a1408;
+  border: none;
+  font-size: 18px;
+  font-weight: 700;
+  width: 36px;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+.sidebar-priority-add button:disabled {
+  background: var(--line);
+  color: var(--ink-faint);
+  cursor: not-allowed;
+}
+.sidebar-priority-add button:not(:disabled):active { background: var(--amber-bright); }
 .sidebar-priority-list {
   max-height: 280px;
   overflow-y: auto;
@@ -3158,6 +3564,9 @@ body.mode-mobile .mobile-only { display: block; }
       </div>
     </div>
     <nav class="nav">
+      <div class="nav-item" data-view="dashboard" data-mobile="hide">
+        <span>Dashboard</span>
+      </div>
       <div class="nav-item" data-view="queue-resin" data-mobile="hide">
         <span>Resin Queue</span>
         <span class="nav-item-num" id="nav-queue-resin-count">0</span>
@@ -3190,6 +3599,11 @@ body.mode-mobile .mobile-only { display: block; }
         <span class="sidebar-priority-count" id="sidebar-priority-count">0</span>
       </div>
       <div class="sidebar-priority-hint">Drag onto a printer column or the FDM queue.</div>
+      <!-- Quick-add input for desktop direct entry -->
+      <div class="sidebar-priority-add">
+        <input type="text" id="sidebar-priority-add-input" placeholder="Add a part by name…" autocomplete="off">
+        <button id="sidebar-priority-add-btn" disabled>+</button>
+      </div>
       <div class="sidebar-priority-list" id="sidebar-priority-list">
         <div class="sidebar-priority-empty">No requests right now.</div>
       </div>
@@ -3227,8 +3641,20 @@ body.mode-mobile .mobile-only { display: block; }
           </div>
 
           <div class="kanban-help">
-            Drag a card to assign it to a printer · click <strong>Done</strong> when the plate is printed
+            Drag a card to assign it to a printer · drag to <strong>Paint</strong> when off the printer · click <strong>Done</strong> when finished
           </div>
+
+          <!-- Paint row — sits above the kanban; drop here when a part is printed but needs painting -->
+          <div class="paint-row" id="paint-row">
+            <div class="paint-row-head">
+              <div class="paint-row-title">Paint <span class="paint-row-count" id="paint-row-count">0</span></div>
+              <div class="paint-row-sub">Printed · waiting to be painted</div>
+            </div>
+            <div class="paint-row-body" data-drop-target="paint" id="paint-row-body">
+              <div class="paint-row-empty">Drop a printed card here when it needs paint.</div>
+            </div>
+          </div>
+
           <div class="kanban-board" id="kanban-resin"></div>
         </div>
 
@@ -3454,6 +3880,110 @@ body.mode-mobile .mobile-only { display: block; }
         <input type="text" class="search" id="orders-search" placeholder="Filter orders…">
       </div>
       <div id="orders-container"></div>
+    </section>
+
+    <!-- =========== DASHBOARD VIEW =========== -->
+    <section id="view-dashboard" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Dashboard</h1>
+          <div class="page-sub">Production at a glance</div>
+        </div>
+        <div class="page-actions">
+          <div class="dash-range" id="dash-range">
+            <button class="filter-chip" data-range="7">7d</button>
+            <button class="filter-chip active" data-range="14">14d</button>
+            <button class="filter-chip" data-range="30">30d</button>
+            <button class="filter-chip" data-range="all">All</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hero stat tiles -->
+      <div class="dash-tiles">
+        <div class="dash-tile dash-tile-amber">
+          <div class="dash-tile-label">Parts printed</div>
+          <div class="dash-tile-value" id="dash-stat-printed">—</div>
+          <div class="dash-tile-sub" id="dash-stat-printed-sub">in range</div>
+        </div>
+        <div class="dash-tile dash-tile-green">
+          <div class="dash-tile-label">Orders shipped</div>
+          <div class="dash-tile-value" id="dash-stat-shipped">—</div>
+          <div class="dash-tile-sub" id="dash-stat-shipped-sub">most recent imports</div>
+        </div>
+        <div class="dash-tile dash-tile-blue">
+          <div class="dash-tile-label">Open orders</div>
+          <div class="dash-tile-value" id="dash-stat-open">—</div>
+          <div class="dash-tile-sub" id="dash-stat-open-sub">awaiting print</div>
+        </div>
+        <div class="dash-tile dash-tile-red">
+          <div class="dash-tile-label">Aged 7+ days</div>
+          <div class="dash-tile-value" id="dash-stat-aged">—</div>
+          <div class="dash-tile-sub">need attention</div>
+        </div>
+      </div>
+
+      <!-- Activity chart + breakdown -->
+      <div class="dash-grid-2">
+        <div class="dash-panel">
+          <div class="dash-panel-head">
+            <span>Daily output</span>
+            <span class="dash-panel-sub" id="dash-chart-sub">last 14 days</span>
+          </div>
+          <div class="dash-chart" id="dash-chart">
+            <!-- bars injected by JS -->
+          </div>
+        </div>
+        <div class="dash-panel">
+          <div class="dash-panel-head">
+            <span>Resin vs FDM</span>
+            <span class="dash-panel-sub">parts printed</span>
+          </div>
+          <div class="dash-donut-wrap">
+            <svg class="dash-donut" id="dash-donut" viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14"/>
+              <circle id="dash-donut-resin" cx="50" cy="50" r="40" fill="none" stroke="var(--amber)" stroke-width="14"
+                      stroke-dasharray="0 251.3" stroke-dashoffset="0" transform="rotate(-90 50 50)"/>
+              <circle id="dash-donut-fdm" cx="50" cy="50" r="40" fill="none" stroke="var(--green)" stroke-width="14"
+                      stroke-dasharray="0 251.3" stroke-dashoffset="0" transform="rotate(-90 50 50)"/>
+            </svg>
+            <div class="dash-donut-legend">
+              <div><span class="dash-dot" style="background:var(--amber);"></span>Resin <strong id="dash-resin-count">0</strong></div>
+              <div><span class="dash-dot" style="background:var(--green);"></span>FDM <strong id="dash-fdm-count">0</strong></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top printed parts + Top shipped products -->
+      <div class="dash-grid-2">
+        <div class="dash-panel">
+          <div class="dash-panel-head">
+            <span>Top 10 printed parts</span>
+            <span class="dash-panel-sub">in range</span>
+          </div>
+          <div class="dash-top10" id="dash-top-printed">
+            <div class="empty-sub" style="padding:20px;text-align:center;">No prints yet in this range.</div>
+          </div>
+        </div>
+        <div class="dash-panel">
+          <div class="dash-panel-head">
+            <span>Top 10 shipped products</span>
+            <span class="dash-panel-sub">last import</span>
+          </div>
+          <div class="dash-top10" id="dash-top-shipped">
+            <div class="empty-sub" style="padding:20px;text-align:center;">No shipping data yet.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Completed history full table -->
+      <div class="section-title" style="margin-top:24px;">Completed history</div>
+      <div class="dash-panel" style="padding:0;overflow:hidden;">
+        <div class="completed-table" id="completed-table">
+          <div class="empty-sub" style="padding:30px;text-align:center;">No completed items yet — hit Done on a queue card to start tracking.</div>
+        </div>
+      </div>
     </section>
 
     <!-- =========== IMPORT / SETTINGS VIEW =========== -->
@@ -3728,6 +4258,8 @@ const state = {
   libOrderSnapshot: null,  // [sku, ...] frozen sort order for the Parts Library page
   lastImport: null,        // { at, orderCount, added, shipped, oldestOrderDate, newestOrderDate }
   importMode: 'replace',   // 'replace' (normal) | 'replace-no-inv' (skip inventory subtraction)
+  completedOrders: [],     // [{at, partName, qty, sku, customer, originalOrderDate, kind: 'print'|'need'}]
+  paintParts: {},          // partName -> { at, qty, fromMachine } for parts waiting to be painted
 };
 
 function save() {
@@ -3741,6 +4273,8 @@ function save() {
     priority: state.priority,
     assignments: state.assignments,
     lastImport: state.lastImport,
+    completedOrders: state.completedOrders,
+    paintParts: state.paintParts,
     lastSync: new Date().toISOString(),
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
@@ -3890,6 +4424,8 @@ function load() {
     state.partLocations = blob.partLocations || {};
     state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
     state.assignments = blob.assignments || {};
+    state.completedOrders = Array.isArray(blob.completedOrders) ? blob.completedOrders : [];
+    state.paintParts = blob.paintParts || {};
     // Migrate priority: was array of {id,name}, now {resin:[], fdm:[]}
     if (Array.isArray(blob.priority)) {
       state.priority = { resin: blob.priority.map(p => ({...p, type: 'resin'})), fdm: [] };
@@ -4480,6 +5016,17 @@ function renderQueue(type) {
         const need = (state.partsNeeded || []).find(n => n.id === clicked._needId);
         if (need) {
           need.resolvedAt = new Date().toISOString();
+          // Log to completed history
+          if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
+          state.completedOrders.push({
+            at: need.resolvedAt,
+            partName: clicked.part,
+            qty: 1,
+            sku: '',
+            customer: 'Part Needed',
+            originalOrderDate: need.addedAt || null,
+            kind: 'need',
+          });
           save();
         }
         row.classList.add('removing');
@@ -4531,9 +5078,13 @@ function renderKanban(filtered, allVisible) {
   // ============================================================
   const needs = filtered.filter(r => r._isNeed);
   const orders = filtered.filter(r => !r._isNeed);
-  // Group regular rows by part name
+  // Group regular rows by part name. Parts currently waiting in Paint are
+  // EXCLUDED from regular printer columns — they live in the Paint row only
+  // until the user hits Done from there.
+  const paintSet = new Set(Object.keys(state.paintParts || {}));
   const byPart = new Map();
   for (const r of orders) {
+    if (paintSet.has(r.part)) continue;  // hidden from kanban while in Paint
     const key = r.part;
     if (!byPart.has(key)) {
       byPart.set(key, {
@@ -4754,6 +5305,16 @@ function renderKanban(filtered, allVisible) {
         const need = (state.partsNeeded || []).find(n => n.id === clicked._needId);
         if (need) {
           need.resolvedAt = new Date().toISOString();
+          if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
+          state.completedOrders.push({
+            at: need.resolvedAt,
+            partName: clicked.part,
+            qty: 1,
+            sku: '',
+            customer: 'Part Needed',
+            originalOrderDate: need.addedAt || null,
+            kind: 'need',
+          });
           save();
         }
         card.classList.add('removing');
@@ -4776,6 +5337,142 @@ function renderKanban(filtered, allVisible) {
       });
     });
   });
+
+  // ============================================================
+  // PAINT ROW: render cards + wire drop target
+  // ============================================================
+  renderPaintRow(finalRows);
+}
+
+function renderPaintRow(allKanbanRows) {
+  const body = document.getElementById('paint-row-body');
+  const countEl = document.getElementById('paint-row-count');
+  if (!body) return;
+
+  const paintParts = state.paintParts || {};
+  const partNames = Object.keys(paintParts);
+  if (countEl) countEl.textContent = partNames.length;
+
+  if (partNames.length === 0) {
+    body.innerHTML = '<div class="paint-row-empty">Drop a printed card here when it needs paint.</div>';
+  } else {
+    let html = '';
+    for (const partName of partNames) {
+      const info = paintParts[partName] || {};
+      const at = info.at ? new Date(info.at) : null;
+      const fromMachine = info.fromMachine && MACHINE_LABELS[info.fromMachine] ? MACHINE_LABELS[info.fromMachine] : null;
+      const ageStr = at ? `${daysBetween(at, new Date())}d ago` : '';
+      const fromStr = fromMachine ? ` · ${fromMachine}` : '';
+      html += `
+        <div class="paint-row-card" draggable="true" data-paint-part="${escapeAttr(partName)}">
+          <div class="pr-part">${escapeHtml(partName)}</div>
+          <div class="pr-meta">${ageStr}${fromStr}</div>
+          <button class="pr-done">Done · → Inventory</button>
+        </div>`;
+    }
+    body.innerHTML = html;
+  }
+
+  // Wire Done buttons on paint cards
+  body.querySelectorAll('.pr-done').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const card = btn.closest('.paint-row-card');
+      const partName = card.dataset.paintPart;
+      // Build a pseudo-clicked object for confirmPrintPlate. Find any matching
+      // order in allKanbanRows to grab a representative SKU.
+      const lib = findFirstSkuUsingPart(partName);
+      const clicked = {
+        part: partName,
+        sku: lib || '',
+        customer: 'Paint queue',
+        date: state.paintParts[partName]?.at || new Date().toISOString(),
+      };
+      confirmPrintPlate(clicked, (qty) => {
+        // Remove from paint AFTER inventory update
+        delete state.paintParts[partName];
+        save();
+        printPlate(clicked, qty);
+        // printPlate calls renderQueue which will re-render the paint row
+      });
+    });
+  });
+
+  // Make paint cards draggable (back to kanban or remove)
+  body.querySelectorAll('.paint-row-card').forEach(card => {
+    card.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('application/x-paint-part', card.dataset.paintPart);
+      e.dataTransfer.setData('text/plain', `paint:${card.dataset.paintPart}`);
+      card.style.opacity = '0.4';
+    });
+    card.addEventListener('dragend', () => {
+      card.style.opacity = '';
+    });
+  });
+
+  // Wire the drop zone — accept regular kanban cards (move INTO paint) and
+  // accept other paint cards (no-op, but prevents browser default).
+  body.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    body.classList.add('drag-over');
+  });
+  body.addEventListener('dragleave', (e) => {
+    if (!body.contains(e.relatedTarget)) body.classList.remove('drag-over');
+  });
+  body.addEventListener('drop', (e) => {
+    e.preventDefault();
+    body.classList.remove('drag-over');
+    // Where is the drop from?
+    const paintPart = e.dataTransfer.getData('application/x-paint-part');
+    if (paintPart) return; // dropping a paint card back into paint — no-op
+    const fallback = e.dataTransfer.getData('text/plain');
+    // Could be a regular kanban card (data-key) or a Part Needed (need:id)
+    if (fallback && fallback.startsWith('need:')) return;  // don't put Needs in Paint
+    const key = fallback;
+    if (!key) return;
+    // Find the row to get the part name + machine
+    const row = allKanbanRows.find(r => r.key === key);
+    if (!row) return;
+    // Don't paint Part Needed cards or anything weird
+    if (row._isNeed) {
+      toast('Part Needed cards stay out of Paint.', 'error');
+      return;
+    }
+    const partName = row.part;
+    // Determine the source machine for display
+    const manual = state.assignments[key];
+    let sourceMachine = null;
+    if (manual && MACHINES.includes(manual)) sourceMachine = manual;
+    else {
+      const preferred = preferredPrinterForPart(partName);
+      sourceMachine = (preferred && MACHINES.includes(preferred)) ? preferred : null;
+    }
+    if (!state.paintParts) state.paintParts = {};
+    state.paintParts[partName] = {
+      at: new Date().toISOString(),
+      fromMachine: sourceMachine,
+    };
+    // Remove any machine assignment so it doesn't drift back if drag-dropped later
+    delete state.assignments[key];
+    save();
+    renderQueue('resin');
+    renderSidebarCounts();
+    toast(`"${partName}" → Paint`);
+  });
+}
+
+// Helper: find any SKU that uses a given part name (for printPlate sku lookup)
+function findFirstSkuUsingPart(partName) {
+  for (const sku of Object.keys(state.library)) {
+    const lib = state.library[sku];
+    if (!lib || !Array.isArray(lib.parts)) continue;
+    for (const p of lib.parts) {
+      const n = (typeof p === 'string') ? p : (p && p.name);
+      if (n === partName) return sku;
+    }
+  }
+  return '';
 }
 
 // Execute one plate print: deposit `qty` units into inventory.
@@ -4790,6 +5487,17 @@ function printPlate(clicked, qtyOverride) {
     const newStock = Number(state.inventory[part] || 0) + qty;
     state.inventory[part] = newStock;
     state.countedParts[part] = true; // printing implies we know the count
+    // Log this print to completedOrders history (for dashboard + history view)
+    if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
+    state.completedOrders.push({
+      at: new Date().toISOString(),
+      partName: part,
+      qty,
+      sku: clicked.sku || '',
+      customer: clicked.customer || '',
+      originalOrderDate: clicked.date || null,
+      kind: 'print',
+    });
   }
 
   // If the user typed a different number than the saved yield, update the
@@ -5828,6 +6536,192 @@ function renderTop10(type) {
 }
 
 
+// ============================================================
+// DASHBOARD
+// ============================================================
+let _dashRangeDays = 14;
+
+function renderDashboard() {
+  const now = new Date();
+  const cutoff = _dashRangeDays === 'all'
+    ? new Date(0)
+    : new Date(now.getTime() - _dashRangeDays * 86400000);
+
+  const completed = (state.completedOrders || []).filter(c => new Date(c.at) >= cutoff);
+
+  // === Hero tiles ===
+  const totalPrinted = completed.filter(c => c.kind === 'print').reduce((s, c) => s + (c.qty || 0), 0);
+  document.getElementById('dash-stat-printed').textContent = totalPrinted.toLocaleString();
+  document.getElementById('dash-stat-printed-sub').textContent =
+    _dashRangeDays === 'all' ? 'all time' : `last ${_dashRangeDays} days`;
+
+  // Shipped count from last import
+  const shipped = state.lastImport ? state.lastImport.shipped : 0;
+  document.getElementById('dash-stat-shipped').textContent = shipped.toLocaleString();
+  document.getElementById('dash-stat-shipped-sub').textContent = state.lastImport
+    ? `import ${new Date(state.lastImport.at).toLocaleDateString('en-US', {month:'short', day:'numeric'})}`
+    : 'no imports yet';
+
+  // Open orders count
+  document.getElementById('dash-stat-open').textContent = state.orders.length.toLocaleString();
+
+  // Aged 7+ count
+  const today = new Date(); today.setHours(0,0,0,0);
+  const aged7 = state.orders.filter(o => daysBetween(new Date(o.date), today) >= 7).length;
+  document.getElementById('dash-stat-aged').textContent = aged7.toLocaleString();
+
+  // === Daily output chart ===
+  const dayCount = _dashRangeDays === 'all' ? 30 : _dashRangeDays;
+  document.getElementById('dash-chart-sub').textContent = `last ${dayCount} days`;
+  const buckets = new Array(dayCount).fill(0);
+  for (const c of (state.completedOrders || [])) {
+    if (c.kind !== 'print') continue;
+    const age = Math.floor((now - new Date(c.at)) / 86400000);
+    if (age >= 0 && age < dayCount) {
+      buckets[dayCount - 1 - age] += (c.qty || 0);
+    }
+  }
+  const maxBar = Math.max(1, ...buckets);
+  const chartEl = document.getElementById('dash-chart');
+  if (buckets.every(b => b === 0)) {
+    chartEl.innerHTML = `<div class="empty-sub" style="margin:auto;color:var(--ink-faint);">No prints yet in this range</div>`;
+  } else {
+    chartEl.innerHTML = buckets.map(v => {
+      const pct = (v / maxBar) * 100;
+      return `<div class="dash-bar ${v === 0 ? 'dash-bar-empty' : ''}" style="height:${pct}%;" title="${v} parts">
+        <div class="dash-bar-val">${v}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // === Resin vs FDM donut ===
+  let resinCount = 0, fdmCount = 0;
+  for (const c of completed) {
+    if (c.kind !== 'print') continue;
+    // Determine type from library
+    const lib = state.library[c.sku];
+    const partInLib = (lib?.parts || []).find(p => {
+      const n = (typeof p === 'string') ? p : p.name;
+      return n === c.partName;
+    });
+    const type = partInLib && typeof partInLib === 'object' ? partInLib.type : 'resin';
+    if (type === 'fdm') fdmCount += (c.qty || 0);
+    else resinCount += (c.qty || 0);
+  }
+  document.getElementById('dash-resin-count').textContent = resinCount;
+  document.getElementById('dash-fdm-count').textContent = fdmCount;
+  const total = resinCount + fdmCount;
+  const circumference = 2 * Math.PI * 40; // ~251.3
+  if (total > 0) {
+    const resinLen = (resinCount / total) * circumference;
+    const fdmLen = (fdmCount / total) * circumference;
+    document.getElementById('dash-donut-resin').setAttribute('stroke-dasharray', `${resinLen} ${circumference - resinLen}`);
+    document.getElementById('dash-donut-resin').setAttribute('stroke-dashoffset', '0');
+    document.getElementById('dash-donut-fdm').setAttribute('stroke-dasharray', `${fdmLen} ${circumference - fdmLen}`);
+    document.getElementById('dash-donut-fdm').setAttribute('stroke-dashoffset', `${-resinLen}`);
+  } else {
+    document.getElementById('dash-donut-resin').setAttribute('stroke-dasharray', '0 ' + circumference);
+    document.getElementById('dash-donut-fdm').setAttribute('stroke-dasharray', '0 ' + circumference);
+  }
+
+  // === Top 10 printed parts ===
+  const partTotals = {};
+  for (const c of completed) {
+    if (c.kind !== 'print') continue;
+    partTotals[c.partName] = (partTotals[c.partName] || 0) + (c.qty || 0);
+  }
+  const topPrinted = Object.entries(partTotals)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+  const topPrintedEl = document.getElementById('dash-top-printed');
+  if (topPrinted.length === 0) {
+    topPrintedEl.innerHTML = `<div class="empty-sub" style="padding:20px;text-align:center;">No prints yet in this range.</div>`;
+  } else {
+    topPrintedEl.innerHTML = topPrinted.map(([name, qty], i) => `
+      <div class="dash-top10-row">
+        <div class="dash-top10-rank">${String(i+1).padStart(2,'0')}</div>
+        <div class="dash-top10-name">${escapeHtml(name)}</div>
+        <div class="dash-top10-qty">×${qty}</div>
+      </div>`).join('');
+  }
+
+  // === Top 10 shipped products ===
+  // From the last import — shipped = orders that disappeared. We approximate by
+  // looking at the most-shipped SKUs over time using completedOrders (kind=print
+  // counts what we printed, which is a proxy for shipping demand). For "shipped
+  // products" we want product SKU/name. Use the library item names.
+  const shippedTotals = {};
+  for (const c of completed) {
+    // Aggregate by product (item name), not part — what customers actually buy
+    const lib = state.library[c.sku];
+    const productName = (lib && lib.name) ? lib.name : c.sku || c.partName;
+    if (!shippedTotals[productName]) {
+      shippedTotals[productName] = { qty: 0, sku: c.sku };
+    }
+    shippedTotals[productName].qty += (c.qty || 0);
+  }
+  const topShipped = Object.entries(shippedTotals)
+    .sort((a, b) => b[1].qty - a[1].qty)
+    .slice(0, 10);
+  const topShippedEl = document.getElementById('dash-top-shipped');
+  if (topShipped.length === 0) {
+    topShippedEl.innerHTML = `<div class="empty-sub" style="padding:20px;text-align:center;">Nothing shipped in this range yet.</div>`;
+  } else {
+    topShippedEl.innerHTML = topShipped.map(([name, info], i) => `
+      <div class="dash-top10-row">
+        <div class="dash-top10-rank">${String(i+1).padStart(2,'0')}</div>
+        <div class="dash-top10-name">${escapeHtml(name)}<br><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);">${escapeHtml(info.sku || '')}</span></div>
+        <div class="dash-top10-qty">×${info.qty}</div>
+      </div>`).join('');
+  }
+
+  // === Completed history full table ===
+  const tableEl = document.getElementById('completed-table');
+  const allCompleted = (state.completedOrders || []).slice().sort((a, b) => new Date(b.at) - new Date(a.at));
+  if (allCompleted.length === 0) {
+    tableEl.innerHTML = `<div class="empty-sub" style="padding:30px;text-align:center;grid-column:1/-1;">No completed items yet — hit Done on a queue card to start tracking.</div>`;
+  } else {
+    let html = `
+      <div class="completed-row completed-head">
+        <div class="completed-cell">Date</div>
+        <div class="completed-cell">Part</div>
+        <div class="completed-cell">SKU</div>
+        <div class="completed-cell">Qty</div>
+        <div class="completed-cell">Customer</div>
+        <div class="completed-cell">Type</div>
+      </div>`;
+    for (const c of allCompleted.slice(0, 300)) {  // cap at 300 for perf
+      const dateStr = new Date(c.at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+      const kindClass = c.kind === 'need' ? 'completed-kind need' : 'completed-kind';
+      const kindLabel = c.kind === 'need' ? 'NEED' : 'PRINT';
+      html += `
+        <div class="completed-row">
+          <div class="completed-cell completed-mono">${dateStr}</div>
+          <div class="completed-cell completed-part">${escapeHtml(c.partName)}</div>
+          <div class="completed-cell completed-mono">${escapeHtml(c.sku || '')}</div>
+          <div class="completed-cell completed-qty">×${c.qty || 0}</div>
+          <div class="completed-cell">${escapeHtml(c.customer || '')}</div>
+          <div class="completed-cell"><span class="${kindClass}">${kindLabel}</span></div>
+        </div>`;
+    }
+    if (allCompleted.length > 300) {
+      html += `<div class="completed-row"><div class="completed-cell" style="grid-column:1/-1;text-align:center;color:var(--ink-faint);">…and ${allCompleted.length - 300} older entries (use CSV export for full history)</div></div>`;
+    }
+    tableEl.innerHTML = html;
+  }
+}
+
+// Wire dashboard range chips
+document.addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-range]');
+  if (!chip || !chip.closest('#dash-range')) return;
+  document.querySelectorAll('#dash-range [data-range]').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  const r = chip.dataset.range;
+  _dashRangeDays = r === 'all' ? 'all' : parseInt(r, 10);
+  renderDashboard();
+});
+
 function renderSidebarCounts() {
   const resinCount = buildQueue('resin').visible.length;
   const fdmCount   = buildQueue('fdm').visible.length;
@@ -5882,6 +6776,51 @@ function renderSidebarPriority() {
     });
   });
 }
+
+// Wire the desktop "quick add" Part Needed input. One-time wiring at boot.
+(function wireSidebarPriorityAdd() {
+  const input = document.getElementById('sidebar-priority-add-input');
+  const btn = document.getElementById('sidebar-priority-add-btn');
+  if (!input || !btn) return;
+  const updateBtn = () => { btn.disabled = input.value.trim().length === 0; };
+  const submit = () => {
+    const v = input.value.trim();
+    if (!v) return;
+    // Reuse PN's send logic if available, else fall back to direct add
+    if (typeof PN !== 'undefined' && PN.send) {
+      const realInput = document.getElementById('part-needed-input');
+      // Temporarily stash the value, call PN.send, restore
+      const oldVal = realInput ? realInput.value : '';
+      if (realInput) realInput.value = v;
+      PN.send();
+      if (realInput) realInput.value = oldVal;
+    } else {
+      // Direct add fallback
+      if (!Array.isArray(state.partsNeeded)) state.partsNeeded = [];
+      state.partsNeeded.push({
+        id: `need-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+        partName: v, type: 'resin',
+        addedAt: new Date().toISOString(),
+        addedBy: (_fbUser && _fbUser.email) ? _fbUser.email : '',
+        resolvedAt: null,
+      });
+      save();
+      renderSidebarPriority();
+      renderQueue();
+      renderSidebarCounts();
+      toast(`Sent "${v}" to Priority`);
+    }
+    input.value = '';
+    updateBtn();
+    input.focus();
+  };
+  input.addEventListener('input', updateBtn);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); if (!btn.disabled) submit(); }
+  });
+  btn.addEventListener('click', submit);
+  updateBtn();
+})();
 
 // ============================================================
 // CSV IMPORT
@@ -6119,6 +7058,8 @@ function buildBackupBlob() {
     priority: state.priority,
     assignments: state.assignments,
     lastImport: state.lastImport,
+    completedOrders: state.completedOrders,
+    paintParts: state.paintParts,
     exportedAt: new Date().toISOString(),
   };
 }
@@ -6154,7 +7095,7 @@ function switchView(name) {
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.view === name);
   });
-  ['queue-resin','queue-fdm','library','inventory','orders','import'].forEach(v => {
+  ['dashboard','queue-resin','queue-fdm','library','inventory','orders','import'].forEach(v => {
     const el = document.getElementById(`view-${v}`);
     if (el) el.classList.toggle('hidden', v !== name);
   });
@@ -6171,6 +7112,7 @@ function switchView(name) {
       if (typeof updateLocateButton === 'function') updateLocateButton();
     }
     else if (name === 'orders') renderOrders();
+    else if (name === 'dashboard') renderDashboard();
   };
   // Show a brief placeholder for the library (the heaviest view) so the user
   // sees feedback if the render takes more than one frame.
@@ -7129,6 +8071,13 @@ function applyRestoreBlob(blob) {
     state.priority = { resin: [], fdm: [] };
   }
   state.lastImport = blob.lastImport || null;
+  // completedOrders + paintParts: same merge-protection as partLocations
+  if (Object.prototype.hasOwnProperty.call(blob, 'completedOrders')) {
+    state.completedOrders = Array.isArray(blob.completedOrders) ? blob.completedOrders : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(blob, 'paintParts')) {
+    state.paintParts = blob.paintParts || {};
+  }
   migrateLibrary();
   save();
   renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
