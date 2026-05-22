@@ -6185,6 +6185,47 @@ function renderKanban(filtered, allVisible) {
         toast(`"${need.partName}" → ${colLabel}`);
         return;
       }
+      // Second: a Paint card being dragged BACK to a printer column?
+      // Paint cards set text/plain = "paint:<partName>". When dropped on a
+      // kanban column, we need to remove from paintParts AND (if it came from
+      // a Part Needed) restore the original need so it shows up as a Need card
+      // in the new column.
+      if (fallback && fallback.startsWith('paint:')) {
+        const partName = fallback.slice('paint:'.length);
+        const paintInfo = state.paintParts[partName];
+        if (!paintInfo) return;
+        const machine = zone.dataset.dropTarget;
+        const machineLabel = MACHINE_LABELS[machine] || 'Unassigned';
+        // Remove from paint
+        delete state.paintParts[partName];
+        if (paintInfo.fromNeedId) {
+          // Re-place the original Part Needed in the kanban at the dropped column
+          const need = (state.partsNeeded || []).find(n => n.id === paintInfo.fromNeedId);
+          if (need) {
+            need.placedAt = new Date().toISOString();
+            need.placedQueue = 'resin';
+            need.placedMachine = (machine && machine !== 'unassigned') ? machine : null;
+            const key = `__need__${need.id}`;
+            if (need.placedMachine) state.assignments[key] = need.placedMachine;
+            else delete state.assignments[key];
+          }
+        } else {
+          // Regular paint card → pre-assign the part's grouped key to the column
+          // so the group lands there immediately
+          const groupKey = `__group__${partName}`;
+          if (machine && machine !== 'unassigned') {
+            state.assignments[groupKey] = machine;
+          } else {
+            delete state.assignments[groupKey];
+          }
+        }
+        save();
+        renderQueue('resin');
+        renderSidebarPriority();
+        renderSidebarCounts();
+        toast(`"${partName}" → ${machineLabel}`);
+        return;
+      }
       // Otherwise: a regular kanban card being moved between columns
       const key = draggedKey || fallback;
       if (!key) return;
