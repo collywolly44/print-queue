@@ -2159,6 +2159,27 @@ body:not(.mode-mobile) .nav-paint-mobile-only { display: none !important; }
   border-color: var(--red);
   color: var(--red);
 }
+.paint-mobile-bottom {
+  width: 44px;
+  height: 56px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  border-radius: 4px;
+  font-size: 22px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.paint-mobile-bottom:active {
+  background: rgba(240,168,48,0.12);
+  border-color: var(--amber);
+  color: var(--amber);
+}
 .paint-mobile-done {
   background: transparent;
   border: 1px solid var(--green);
@@ -5381,6 +5402,7 @@ function renderImportStatus() {
         <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">No imports yet</div>
         <div style="color:var(--ink-dim);">Drop a CSV file below to load orders.</div>`;
     }
+    renderImportTopShipped();
     return;
   }
 
@@ -6169,6 +6191,15 @@ function renderKanban(filtered, allVisible) {
       const machine = zone.dataset.dropTarget;
       if (machine === 'unassigned') delete state.assignments[key];
       else state.assignments[key] = machine;
+      // If this is a Part Needed card already in the kanban, keep
+      // need.placedMachine in sync with the new column
+      if (key.startsWith('__need__')) {
+        const needId = key.slice('__need__'.length);
+        const need = (state.partsNeeded || []).find(n => n.id === needId);
+        if (need) {
+          need.placedMachine = (machine && machine !== 'unassigned') ? machine : null;
+        }
+      }
       save();
       renderQueue('resin');
     });
@@ -6363,15 +6394,21 @@ function wirePaintDropZone() {
     let sourceMachine = null;
     let needId = null;
 
-    if (fallback.startsWith('need:')) {
-      // Part Needed → Paint
-      needId = fallback.slice(5);
+    if (fallback.startsWith('need:') || fallback.startsWith('__need__')) {
+      // Part Needed → Paint. Two possible sources:
+      //   - sidebar Priority panel sends 'need:<id>'
+      //   - kanban column (already placed) card has data-key='__need__<id>'
+      needId = fallback.startsWith('need:')
+        ? fallback.slice(5)
+        : fallback.slice('__need__'.length);
       const need = (state.partsNeeded || []).find(n => n.id === needId);
       if (!need) return;
       partName = need.partName;
       if (need.placedMachine && MACHINES.includes(need.placedMachine)) {
         sourceMachine = need.placedMachine;
       }
+      // Clear any kanban-column assignment for this need (it's leaving the kanban)
+      delete state.assignments[`__need__${needId}`];
       need.placedAt = new Date().toISOString();
       need.placedQueue = 'paint';
     } else {
@@ -6482,6 +6519,7 @@ function renderPaintMobile() {
         </div>
         <div class="paint-mobile-actions">
           <button class="paint-mobile-trash" data-paint-trash aria-label="Remove from paint without adding to inventory">🗑</button>
+          <button class="paint-mobile-bottom" data-paint-bottom aria-label="Send to bottom of paint queue">⤓</button>
           <button class="paint-mobile-done" data-paint-done>${doneLabel}</button>
         </div>
       </div>`;
@@ -6540,6 +6578,20 @@ function renderPaintMobile() {
           renderPaintMobile();
           renderSidebarPriority();
         });
+      });
+    }
+
+    // Send to bottom → bump `at` timestamp to now so it sorts to the end
+    // (queue is oldest-first; newest goes to the bottom)
+    const bottomBtn = card.querySelector('[data-paint-bottom]');
+    if (bottomBtn) {
+      bottomBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!state.paintParts[partName]) return;
+        state.paintParts[partName].at = new Date().toISOString();
+        save();
+        renderPaintMobile();
+        toast(`"${partName}" → bottom of paint queue`);
       });
     }
 
@@ -8036,13 +8088,17 @@ function renderPartTypeTagger() {
 function setPartType(partName, newType) {
   if (newType !== 'resin' && newType !== 'fdm') return;
   let updated = 0;
+  let formatUpgrades = 0;
   for (const sku of Object.keys(state.library)) {
     const lib = state.library[sku];
     if (!lib || !Array.isArray(lib.parts)) continue;
     lib.parts = lib.parts.map(p => {
       if (typeof p === 'string') {
         if (p === partName) {
-          updated++;
+          // Legacy strings are 'resin' by default; only count as type change
+          // if user is setting it to 'fdm'. Either way, upgrade the format.
+          if (newType !== 'resin') updated++;
+          else formatUpgrades++;
           return { name: p, yield: 1, qty: 1, type: newType };
         }
         return p;
@@ -8056,9 +8112,11 @@ function setPartType(partName, newType) {
       return p;
     });
   }
-  if (updated > 0) {
+  if (updated > 0 || formatUpgrades > 0) {
     save();
-    toast(`${partName} → ${newType.toUpperCase()} (${updated} SKU${updated === 1 ? '' : 's'})`);
+    if (updated > 0) {
+      toast(`${partName} → ${newType.toUpperCase()} (${updated} SKU${updated === 1 ? '' : 's'})`);
+    }
   }
   renderPartTypeTagger();
   if (typeof renderQueue === 'function') renderQueue();
@@ -8528,7 +8586,13 @@ function switchView(name) {
     }
     else if (name === 'orders') renderOrders();
     else if (name === 'history') renderHistory();
-    else if (name === 'sla-sorter') renderSlaSorter();
+    else if (name === 'sla-sorter') {
+      // Render whichever Tools tab is currently active
+      const activeTab = document.querySelector('.tools-tab.active');
+      const target = activeTab ? activeTab.dataset.toolsTab : 'vehicle';
+      if (target === 'parttype') renderPartTypeTagger();
+      else renderSlaSorter();
+    }
     else if (name === 'paint') renderPaintMobile();
     else if (name === 'import') renderImportStatus();
   };
