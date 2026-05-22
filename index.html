@@ -6604,18 +6604,25 @@ function renderPaintMobile() {
   // Aggregate REMAINING demand (after FIFO inventory) by part name for the
   // demand badge. Same logic as the desktop paint row. Also collect the OLDEST
   // open-order date per part so the age display reflects the true order age.
+  // Note: we track the oldest date regardless of remaining demand — a part
+  // could be fully covered by inventory but the customer's order is still open
+  // and the order date is still meaningful.
   const demandByPart = {};
   const oldestOrderByPart = {};
   try {
     const queue = buildQueue();
     if (queue && Array.isArray(queue.allRows)) {
       for (const r of queue.allRows) {
+        if (!r.part) continue;
         const remaining = Number(r._remaining) || 0;
-        if (remaining <= 0) continue;
-        demandByPart[r.part] = (demandByPart[r.part] || 0) + remaining;
+        if (remaining > 0) {
+          demandByPart[r.part] = (demandByPart[r.part] || 0) + remaining;
+        }
         const t = new Date(r.date).getTime();
-        if (oldestOrderByPart[r.part] === undefined || t < oldestOrderByPart[r.part]) {
-          oldestOrderByPart[r.part] = t;
+        if (!isNaN(t)) {
+          if (oldestOrderByPart[r.part] === undefined || t < oldestOrderByPart[r.part]) {
+            oldestOrderByPart[r.part] = t;
+          }
         }
       }
     }
