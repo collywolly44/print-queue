@@ -6341,19 +6341,30 @@ function renderPaintRow(allKanbanRows) {
   // show this so you know whether a plate will cover the demand or fall short.
   // Also collect the OLDEST order date per part — paint cards display the age
   // based on the original order date, not when the card was dropped in Paint.
+  // We re-call buildQueue() here (rather than using the passed-in finalRows)
+  // because finalRows excludes parts that are currently in paint — which is
+  // exactly what we need data for. buildQueue's allRows includes EVERY row,
+  // even ones whose part is currently sitting in paint.
   const demandByPart = {};
   const oldestOrderByPart = {};
-  if (Array.isArray(allKanbanRows)) {
-    for (const r of allKanbanRows) {
-      const remaining = Number(r._remaining) || 0;
-      if (remaining <= 0) continue;
-      demandByPart[r.part] = (demandByPart[r.part] || 0) + remaining;
-      const t = new Date(r.date).getTime();
-      if (oldestOrderByPart[r.part] === undefined || t < oldestOrderByPart[r.part]) {
-        oldestOrderByPart[r.part] = t;
+  try {
+    const queue = buildQueue();
+    if (queue && Array.isArray(queue.allRows)) {
+      for (const r of queue.allRows) {
+        if (!r.part) continue;
+        const remaining = Number(r._remaining) || 0;
+        if (remaining > 0) {
+          demandByPart[r.part] = (demandByPart[r.part] || 0) + remaining;
+        }
+        const t = new Date(r.date).getTime();
+        if (!isNaN(t)) {
+          if (oldestOrderByPart[r.part] === undefined || t < oldestOrderByPart[r.part]) {
+            oldestOrderByPart[r.part] = t;
+          }
+        }
       }
     }
-  }
+  } catch {}
 
   if (partNames.length === 0) {
     body.innerHTML = '<div class="paint-row-empty">Drop a printed card here when it needs paint.</div>';
