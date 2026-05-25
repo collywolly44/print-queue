@@ -8893,7 +8893,13 @@ function switchView(name) {
       else renderSlaSorter();
     }
     else if (name === 'paint') renderPaintMobile();
-    else if (name === 'import') renderImportStatus();
+    else if (name === 'import') {
+      renderImportStatus();
+      // Sync sliders to current state in case cloud-pushed changes happened
+      if (typeof window._syncThresholdSliders === 'function') {
+        window._syncThresholdSliders();
+      }
+    }
   };
   // Show a brief placeholder for the library (the heaviest view) so the user
   // sees feedback if the render takes more than one frame.
@@ -9858,8 +9864,10 @@ applyImportMode(state.importMode || 'replace');
   const status = document.getElementById('thr-save-status');
   if (!stdSlider || !vehSlider || !saveBtn) return;
 
-  // Initialize from state
-  const setInitial = () => {
+  // Sync slider DOM to current state. Called at boot AND every time the user
+  // navigates to the Import view (so cloud-pushed changes from other devices
+  // show up correctly). Exposed globally so switchView can call it.
+  window._syncThresholdSliders = function() {
     const initStd = state.overdueStandard || 18;
     const initVeh = state.overdueVehicle || 28;
     stdSlider.value = initStd; stdVal.textContent = initStd;
@@ -9868,7 +9876,7 @@ applyImportMode(state.importMode || 'replace');
     status.textContent = 'No changes';
     status.style.color = 'var(--ink-faint)';
   };
-  setInitial();
+  window._syncThresholdSliders();
 
   const checkDirty = () => {
     const stdNow = parseInt(stdSlider.value, 10) || 18;
@@ -10009,6 +10017,10 @@ function applyRestoreBlob(blob) {
   renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
   // Refresh mobile Sent Today list in case partsNeeded changed via cloud sync
   if (typeof PN !== 'undefined' && PN.renderSentToday) PN.renderSentToday();
+  // Sync threshold sliders to the freshly-restored state values
+  if (typeof window._syncThresholdSliders === 'function') {
+    window._syncThresholdSliders();
+  }
 }
 
 // Restore from JSON file
