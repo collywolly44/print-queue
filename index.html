@@ -687,17 +687,25 @@ body {
   font-weight: 700;
   font-size: 13px;
 }
+.pr-demand.is-zero strong {
+  color: var(--ink-faint);
+}
 .paint-mobile-demand {
-  margin-top: 6px;
+  margin-top: 8px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  color: var(--ink-dim);
+  font-size: 13px;
+  color: var(--ink);
   letter-spacing: 0.04em;
+  font-weight: 600;
 }
 .paint-mobile-demand strong {
   color: var(--amber);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 17px;
+  margin-left: 4px;
+}
+.paint-mobile-demand.is-zero strong {
+  color: var(--ink-faint);
 }
 
 .kanban-help {
@@ -6387,8 +6395,9 @@ function renderPaintRow(allKanbanRows) {
       // Demand badge: skip for Part Needed (those are always qty=1 + no inventory),
       // skip when demand is 0 (queue is already covered).
       const demand = demandByPart[partName] || 0;
-      const demandBadge = (!isFromNeed && demand > 0)
-        ? `<div class="pr-demand">Demand: <strong>×${demand}</strong></div>`
+      const demandClass = demand > 0 ? '' : ' is-zero';
+      const demandBadge = !isFromNeed
+        ? `<div class="pr-demand${demandClass}">Demand: <strong>×${demand}</strong></div>`
         : '';
       html += `
         <div class="paint-row-card${fromNeedClass}" draggable="true" data-paint-part="${escapeAttr(partName)}">
@@ -6656,8 +6665,9 @@ function renderPaintMobile() {
     const doneLabel = isFromNeed ? 'Done' : 'Done';
     const fromNeedClass = isFromNeed ? ' is-from-need' : '';
     const demand = demandByPart[partName] || 0;
-    const demandLine = (!isFromNeed && demand > 0)
-      ? `<div class="paint-mobile-demand">Demand: <strong>×${demand}</strong></div>`
+    const demandClass = demand > 0 ? '' : ' is-zero';
+    const demandLine = !isFromNeed
+      ? `<div class="paint-mobile-demand${demandClass}">Demand: <strong>×${demand}</strong></div>`
       : '';
     html += `
       <div class="paint-mobile-card${fromNeedClass}" data-paint-part="${escapeAttr(partName)}">
