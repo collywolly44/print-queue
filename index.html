@@ -209,6 +209,36 @@ body {
 .btn-danger:hover { background: rgba(232,93,74,0.1); border-color: var(--red); }
 .btn-ghost { background: transparent; border-color: var(--line); }
 .btn-sm { padding: 6px 11px; font-size: 10px; }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn:disabled:hover {
+  background: var(--bg);
+  border-color: var(--line);
+}
+.btn.btn-busy {
+  opacity: 0.85;
+  cursor: progress;
+  position: relative;
+  padding-left: 32px;
+}
+.btn.btn-busy::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  margin-top: -7px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+}
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
 
 /* ---------- Stats Strip ---------- */
 .stats {
@@ -2872,6 +2902,89 @@ body:not(.mode-mobile) .nav-paint-mobile-only { display: none !important; }
 }
 .auth-overlay.hidden { display: none; }
 
+/* Boot loading overlay — shown immediately on page load, hides once initial
+   data sync is complete (or after a 6-second cap). z-index above auth so it
+   covers a brief moment of auth form flicker on cold load. */
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.35s ease;
+}
+.boot-overlay.hide {
+  opacity: 0;
+  pointer-events: none;
+}
+.boot-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  text-align: center;
+}
+.boot-mark {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.boot-dot {
+  width: 18px;
+  height: 18px;
+  background: var(--amber);
+  border-radius: 2px;
+  box-shadow: 0 0 24px rgba(240,168,48,0.7);
+  animation: boot-pulse 1.4s ease-in-out infinite;
+}
+@keyframes boot-pulse {
+  0%, 100% { opacity: 0.85; box-shadow: 0 0 18px rgba(240,168,48,0.5); }
+  50%      { opacity: 1;    box-shadow: 0 0 32px rgba(240,168,48,0.95); }
+}
+.boot-name {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 38px;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+}
+.boot-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.boot-progress {
+  width: 240px;
+  max-width: 70vw;
+  height: 4px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+.boot-progress-fill {
+  position: absolute;
+  left: -30%;
+  top: 0; bottom: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, var(--amber), transparent);
+  animation: boot-progress-slide 1.4s ease-in-out infinite;
+}
+@keyframes boot-progress-slide {
+  0%   { left: -30%; }
+  100% { left: 100%; }
+}
+.boot-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.08em;
+}
+
 /* Offline overlay — locks edits when cloud disconnects */
 .offline-overlay {
   position: fixed;
@@ -4241,6 +4354,21 @@ body.mode-mobile .mobile-only { display: block; }
 </head>
 <body>
 
+<!-- ============== BOOT LOADING OVERLAY ============== -->
+<div class="boot-overlay" id="boot-overlay">
+  <div class="boot-center">
+    <div class="boot-mark">
+      <div class="boot-dot"></div>
+      <div class="boot-name">PRINT QUEUE</div>
+    </div>
+    <div class="boot-sub">Workshop · Cloud</div>
+    <div class="boot-progress">
+      <div class="boot-progress-fill"></div>
+    </div>
+    <div class="boot-status" id="boot-status">Starting up…</div>
+  </div>
+</div>
+
 <!-- ============== LOGIN OVERLAY ============== -->
 <div class="auth-overlay" id="auth-overlay">
   <div class="auth-box">
@@ -4746,7 +4874,7 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="section-title">Queue priority thresholds</div>
       <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:18px 22px;margin-bottom:18px;">
         <div style="font-size:12px;color:var(--ink-dim);line-height:1.5;margin-bottom:18px;">
-          Orders older than these thresholds get pushed to the top of the queue (below Part Needed cards). Bump these UP when you're catching up to keep the queue manageable; bump them DOWN to surface more late orders.
+          Orders older than these thresholds get pushed to the top of the queue (below Part Needed cards). Bump these UP when you're catching up to keep the queue manageable; bump them DOWN to surface more late orders. <strong>Drag the sliders, then tap Save Thresholds to apply.</strong>
         </div>
         <div class="thr-slider-row">
           <div class="thr-slider-label">
@@ -4765,6 +4893,10 @@ body.mode-mobile .mobile-only { display: block; }
           </div>
           <input type="range" min="7" max="90" step="1" value="28" id="thr-veh" class="thr-slider">
           <div class="thr-slider-hint">Ship-promise: 30-45 business days (you state 30-45 on your site)</div>
+        </div>
+        <div style="margin-top:20px;display:flex;align-items:center;gap:12px;">
+          <button class="btn btn-primary" id="btn-save-thresholds" disabled>Save Thresholds</button>
+          <span class="thr-save-status" id="thr-save-status" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.04em;">No changes</span>
         </div>
       </div>
 
@@ -9713,41 +9845,89 @@ document.querySelectorAll('[data-import-mode]').forEach(b => {
 });
 applyImportMode(state.importMode || 'replace');
 
-// Threshold sliders — adjust the days at which standard/vehicle orders get
-// pushed to the top of the queue. Saved to state.overdueStandard /
-// state.overdueVehicle. Re-renders the queue immediately on change so the user
-// can see the effect.
+// Threshold sliders — drag to change the displayed value, tap Save Thresholds
+// to commit. We deliberately DON'T mutate state on every input event because
+// that re-renders the whole queue on every pixel of drag, which is laggy and
+// can race with the Firebase listener.
 (function wireThresholdSliders() {
   const stdSlider = document.getElementById('thr-std');
   const stdVal = document.getElementById('thr-std-value');
   const vehSlider = document.getElementById('thr-veh');
   const vehVal = document.getElementById('thr-veh-value');
-  if (!stdSlider || !vehSlider) return;
+  const saveBtn = document.getElementById('btn-save-thresholds');
+  const status = document.getElementById('thr-save-status');
+  if (!stdSlider || !vehSlider || !saveBtn) return;
+
   // Initialize from state
-  const initStd = state.overdueStandard || 18;
-  const initVeh = state.overdueVehicle || 28;
-  stdSlider.value = initStd; stdVal.textContent = initStd;
-  vehSlider.value = initVeh; vehVal.textContent = initVeh;
-  // Live update
+  const setInitial = () => {
+    const initStd = state.overdueStandard || 18;
+    const initVeh = state.overdueVehicle || 28;
+    stdSlider.value = initStd; stdVal.textContent = initStd;
+    vehSlider.value = initVeh; vehVal.textContent = initVeh;
+    saveBtn.disabled = true;
+    status.textContent = 'No changes';
+    status.style.color = 'var(--ink-faint)';
+  };
+  setInitial();
+
+  const checkDirty = () => {
+    const stdNow = parseInt(stdSlider.value, 10) || 18;
+    const vehNow = parseInt(vehSlider.value, 10) || 28;
+    const dirty = stdNow !== (state.overdueStandard || 18) || vehNow !== (state.overdueVehicle || 28);
+    saveBtn.disabled = !dirty;
+    if (dirty) {
+      status.textContent = 'Unsaved changes';
+      status.style.color = 'var(--amber)';
+    } else {
+      status.textContent = 'No changes';
+      status.style.color = 'var(--ink-faint)';
+    }
+  };
+
+  // Drag: display only, no state mutation, no re-render
   stdSlider.addEventListener('input', () => {
-    const v = parseInt(stdSlider.value, 10) || 18;
-    stdVal.textContent = v;
-    state.overdueStandard = v;
-  });
-  stdSlider.addEventListener('change', () => {
-    save();
-    renderQueue();
-    renderSidebarCounts();
+    stdVal.textContent = parseInt(stdSlider.value, 10) || 18;
+    checkDirty();
   });
   vehSlider.addEventListener('input', () => {
-    const v = parseInt(vehSlider.value, 10) || 28;
-    vehVal.textContent = v;
-    state.overdueVehicle = v;
+    vehVal.textContent = parseInt(vehSlider.value, 10) || 28;
+    checkDirty();
   });
-  vehSlider.addEventListener('change', () => {
-    save();
-    renderQueue();
-    renderSidebarCounts();
+
+  // Save button: commit + persist + re-render once. The re-render of the queue
+  // can take a moment on big order lists (1500+ items), so we show a "Saving..."
+  // state on the button and defer the heavy renders to the next animation frame
+  // so the UI updates BEFORE the work blocks the main thread.
+  saveBtn.addEventListener('click', () => {
+    const std = parseInt(stdSlider.value, 10) || 18;
+    const veh = parseInt(vehSlider.value, 10) || 28;
+    // Immediate UI feedback
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    saveBtn.classList.add('btn-busy');
+    status.textContent = 'Reordering queue…';
+    status.style.color = 'var(--amber)';
+    // Defer the heavy work so the button repaint happens first
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        state.overdueStandard = std;
+        state.overdueVehicle = veh;
+        save();
+        renderQueue();
+        renderSidebarCounts();
+        // Restore the button
+        saveBtn.textContent = 'Save Thresholds';
+        saveBtn.classList.remove('btn-busy');
+        status.textContent = `Saved · Std ${std}d · Veh ${veh}d`;
+        status.style.color = 'var(--green)';
+        setTimeout(() => {
+          if (saveBtn.disabled) {
+            status.textContent = 'No changes';
+            status.style.color = 'var(--ink-faint)';
+          }
+        }, 3000);
+      }, 0);
+    });
   });
 })();
 
@@ -9954,6 +10134,26 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+// Boot overlay: shown immediately on page load, hidden once we know what to
+// show next (auth form, app shell, or error). Always hides within 8 seconds
+// no matter what so the user is never stuck staring at a spinner.
+let _bootHidden = false;
+function bootStatus(msg) {
+  const el = document.getElementById('boot-status');
+  if (el && !_bootHidden) el.textContent = msg;
+}
+function hideBootOverlay() {
+  if (_bootHidden) return;
+  _bootHidden = true;
+  const el = document.getElementById('boot-overlay');
+  if (!el) return;
+  el.classList.add('hide');
+  // Remove from DOM after the fade-out so it doesn't intercept clicks
+  setTimeout(() => { try { el.remove(); } catch {} }, 400);
+}
+// Safety net — never get stuck on the boot screen
+setTimeout(hideBootOverlay, 8000);
+
 // ============================================================
 // FIREBASE: Auth + Cloud Sync (Pass 1 — read-only sync, writes still local)
 // ============================================================
@@ -9989,12 +10189,14 @@ function cloudStatus(state, label) {
 
 async function initFirebase() {
   try {
+    bootStatus('Loading Firebase…');
     // Dynamic import from the CDN's ESM build so we don't need a bundler.
     const [appMod, authMod, dbMod] = await Promise.all([
       import('https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js'),
       import('https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js'),
       import('https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js'),
     ]);
+    bootStatus('Connecting…');
     _fbApp = appMod.initializeApp(FIREBASE_CONFIG);
     _fbAuth = authMod.getAuth(_fbApp);
     _fbDb = dbMod.getDatabase(_fbApp);
@@ -10030,11 +10232,16 @@ async function initFirebase() {
       if (user) {
         document.getElementById('auth-overlay').classList.add('hidden');
         cloudStatus("connecting", displayName(user.email));
+        bootStatus('Syncing with cloud…');
         await pullFromCloudOnce();
         watchCloudConnection();
+        // Cloud pull done — safe to hide the boot overlay
+        hideBootOverlay();
       } else {
         document.getElementById('auth-overlay').classList.remove('hidden');
         document.getElementById('cloud-status').hidden = true;
+        // Not signed in → reveal the auth form by hiding boot
+        hideBootOverlay();
       }
       // Refresh per-account UI gating
       if (typeof updateLocateButton === 'function') updateLocateButton();
@@ -10046,6 +10253,7 @@ async function initFirebase() {
   } catch (e) {
     console.error('Firebase init failed:', e);
     document.getElementById('auth-footer').textContent = `Failed to load Firebase: ${e.message || e}`;
+    hideBootOverlay();
     return false;
   }
 }
@@ -10368,6 +10576,7 @@ if (!window.OFFLINE_MODE) {
   initFirebase();
 } else {
   document.getElementById('auth-overlay').classList.add('hidden');
+  hideBootOverlay();
 }
 </script>
 </body>
