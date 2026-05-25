@@ -2923,25 +2923,27 @@ body:not(.mode-mobile) .nav-paint-mobile-only { display: none !important; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   text-align: center;
 }
-.boot-mark {
-  display: flex;
-  align-items: center;
-  gap: 14px;
+.boot-icon {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  border-radius: 8px;
+  filter: drop-shadow(0 0 18px rgba(240,168,48,0.45));
+  animation: boot-icon-pulse 1.6s ease-in-out infinite;
+  margin-bottom: 6px;
 }
-.boot-dot {
-  width: 18px;
-  height: 18px;
-  background: var(--amber);
-  border-radius: 2px;
-  box-shadow: 0 0 24px rgba(240,168,48,0.7);
-  animation: boot-pulse 1.4s ease-in-out infinite;
-}
-@keyframes boot-pulse {
-  0%, 100% { opacity: 0.85; box-shadow: 0 0 18px rgba(240,168,48,0.5); }
-  50%      { opacity: 1;    box-shadow: 0 0 32px rgba(240,168,48,0.95); }
+@keyframes boot-icon-pulse {
+  0%, 100% {
+    transform: scale(0.97);
+    filter: drop-shadow(0 0 14px rgba(240,168,48,0.4));
+  }
+  50% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 28px rgba(240,168,48,0.85));
+  }
 }
 .boot-name {
   font-family: 'Bebas Neue', sans-serif;
@@ -4357,10 +4359,8 @@ body.mode-mobile .mobile-only { display: block; }
 <!-- ============== BOOT LOADING OVERLAY ============== -->
 <div class="boot-overlay" id="boot-overlay">
   <div class="boot-center">
-    <div class="boot-mark">
-      <div class="boot-dot"></div>
-      <div class="boot-name">PRINT QUEUE</div>
-    </div>
+    <img class="boot-icon" src="icon.png" alt="" onerror="this.style.display='none'">
+    <div class="boot-name">PRINT QUEUE</div>
     <div class="boot-sub">Workshop · Cloud</div>
     <div class="boot-progress">
       <div class="boot-progress-fill"></div>
@@ -9895,39 +9895,70 @@ applyImportMode(state.importMode || 'replace');
   });
 
   // Save button: commit + persist + re-render once. The re-render of the queue
-  // can take a moment on big order lists (1500+ items), so we show a "Saving..."
-  // state on the button and defer the heavy renders to the next animation frame
-  // so the UI updates BEFORE the work blocks the main thread.
-  saveBtn.addEventListener('click', () => {
+  // can take a moment on big order lists (1500+ items), so we show phased
+  // status messages and use multiple requestAnimationFrame yields between each
+  // step so the user actually sees progress instead of a single locked screen.
+  saveBtn.addEventListener('click', async () => {
     const std = parseInt(stdSlider.value, 10) || 18;
     const veh = parseInt(vehSlider.value, 10) || 28;
     // Immediate UI feedback
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     saveBtn.classList.add('btn-busy');
-    status.textContent = 'Reordering queue…';
+    status.textContent = 'Updating thresholds…';
     status.style.color = 'var(--amber)';
-    // Defer the heavy work so the button repaint happens first
-    requestAnimationFrame(() => {
+
+    // Yield to paint the busy state, then do the work step by step.
+    const yieldFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+
+    try {
+      await yieldFrame();
+
+      // Step 1: mutate state + persist locally + push to cloud
+      state.overdueStandard = std;
+      state.overdueVehicle = veh;
+      save();
+
+      status.textContent = 'Rebuilding Resin queue…';
+      await yieldFrame();
+
+      // Step 2: rebuild Resin
+      renderQueue('resin');
+
+      status.textContent = 'Rebuilding FDM queue…';
+      await yieldFrame();
+
+      // Step 3: rebuild FDM
+      renderQueue('fdm');
+
+      status.textContent = 'Updating counts…';
+      await yieldFrame();
+
+      // Step 4: sidebar counts
+      renderSidebarCounts();
+
+      // Step 5: one more paint cycle to make sure the new DOM is committed
+      await yieldFrame();
+
+      // All done
+      saveBtn.textContent = 'Save Thresholds';
+      saveBtn.classList.remove('btn-busy');
+      status.textContent = `Saved · Std ${std}d · Veh ${veh}d`;
+      status.style.color = 'var(--green)';
       setTimeout(() => {
-        state.overdueStandard = std;
-        state.overdueVehicle = veh;
-        save();
-        renderQueue();
-        renderSidebarCounts();
-        // Restore the button
-        saveBtn.textContent = 'Save Thresholds';
-        saveBtn.classList.remove('btn-busy');
-        status.textContent = `Saved · Std ${std}d · Veh ${veh}d`;
-        status.style.color = 'var(--green)';
-        setTimeout(() => {
-          if (saveBtn.disabled) {
-            status.textContent = 'No changes';
-            status.style.color = 'var(--ink-faint)';
-          }
-        }, 3000);
-      }, 0);
-    });
+        if (saveBtn.disabled) {
+          status.textContent = 'No changes';
+          status.style.color = 'var(--ink-faint)';
+        }
+      }, 3000);
+    } catch (err) {
+      console.error('Threshold save failed:', err);
+      saveBtn.textContent = 'Save Thresholds';
+      saveBtn.classList.remove('btn-busy');
+      saveBtn.disabled = false;
+      status.textContent = 'Save failed — check console';
+      status.style.color = 'var(--red)';
+    }
   });
 })();
 
