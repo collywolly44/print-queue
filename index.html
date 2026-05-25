@@ -5615,10 +5615,17 @@ function buildQueue(typeFilter) {
     }
     const taken = have;
     stock[r.part] = 0;
+    // Mutate the original row so consumers of allRowsAll (e.g. the paint
+    // queue's demand calculator) see the correct remaining count. Without
+    // this write, only the `enriched` clone has `_remaining`, and reads
+    // against the unmodified original row return undefined → treated as 0.
+    r._covered = taken;
+    r._remaining = need - taken;
+    r.originalQty = need;
     // Only show rows whose part has been counted at least once. Uncounted parts
     // are hidden from the queue so the user only sees parts they've reviewed.
     if (!state.countedParts[r.part]) continue;
-    const enriched = { ...r, _covered: taken, _remaining: need - taken, originalQty: need };
+    const enriched = { ...r };
     if (!typeFilter || r.type === typeFilter) visible.push(enriched);
   }
 
