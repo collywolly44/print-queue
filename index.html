@@ -6013,21 +6013,26 @@ function renderQueue(type) {
 
   // FDM ordering:
   //   1. Part Needed cards
-  //   2. Overdue orders (standard >18d OR vehicle >28d) — past the timeframes
-  //      we promise customers; they jump to the top below needs
-  //   3. Everything else, oldest order first
+  //   2. Overdue STANDARD orders (past the standard threshold)
+  //   3. Overdue VEHICLE orders (past the vehicle threshold)
+  //   4. Everything else, oldest order first
+  //
+  // Within each priority tier, oldest order date wins.
   // Use user-configurable thresholds from state (default 18 standard, 28 vehicle)
   const stdThr = state.overdueStandard || 18;
   const vehThr = state.overdueVehicle || 28;
+  const tierFor = (r, ageDays) => {
+    if (r._isNeed) return 0;
+    if (!r._orderIsVehicle && ageDays >= stdThr) return 1;
+    if (r._orderIsVehicle && ageDays >= vehThr) return 2;
+    return 3;
+  };
   filtered.sort((a, b) => {
-    if (a._isNeed && !b._isNeed) return -1;
-    if (!a._isNeed && b._isNeed) return 1;
     const aAge = daysBetween(new Date(a.date), today);
     const bAge = daysBetween(new Date(b.date), today);
-    const aOverdue = (!a._orderIsVehicle && aAge >= stdThr) || (a._orderIsVehicle && aAge >= vehThr);
-    const bOverdue = (!b._orderIsVehicle && bAge >= stdThr) || (b._orderIsVehicle && bAge >= vehThr);
-    if (aOverdue && !bOverdue) return -1;
-    if (!aOverdue && bOverdue) return 1;
+    const aT = tierFor(a, aAge);
+    const bT = tierFor(b, bAge);
+    if (aT !== bT) return aT - bT;
     return new Date(a.date) - new Date(b.date);
   });
 
@@ -6203,18 +6208,42 @@ function renderKanban(filtered, allVisible) {
   }
   // Resin queue ordering:
   //   1. Part Needed cards (oldest first)
-  //   2. Overdue groups — past our user-configurable thresholds (default 18d
-  //      standard / 28d vehicle), so they jump to top below needs
-  //   3. Everything else, oldest first
+  //   2. Overdue STANDARD groups (past standard threshold)
+  //   3. Overdue VEHICLE groups (past vehicle threshold)
+  //   4. Everything else, oldest first
+  //
+  // A group represents demand from multiple underlying orders for the same
+  // part. We pick the BEST tier any underlying order qualifies for — so a
+  // part needed by both a 25-day standard order and a 50-day vehicle order
+  // sits in tier 1 (overdue standard wins), since standard customer pressure
+  // is what drives priority here.
+  // Within each tier, oldest order date wins.
   const resinStdThr = state.overdueStandard || 18;
   const resinVehThr = state.overdueVehicle || 28;
+  const rowTier = (row, ageDays) => {
+    if (!row._orderIsVehicle && ageDays >= resinStdThr) return 1;
+    if (row._orderIsVehicle && ageDays >= resinVehThr) return 2;
+    return 3;
+  };
+  const groupTier = (group) => {
+    if (!Array.isArray(group._underlyingRows) || group._underlyingRows.length === 0) {
+      // Fall back to the group's representative age/flag
+      const age = daysBetween(new Date(group.date), todayForUrgency);
+      return rowTier(group, age);
+    }
+    let best = 3;
+    for (const ur of group._underlyingRows) {
+      const age = daysBetween(new Date(ur.date), todayForUrgency);
+      const t = rowTier(ur, age);
+      if (t < best) best = t;
+      if (best === 1) break;  // can't do better
+    }
+    return best;
+  };
   groupedRows.sort((a, b) => {
-    const aAge = daysBetween(new Date(a.date), todayForUrgency);
-    const bAge = daysBetween(new Date(b.date), todayForUrgency);
-    const aOverdue = (!a._orderIsVehicle && aAge >= resinStdThr) || (a._orderIsVehicle && aAge >= resinVehThr);
-    const bOverdue = (!b._orderIsVehicle && bAge >= resinStdThr) || (b._orderIsVehicle && bAge >= resinVehThr);
-    if (aOverdue && !bOverdue) return -1;
-    if (!aOverdue && bOverdue) return 1;
+    const aT = groupTier(a);
+    const bT = groupTier(b);
+    if (aT !== bT) return aT - bT;
     return new Date(a.date) - new Date(b.date);
   });
   needs.sort((a, b) => new Date(a.date) - new Date(b.date));
