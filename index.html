@@ -5233,15 +5233,56 @@ function save() {
     overdueVehicle: state.overdueVehicle,
     lastSync: new Date().toISOString(),
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
+
+  // Write to localStorage defensively. iOS Safari has a ~5MB quota and throws
+  // QuotaExceededError when it fills up. If that happens we DON'T want the
+  // whole save() to abort — the cloud push below is what actually matters for
+  // cross-device sync. So we isolate the local write, and on quota failure we
+  // free space (drop snapshots, trim history) and retry once.
+  const writeLocal = () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
+  };
+  try {
+    writeLocal();
+  } catch (err) {
+    const isQuota = err && (err.name === 'QuotaExceededError'
+      || err.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+      || /quota/i.test(String(err.message || '')));
+    if (isQuota) {
+      console.warn('localStorage quota hit — clearing snapshots and trimming history to recover.');
+      // 1) Drop rolling snapshots (biggest, most expendable consumer)
+      try { localStorage.removeItem(SNAPSHOT_KEY); } catch {}
+      // 2) Trim the long history arrays in BOTH state and the blob we're saving
+      const trim = (arr, keep) => Array.isArray(arr) ? arr.slice(-keep) : arr;
+      state.shippedHistory   = trim(state.shippedHistory, 1500);
+      state.inventoryHistory = trim(state.inventoryHistory, 800);
+      state.completedOrders  = trim(state.completedOrders, 1500);
+      blob.shippedHistory    = state.shippedHistory;
+      blob.inventoryHistory  = state.inventoryHistory;
+      blob.completedOrders   = state.completedOrders;
+      try {
+        writeLocal();
+      } catch (err2) {
+        console.error('Still over quota after trimming; local save skipped (cloud push will still run).', err2);
+        if (typeof toast === 'function') {
+          toast('Device storage full — synced to cloud but local backup skipped', 'error');
+        }
+      }
+    } else {
+      console.error('localStorage write failed:', err);
+    }
+  }
+
   updateLastSync(blob.lastSync);
-  recordSnapshot(blob);
+  // recordSnapshot can also hit quota; it already handles that internally, but
+  // wrap defensively so it can never block the cloud push.
+  try { recordSnapshot(blob); } catch (e) { console.warn('Snapshot skipped:', e); }
   // The library may have changed; drop the cached parts catalog so the next
   // autocomplete read is fresh.
-  invalidatePartsCatalog();
-  if (typeof MS !== 'undefined' && MS.invalidateCache) MS.invalidateCache();
-  // Push to cloud if we're connected and signed in.
-  // Debounced so a burst of edits collapses into one cloud write.
+  try { invalidatePartsCatalog(); } catch {}
+  if (typeof MS !== 'undefined' && MS.invalidateCache) { try { MS.invalidateCache(); } catch {} }
+  // Push to cloud if we're connected and signed in. This is the critical path
+  // for cross-device sync and must ALWAYS run, even if local storage failed.
   scheduleCloudPush(blob);
 }
 
@@ -5265,10 +5306,18 @@ function scheduleCloudPush(blob) {
       sanitized._writeToken = _localWriteToken;
       await window._fb.set(cloudRef(), sanitized);
       _cloudPushPending = false;
+      // Confirm sync succeeded in the status pill
+      if (_fbUser) cloudStatus('online', displayName(_fbUser.email));
     } catch (e) {
       console.error('Cloud push failed:', e);
       // Mark offline so the user sees the warning; they can keep editing locally.
-      cloudStatus('offline', 'Offline — changes will sync when reconnected');
+      cloudStatus('offline', 'Sync failed — will retry on next change');
+      // Retry once after a short delay in case it was a transient iOS/network blip
+      setTimeout(() => {
+        if (_fbReady && _fbUser && _cloudPushPending) {
+          scheduleCloudPush(blob);
+        }
+      }, 4000);
     }
   }, 600);
 }
