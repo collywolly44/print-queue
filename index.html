@@ -2344,6 +2344,73 @@ body:not(.mode-mobile) .nav-paint-mobile-only { display: none !important; }
 .sla-bucket-unset .sla-bucket-count { color: var(--red); }
 
 /* Tools page tabs */
+/* Duplicate-SKU warning banner — appears at top of Tools page when two
+   different product names share the same SKU. */
+.dup-sku-banner {
+  background: rgba(232,93,74,0.08);
+  border: 1px solid rgba(232,93,74,0.45);
+  border-left: 4px solid var(--red);
+  border-radius: 4px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+}
+.dup-sku-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.dup-sku-icon {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 20px;
+  color: var(--red);
+  letter-spacing: 0.04em;
+}
+.dup-sku-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--red);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.dup-sku-sub {
+  font-size: 12px;
+  color: var(--ink-dim);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.dup-sku-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dup-sku-item {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 14px;
+}
+.dup-sku-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--amber);
+  margin-bottom: 6px;
+}
+.dup-sku-products {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  margin-left: 14px;
+}
+.dup-sku-products li {
+  list-style: disc;
+  margin-left: 14px;
+}
+
 .tools-tabs {
   display: flex;
   gap: 4px;
@@ -4933,6 +5000,9 @@ body.mode-mobile .mobile-only { display: block; }
           <div class="page-sub">Tag SKUs and parts to control how the queue treats them.</div>
         </div>
       </div>
+
+      <!-- Duplicate SKU warning banner (only renders when duplicates exist) -->
+      <div id="dup-sku-banner"></div>
 
       <!-- Tab strip -->
       <div class="tools-tabs">
@@ -8703,6 +8773,8 @@ let _ptFilterMode = 'all'; // 'all' | 'resin' | 'fdm'
       document.querySelectorAll('.tools-tab-panel').forEach(p => {
         p.classList.toggle('hidden', p.dataset.toolsPanel !== target);
       });
+      // Duplicate-SKU warning is page-level, not tab-level — refresh on every tab change.
+      renderDupSkuWarning();
       if (target === 'vehicle') renderSlaSorter();
       else if (target === 'parttype') renderPartTypeTagger();
       else if (target === 'edit') renderEditOrders();
@@ -8841,6 +8913,86 @@ function setPartType(partName, newType) {
   }
   renderPartTypeTagger();
   if (typeof renderQueue === 'function') renderQueue();
+}
+
+// ============================================================
+// DUPLICATE-SKU WARNING — Tools page banner
+// ============================================================
+// Scans state.orders for SKUs that have more than one distinct product name
+// (item field). This usually means two different products in Weebly were
+// assigned the same SKU, which breaks the queue's per-SKU recipe lookup and
+// FIFO tracking. We surface them here so the user can fix them in Weebly.
+
+// Normalize item names so trivial differences (extra whitespace, casing)
+// don't trigger false positives. Keeps the original strings for display
+// but compares on a normalized form.
+function _normalizeItemName(s) {
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function findDuplicateSkus() {
+  // sku -> { displayNames: Map(normalized -> original), customers: Set, totalQty }
+  const bySku = new Map();
+  for (const o of (state.orders || [])) {
+    const sku = o.sku;
+    if (!sku) continue;
+    const item = String(o.item || '').trim();
+    if (!item) continue;
+    const norm = _normalizeItemName(item);
+    if (!bySku.has(sku)) bySku.set(sku, { names: new Map(), customers: new Set() });
+    const entry = bySku.get(sku);
+    if (!entry.names.has(norm)) entry.names.set(norm, item);
+    entry.customers.add(o.customer || '?');
+  }
+  const dups = [];
+  for (const [sku, entry] of bySku.entries()) {
+    if (entry.names.size > 1) {
+      dups.push({
+        sku,
+        names: Array.from(entry.names.values()),
+        customerCount: entry.customers.size,
+      });
+    }
+  }
+  // Sort: most names first, then alphabetically by SKU
+  dups.sort((a, b) => b.names.length - a.names.length || a.sku.localeCompare(b.sku));
+  return dups;
+}
+
+function renderDupSkuWarning() {
+  const root = document.getElementById('dup-sku-banner');
+  if (!root) return;
+  const dups = findDuplicateSkus();
+  if (dups.length === 0) {
+    root.innerHTML = '';
+    return;
+  }
+  let html = `
+    <div class="dup-sku-banner">
+      <div class="dup-sku-head">
+        <div class="dup-sku-icon">⚠</div>
+        <div class="dup-sku-title">Duplicate SKUs detected · ${dups.length}</div>
+      </div>
+      <div class="dup-sku-sub">
+        These SKUs are used by more than one product name in your current orders. Each SKU should map to exactly one product — fix in Weebly so the queue can route, count, and ship correctly.
+      </div>
+      <div class="dup-sku-list">`;
+  for (const d of dups) {
+    html += `
+      <div class="dup-sku-item">
+        <div class="dup-sku-code">${escapeHtml(d.sku)}</div>
+        <ul class="dup-sku-products" style="margin:0;padding:0;list-style:none;">`;
+    for (const name of d.names) {
+      html += `<li style="position:relative;padding-left:14px;">• ${escapeHtml(name)}</li>`;
+    }
+    html += `
+        </ul>
+      </div>`;
+  }
+  html += `
+      </div>
+    </div>`;
+  root.innerHTML = html;
 }
 
 // ============================================================
@@ -9715,6 +9867,8 @@ function switchView(name) {
       // Render whichever Tools tab is currently active
       const activeTab = document.querySelector('.tools-tab.active');
       const target = activeTab ? activeTab.dataset.toolsTab : 'vehicle';
+      // Duplicate-SKU warning is page-level — fires for any tab.
+      if (typeof renderDupSkuWarning === 'function') renderDupSkuWarning();
       if (target === 'parttype') renderPartTypeTagger();
       else if (target === 'edit') renderEditOrders();
       else renderSlaSorter();
