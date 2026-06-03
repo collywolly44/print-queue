@@ -5385,6 +5385,10 @@ function _rebuildStableId(row, idCounts) {
 function applyOrderEdits(newOrders) {
   const edits = state.orderEdits || [];
   if (edits.length === 0) return;
+  // Track which rows have been touched by edits — only those need their IDs
+  // regenerated. Non-edited rows MUST keep their original CSV-derived IDs so
+  // shipping detection works correctly across imports.
+  const touched = new WeakSet();
   for (const edit of edits) {
     if (!edit || !edit.kind) continue;
     if (edit.kind === 'swap') {
@@ -5392,12 +5396,14 @@ function applyOrderEdits(newOrders) {
         if (_editMatches(edit, row, edit.oldSku)) {
           row.sku = edit.newSku;
           if (edit.newItem) row.item = edit.newItem;
+          touched.add(row);
         }
       }
     } else if (edit.kind === 'qty') {
       for (const row of newOrders) {
         if (_editMatches(edit, row, edit.sku)) {
           row.qty = Math.max(1, Math.floor(Number(edit.newQty) || 1));
+          // Qty change doesn't affect ID. Don't mark touched.
         }
       }
     } else if (edit.kind === 'remove') {
@@ -5407,11 +5413,9 @@ function applyOrderEdits(newOrders) {
         }
       }
     } else if (edit.kind === 'add') {
-      // Only insert if not already present (in case ShipStation HAS been
-      // updated by the time of import — avoid duplicates)
       const exists = newOrders.some(r => _editMatches(edit, r, edit.sku));
       if (!exists) {
-        newOrders.push({
+        const newRow = {
           id: '',  // re-generated below
           date: edit.date || new Date().toISOString(),
           sku: edit.sku,
@@ -5419,15 +5423,27 @@ function applyOrderEdits(newOrders) {
           customer: edit.customer || '',
           item: edit.item || '',
           orderId: edit.orderId || '',
-        });
+        };
+        newOrders.push(newRow);
+        touched.add(newRow);
       }
     }
   }
-  // After edits, rebuild stable ids on ALL rows so any swapped/added rows
-  // pick up correct ids and duplicate-resolution.
+  // Only regenerate IDs for rows that were touched. To handle duplicates
+  // correctly, pre-seed the idCounts map from the EXISTING (un-touched) rows,
+  // so newly-generated IDs avoid colliding with rows we left alone.
   const idCounts = {};
   for (const row of newOrders) {
-    row.id = _rebuildStableId(row, idCounts);
+    if (!touched.has(row) && row.id) {
+      // Extract the base key from this row's id (strip any duplicate suffix)
+      const baseKey = row.id.replace(/\|\d+$/, '');
+      idCounts[baseKey] = Math.max(idCounts[baseKey] || 0, parseInt((row.id.match(/\|(\d+)$/) || [])[1] || '1', 10));
+    }
+  }
+  for (const row of newOrders) {
+    if (touched.has(row)) {
+      row.id = _rebuildStableId(row, idCounts);
+    }
   }
 }
 
