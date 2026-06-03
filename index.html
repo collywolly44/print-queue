@@ -5972,9 +5972,56 @@ function renderImportStatus() {
           <div style="font-size:13px;color:var(--ink);font-family:'JetBrains Mono',monospace;">${oldestStr}<br>→ ${newestStr}</div>
         </div>
       </div>
+      ${renderImportInventoryChanges(li)}
       ${staleNote}`;
   }
   renderImportTopShipped();
+}
+
+// Build the inventory-changes block that appears in the "Current data" card.
+// Shows every part whose stock was reduced by shipping detection on the
+// most-recent import, with a Before → After display and a collapsible row
+// expansion to see all of them. Returns HTML string (may be empty).
+function renderImportInventoryChanges(li) {
+  if (!li || !Array.isArray(li.inventoryChanges) || li.inventoryChanges.length === 0) {
+    if (li && li.shipped > 0 && li.skipInvChange) {
+      return `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim);letter-spacing:0.04em;">Inventory was NOT changed (import mode: sync without inventory change)</div>`;
+    }
+    return '';
+  }
+  const changes = li.inventoryChanges;
+  const totalParts = changes.length;
+  const totalUnits = changes.reduce((s, c) => s + Math.abs(c.delta || 0), 0);
+  const visibleCount = 10;
+  const visible = changes.slice(0, visibleCount);
+  const hidden = changes.slice(visibleCount);
+  const rowHtml = (c) => `
+    <div style="display:grid;grid-template-columns:1fr 70px 90px;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px;">
+      <div style="color:var(--ink);word-break:break-word;">${escapeHtml(c.part)}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim);text-align:right;">${c.before} → ${c.after}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--red);text-align:right;">${c.delta > 0 ? '+' + c.delta : c.delta}</div>
+    </div>`;
+  let html = `
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line);">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;">Inventory subtracted by this import</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim);">${totalParts} parts · ${totalUnits} units</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 70px 90px;gap:10px;padding:4px 0 8px;border-bottom:1px solid var(--line-bright);font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.06em;text-transform:uppercase;">
+        <div>Part</div>
+        <div style="text-align:right;">Before → After</div>
+        <div style="text-align:right;">Delta</div>
+      </div>
+      ${visible.map(rowHtml).join('')}`;
+  if (hidden.length > 0) {
+    html += `
+      <details style="margin-top:6px;">
+        <summary style="cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--amber);letter-spacing:0.06em;padding:6px 0;">Show ${hidden.length} more…</summary>
+        ${hidden.map(rowHtml).join('')}
+      </details>`;
+  }
+  html += `</div>`;
+  return html;
 }
 
 // Days range for the Import-page Top 10 Shipped panel
@@ -9380,6 +9427,9 @@ function importCSV(text) {
   let added = 0;
   let shippedCount = 0;
   const shippedSubtractions = {}; // part -> total qty subtracted
+  // Snapshot starting inventory for parts that change during this import, so
+  // we can show before/after numbers on the Import page after we're done.
+  const inventoryBefore = {};
 
   // The new CSV is the complete snapshot of pending orders.
   // Anything in state.orders not in newOrders has shipped.
@@ -9420,17 +9470,19 @@ function importCSV(text) {
       }
     }
     shippedCount++;
-    // Diagnostic: log the orphaned (apparently-shipped) row so the user can
-    // see why it didn't match. Useful for debugging edits-vs-import sync.
-    console.log('[import] No new-CSV match for state.orders row → treating as shipped:', {
-      id: old.id,
-      sku: old.sku,
-      customer: old.customer,
-      item: old.item,
-      date: old.date,
-      orderId: old.orderId,
-      qty: old.qty,
-    });
+    // Diagnostic: only warn if we see a potential twin in newOrders, which
+    // would indicate a real ID-drift bug. Genuine shipments won't have a
+    // twin, so no need to spam the console for those.
+    const fuzzy = newOrders.find(n =>
+      n.customer === old.customer &&
+      n.sku === old.sku &&
+      String(n.date).slice(0,10) === String(old.date).slice(0,10)
+    );
+    if (fuzzy) {
+      console.warn('[import] Possible false-ship — a similar new-CSV row exists with a different id:', {
+        oldId: old.id, newId: fuzzy.id, sku: old.sku, customer: old.customer,
+      });
+    }
     // Log every shipped order to history so the dashboard's "Top 10 shipped
     // products" can show real shipped data (not a proxy from prints)
     state.shippedHistory.push({
@@ -9450,6 +9502,9 @@ function importCSV(text) {
         : Math.max(1, Math.floor(Number(partObj.qty) || 1));
       const sub = (Number(old.qty) || 0) * partQty;
       const have = Number(state.inventory[part] || 0);
+      // Capture the original stock the FIRST time we touch this part during
+      // this import. Multiple shipped orders might subtract from the same part.
+      if (!(part in inventoryBefore)) inventoryBefore[part] = have;
       const next = Math.max(0, have - sub);
       if (next <= 0) delete state.inventory[part];
       else state.inventory[part] = next;
@@ -9482,6 +9537,17 @@ function importCSV(text) {
   // Re-sort orders
   state.orders.sort((a,b) => new Date(a.date) - new Date(b.date));
 
+  // Build per-part change list for the import status card.
+  const inventoryChanges = [];
+  for (const part of Object.keys(shippedSubtractions)) {
+    const before = inventoryBefore[part] ?? 0;
+    const sub = shippedSubtractions[part];
+    const after = Math.max(0, before - sub);
+    inventoryChanges.push({ part, before, after, delta: -sub });
+  }
+  // Sort by biggest absolute change first so important moves are at top
+  inventoryChanges.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
   // Record metadata about this import so the user can see what data the app
   // is using and verify imports are happening as expected.
   state.lastImport = {
@@ -9491,6 +9557,8 @@ function importCSV(text) {
     shipped: shippedCount,
     oldestOrderDate: newOrders.length > 0 ? newOrders[0].date : null,
     newestOrderDate: newOrders.length > 0 ? newOrders[newOrders.length - 1].date : null,
+    inventoryChanges, // [{part, before, after, delta}] — per-part subtractions from shipping
+    skipInvChange,    // whether inventory was actually touched
   };
 
   save();
