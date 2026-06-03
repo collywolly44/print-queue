@@ -9137,13 +9137,30 @@ function openSwapModal(rowId) {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center;padding:24px;';
   wrap.innerHTML = `
-    <div style="background:var(--panel);border:1px solid var(--line-bright);border-radius:6px;padding:24px;max-width:520px;width:100%;">
+    <div style="background:var(--panel);border:1px solid var(--line-bright);border-radius:6px;padding:24px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;">
       <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:0.04em;color:var(--ink);margin-bottom:6px;">Swap SKU</div>
       <div style="font-size:12px;color:var(--ink-dim);margin-bottom:16px;">
         Currently: <strong style="color:var(--amber);">${escapeHtml(row.sku)}</strong> — ${escapeHtml(row.item || '')}
       </div>
-      <input type="text" class="edit-modal-search" placeholder="Search library by SKU or product name…" autofocus>
+
+      <!-- Create-new-SKU section -->
+      <div style="background:var(--bg);border:1px dashed var(--line-bright);border-radius:4px;padding:12px 14px;margin-bottom:14px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">Create new SKU</div>
+        <div style="font-size:11px;color:var(--ink-dim);margin-bottom:10px;line-height:1.4;">
+          New SKU not in your library yet? Type it here. The app will create an empty entry; add parts via Parts Library afterward.
+        </div>
+        <div style="display:flex;gap:8px;align-items:stretch;">
+          <input type="text" data-new-sku placeholder="New SKU code…" style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--line-bright);color:var(--ink);font-size:13px;padding:8px 10px;border-radius:4px;font-family:'JetBrains Mono',monospace;">
+          <input type="text" data-new-name placeholder="Product name (optional)…" style="flex:1.5;min-width:0;background:var(--bg);border:1px solid var(--line-bright);color:var(--ink);font-size:13px;padding:8px 10px;border-radius:4px;font-family:inherit;">
+          <button class="btn btn-primary btn-sm" data-create disabled>Create + Swap</button>
+        </div>
+        <div data-new-sku-hint style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.04em;margin-top:6px;min-height:14px;"></div>
+      </div>
+
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">Or pick from library</div>
+      <input type="text" class="edit-modal-search" placeholder="Search library by SKU or product name…">
       <div class="edit-modal-results"></div>
+
       <div style="display:flex;justify-content:flex-end;margin-top:14px;">
         <button class="btn btn-ghost" data-cancel>Cancel</button>
       </div>
@@ -9151,13 +9168,68 @@ function openSwapModal(rowId) {
   document.body.appendChild(wrap);
   const search = wrap.querySelector('.edit-modal-search');
   const results = wrap.querySelector('.edit-modal-results');
+  const newSkuInput = wrap.querySelector('[data-new-sku]');
+  const newNameInput = wrap.querySelector('[data-new-name]');
+  const createBtn = wrap.querySelector('[data-create]');
+  const newSkuHint = wrap.querySelector('[data-new-sku-hint]');
+
+  const updateCreateState = () => {
+    const typed = newSkuInput.value.trim();
+    if (!typed) {
+      createBtn.disabled = true;
+      newSkuHint.textContent = '';
+      newSkuHint.style.color = 'var(--ink-faint)';
+      return;
+    }
+    if (typed === row.sku) {
+      createBtn.disabled = true;
+      newSkuHint.textContent = 'Same as current SKU — no change';
+      newSkuHint.style.color = 'var(--ink-faint)';
+      return;
+    }
+    if (state.library[typed]) {
+      createBtn.disabled = false;
+      createBtn.textContent = 'Swap (exists)';
+      newSkuHint.textContent = `Already in library: ${state.library[typed].name || '(no name)'}`;
+      newSkuHint.style.color = 'var(--amber)';
+      return;
+    }
+    createBtn.disabled = false;
+    createBtn.textContent = 'Create + Swap';
+    newSkuHint.textContent = 'Will create an empty library entry. Add parts via Parts Library.';
+    newSkuHint.style.color = 'var(--green)';
+  };
+  newSkuInput.addEventListener('input', updateCreateState);
+  newNameInput.addEventListener('input', updateCreateState);
+
+  createBtn.addEventListener('click', () => {
+    const typedSku = newSkuInput.value.trim();
+    if (!typedSku || typedSku === row.sku) return;
+    const typedName = newNameInput.value.trim();
+    // Create the library entry if it doesn't already exist
+    if (!state.library[typedSku]) {
+      state.library[typedSku] = {
+        name: typedName || typedSku,
+        parts: [],
+        notes: '',
+        isVehicle: false,
+      };
+    } else if (typedName && !state.library[typedSku].name) {
+      // Existing entry with no name and user typed one — adopt it
+      state.library[typedSku].name = typedName;
+    }
+    const itemForSwap = state.library[typedSku].name || typedSku;
+    doSwapSku(row, typedSku, itemForSwap);
+    document.body.removeChild(wrap);
+  });
+
   const render = (q) => {
     const term = q.trim().toLowerCase();
     const filtered = term
       ? skus.filter(s => s.sku.toLowerCase().includes(term) || s.name.toLowerCase().includes(term))
       : skus;
     if (filtered.length === 0) {
-      results.innerHTML = `<div style="padding:14px;text-align:center;color:var(--ink-faint);font-size:12px;">No matches</div>`;
+      results.innerHTML = `<div style="padding:14px;text-align:center;color:var(--ink-faint);font-size:12px;">No matches in library</div>`;
       return;
     }
     results.innerHTML = filtered.slice(0, 50).map(s => `
@@ -9178,7 +9250,8 @@ function openSwapModal(rowId) {
   wrap.querySelector('[data-cancel]').addEventListener('click', () => document.body.removeChild(wrap));
   wrap.addEventListener('click', (e) => { if (e.target === wrap) document.body.removeChild(wrap); });
   render('');
-  setTimeout(() => search.focus(), 50);
+  updateCreateState();
+  setTimeout(() => newSkuInput.focus(), 50);
 }
 
 function doSwapSku(row, newSku, newItem) {
