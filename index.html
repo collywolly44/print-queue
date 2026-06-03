@@ -9389,9 +9389,48 @@ function importCSV(text) {
   const newIds = new Set(newOrders.map(o => o.id));
   const nowIso = new Date().toISOString();
   if (!Array.isArray(state.shippedHistory)) state.shippedHistory = [];
+  // Build a fuzzy-match index so a row whose ID drifted (due to edits or
+  // ShipStation combining orders) can still match its new-CSV counterpart
+  // by content (customer + sku + date + orderId). Without this we'd
+  // false-ship rows when IDs drift, which incorrectly subtracts inventory.
+  const newByContent = new Map();
+  for (const n of newOrders) {
+    const key = `${(n.customer || '').trim().toLowerCase()}|${n.sku}|${String(n.date).slice(0,10)}|${n.orderId || ''}`;
+    if (!newByContent.has(key)) newByContent.set(key, []);
+    newByContent.get(key).push(n);
+  }
+  const matchedNewIds = new Set();
   for (const old of state.orders) {
     if (newIds.has(old.id)) continue;
+    // Before declaring this row shipped, try a fuzzy content match. If a row
+    // in newOrders has the same customer/sku/date/orderId, it's almost
+    // certainly the same physical order — the IDs just drifted (likely from
+    // an edit or a ShipStation combine). Treat it as still-open, not shipped.
+    const fkey = `${(old.customer || '').trim().toLowerCase()}|${old.sku}|${String(old.date).slice(0,10)}|${old.orderId || ''}`;
+    const candidates = newByContent.get(fkey);
+    if (candidates && candidates.length > 0) {
+      // Find a candidate that hasn't already been claimed by another old row
+      const claim = candidates.find(c => !matchedNewIds.has(c.id));
+      if (claim) {
+        matchedNewIds.add(claim.id);
+        console.log('[import] Fuzzy match prevented false-ship:', {
+          oldId: old.id, newId: claim.id, sku: old.sku, customer: old.customer,
+        });
+        continue; // not shipped
+      }
+    }
     shippedCount++;
+    // Diagnostic: log the orphaned (apparently-shipped) row so the user can
+    // see why it didn't match. Useful for debugging edits-vs-import sync.
+    console.log('[import] No new-CSV match for state.orders row → treating as shipped:', {
+      id: old.id,
+      sku: old.sku,
+      customer: old.customer,
+      item: old.item,
+      date: old.date,
+      orderId: old.orderId,
+      qty: old.qty,
+    });
     // Log every shipped order to history so the dashboard's "Top 10 shipped
     // products" can show real shipped data (not a proxy from prints)
     state.shippedHistory.push({
@@ -9421,9 +9460,23 @@ function importCSV(text) {
   if (state.shippedHistory.length > 5000) {
     state.shippedHistory = state.shippedHistory.slice(-5000);
   }
-  // Count truly-new orders
+  // Count truly-new orders. Skip rows that the fuzzy matcher above paired up
+  // with an existing state.orders row (their ID drifted but they're the same
+  // physical order).
   const existingIds = new Set(state.orders.map(o => o.id));
-  for (const o of newOrders) if (!existingIds.has(o.id)) added++;
+  // Also build a content index of existing orders for the same fuzzy match.
+  const existingByContent = new Map();
+  for (const o of state.orders) {
+    const key = `${(o.customer || '').trim().toLowerCase()}|${o.sku}|${String(o.date).slice(0,10)}|${o.orderId || ''}`;
+    if (!existingByContent.has(key)) existingByContent.set(key, true);
+  }
+  for (const o of newOrders) {
+    if (existingIds.has(o.id)) continue;
+    if (matchedNewIds.has(o.id)) continue;  // already paired by fuzzy match above
+    const fkey = `${(o.customer || '').trim().toLowerCase()}|${o.sku}|${String(o.date).slice(0,10)}|${o.orderId || ''}`;
+    if (existingByContent.has(fkey)) continue;  // matches an existing row by content
+    added++;
+  }
   state.orders = newOrders;
 
   // Re-sort orders
