@@ -5671,8 +5671,9 @@ function scheduleCloudPush(blob) {
       sanitized._writeToken = _localWriteToken;
       await window._fb.set(cloudRef(), sanitized);
       _cloudPushPending = false;
-      // Confirm sync succeeded in the status pill
-      if (_fbUser) cloudStatus('online', displayName(_fbUser.email));
+      // Confirm sync succeeded in the status pill. Uses 'connected' (not
+      // 'online') because that's the CSS state that lights up green.
+      if (_fbUser) cloudStatus('connected', displayName(_fbUser.email));
     } catch (e) {
       console.error('Cloud push failed:', e);
       // Mark offline so the user sees the warning; they can keep editing locally.
@@ -7695,6 +7696,12 @@ function renderLibrary() {
 function wireLibraryCards(container) {
   // ---- Wire up each card ----
   container.querySelectorAll('.lib-card[data-sku]').forEach(card => {
+    // Guard against double-wiring. When renderLibrary is triggered rapidly
+    // (e.g. cloud sync + local edit within the same frame), the deferred
+    // rAF wire calls could stack and attach multiple listeners to the same
+    // button — causing symptoms like "+ Add part adds 4 blanks per click".
+    if (card.dataset.wired === '1') return;
+    card.dataset.wired = '1';
     const sku = card.dataset.sku;
 
     const ensureLibEntry = () => {
@@ -7901,8 +7908,20 @@ function wireLibraryCards(container) {
         const newYield = Math.max(1, parseInt(yieldInput.value, 10) || 1);
         const newQty = qtyInput ? Math.max(1, parseInt(qtyInput.value, 10) || 1) : 1;
         const newType = getType();
+        // Defensive: if the DOM part row we're wired to no longer exists in
+        // the document, our captured partIdx is stale. Bail out so we don't
+        // splice the wrong part.
+        if (!prow.isConnected) return;
         // If user emptied the name, treat as deletion of that part on save
         if (!newName) {
+          // Sanity check: only splice if partIdx still points at a part that
+          // matches the empty state we captured. If parts.length has changed
+          // out from under us (e.g. cascading edits, cloud sync), partIdx
+          // might point to the wrong row now.
+          if (partIdx >= lib.parts.length) return;
+          const target = lib.parts[partIdx];
+          const targetName = (typeof target === 'string') ? target : (target && target.name) || '';
+          if (targetName) return;  // partIdx no longer points at an empty row — bail
           lib.parts.splice(partIdx, 1);
           scheduleSave(`Removed part from ${sku}`);
           // Re-render this card region to keep indices in sync
@@ -7932,6 +7951,8 @@ function wireLibraryCards(container) {
             newPrinter = printerVal;
           }
         }
+        // Sanity: if partIdx is out of range, the array changed under us — bail.
+        if (partIdx >= lib.parts.length) return;
         lib.parts[partIdx] = next;
 
         // Cascade yield/type/printer to all OTHER SKUs that use the same part name.
