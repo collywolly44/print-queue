@@ -5656,9 +5656,26 @@ function save() {
 // gets written so user sees their edit; we'll catch up on reconnect).
 let _cloudPushTimer = null;
 let _cloudPushPending = false;
+const UNSYNCED_KEY = 'print_queue_unsynced_v1';
+
+// Set/clear the persistent "unsynced local changes" flag. This flag survives
+// a page refresh, so if the user makes an edit then refreshes before the
+// cloud push finishes, boot code knows to push local up instead of letting
+// the cloud pull overwrite the local edit.
+function setUnsyncedFlag(v) {
+  try {
+    if (v) localStorage.setItem(UNSYNCED_KEY, '1');
+    else localStorage.removeItem(UNSYNCED_KEY);
+  } catch {}
+}
+function hasUnsyncedFlag() {
+  try { return localStorage.getItem(UNSYNCED_KEY) === '1'; } catch { return false; }
+}
+
 function scheduleCloudPush(blob) {
   if (!_fbReady || !_fbUser || _suspendCloudWrites) return;
   _cloudPushPending = true;
+  setUnsyncedFlag(true);
   clearTimeout(_cloudPushTimer);
   _cloudPushTimer = setTimeout(async () => {
     if (!_fbReady || !_fbUser) return;
@@ -5671,12 +5688,13 @@ function scheduleCloudPush(blob) {
       sanitized._writeToken = _localWriteToken;
       await window._fb.set(cloudRef(), sanitized);
       _cloudPushPending = false;
+      setUnsyncedFlag(false);
       // Confirm sync succeeded in the status pill. Uses 'connected' (not
       // 'online') because that's the CSS state that lights up green.
       if (_fbUser) cloudStatus('connected', displayName(_fbUser.email));
     } catch (e) {
       console.error('Cloud push failed:', e);
-      // Mark offline so the user sees the warning; they can keep editing locally.
+      // Leave the unsynced flag set — a future push attempt will clear it.
       cloudStatus('offline', 'Sync failed — will retry on next change');
       // Retry once after a short delay in case it was a transient iOS/network blip
       setTimeout(() => {
@@ -11492,9 +11510,35 @@ function transformKeys(value, fn) {
 // (one-time seed). Otherwise replace local with cloud.
 async function pullFromCloudOnce() {
   if (_initialPullDone) return;
+  // If local storage has unpushed edits from before a refresh, DON'T let the
+  // cloud pull clobber them. Push local up instead — the cloud will echo back
+  // and everyone else picks it up. This is the fix for the "edited, refreshed
+  // on slow internet, edit vanished" bug.
+  const localUnsynced = hasUnsyncedFlag();
   try {
     const snap = await window._fb.get(cloudRef());
-    if (snap.exists()) {
+    if (localUnsynced) {
+      // Force-push local up to cloud, ignoring whatever the cloud has.
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const blob = raw ? JSON.parse(raw) : null;
+      if (blob) {
+        try {
+          const sanitized = transformKeys(blob, fbEncodeKey);
+          _localWriteToken = Date.now() + ':' + Math.random();
+          sanitized._writeToken = _localWriteToken;
+          await window._fb.set(cloudRef(), sanitized);
+          setUnsyncedFlag(false);
+          cloudStatus("connected", displayName(_fbUser.email));
+          toast('Pushed unsynced local edits to cloud');
+        } catch (pushErr) {
+          console.error('Force-push of local unsynced data failed:', pushErr);
+          cloudStatus('offline', 'Sync failed — will retry');
+          toast('Could not push local edits — will retry on next change', 'error');
+        }
+      } else {
+        cloudStatus("connected", displayName(_fbUser.email));
+      }
+    } else if (snap.exists()) {
       const raw = snap.val();
       // Decode any sanitized keys before applying locally
       const blob = transformKeys(raw, fbDecodeKey);
