@@ -5764,6 +5764,126 @@ function reapplyOrderEditsToState() {
   state.orders = clone;
 }
 
+// After a Done click credits inventory, check if any CUSTOM orders (those
+// created via `add` edits) are fully covered by current inventory. If yes,
+// remove the underlying orderEdits and drop the state.orders rows so the
+// order doesn't zombie-reappear on the next CSV import.
+//
+// "Fully covered" means: for every part in every line item's SKU recipe,
+// state.inventory has enough units to cover the qty demanded across all the
+// customer's custom line items combined.
+//
+// Returns the number of customer-orders that got cleaned up (for a toast).
+function cleanupFulfilledCustomOrders() {
+  const addEdits = (state.orderEdits || []).filter(e => e && e.kind === 'add');
+  if (addEdits.length === 0) return 0;
+  // Group add edits by (customer, orderId) — that's a single customer's custom order
+  const grouper = (e) => `${e.customer || ''}||${e.orderId || ''}`;
+  const groups = new Map();
+  for (const e of addEdits) {
+    const k = grouper(e);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  let cleaned = 0;
+  // Take a working copy of inventory to simulate FIFO across shared parts
+  const remainingStock = { ...state.inventory };
+  // Also account for CSV-order demand first — those orders have priority over
+  // custom ones for inventory consumption (they came from ShipStation).
+  // Sort state.orders by date ascending, subtract each order's parts from
+  // remainingStock in FIFO order. Custom orders (those matching an add edit)
+  // are skipped here; we'll check them separately.
+  const editKeys = new Set(addEdits.map(e => `${e.customer || ''}||${e.orderId || ''}||${e.sku}`));
+  const csvOrders = state.orders
+    .filter(o => !editKeys.has(`${o.customer || ''}||${o.orderId || ''}||${o.sku}`))
+    .slice()
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  for (const o of csvOrders) {
+    const lib = state.library[o.sku];
+    if (!lib || !Array.isArray(lib.parts)) continue;
+    for (const p of lib.parts) {
+      const name = (typeof p === 'string') ? p : (p && p.name) || '';
+      if (!name) continue;
+      const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
+      const need = (Number(o.qty) || 0) * per;
+      const have = remainingStock[name] || 0;
+      remainingStock[name] = Math.max(0, have - need);
+    }
+  }
+  // Now check each custom order group against remaining stock.
+  for (const [key, edits] of groups.entries()) {
+    // Aggregate parts demand for this group
+    const demand = {};  // partName -> total qty needed
+    let allSkusHaveRecipe = true;
+    for (const e of edits) {
+      const lib = state.library[e.sku];
+      if (!lib || !Array.isArray(lib.parts) || lib.parts.length === 0) {
+        // No recipe — can't tell if fulfilled. Leave alone.
+        allSkusHaveRecipe = false;
+        break;
+      }
+      for (const p of lib.parts) {
+        const name = (typeof p === 'string') ? p : (p && p.name) || '';
+        if (!name) continue;
+        const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
+        demand[name] = (demand[name] || 0) + (Number(e.qty) || 1) * per;
+      }
+    }
+    if (!allSkusHaveRecipe) continue;
+    // Fully covered?
+    let covered = true;
+    for (const [name, need] of Object.entries(demand)) {
+      if ((remainingStock[name] || 0) < need) { covered = false; break; }
+    }
+    if (!covered) continue;
+    // FULFILLED! Consume the inventory (so subsequent groups see it as gone),
+    // remove the edits from state.orderEdits, and drop the rows from state.orders.
+    for (const [name, need] of Object.entries(demand)) {
+      remainingStock[name] = (remainingStock[name] || 0) - need;
+      const before = Number(state.inventory[name] || 0);
+      const after = Math.max(0, before - need);
+      if (after === 0) delete state.inventory[name];
+      else state.inventory[name] = after;
+      // Log this deduction so the user can trace it in inventory history
+      logInventoryChange(name, before, after, 'custom-order-fulfilled');
+    }
+    // Log each edit as a completed order so it shows up in History
+    const nowIso = new Date().toISOString();
+    for (const e of edits) {
+      const lib = state.library[e.sku];
+      const parts = (lib && lib.parts) ? lib.parts : [];
+      for (const p of parts) {
+        const name = (typeof p === 'string') ? p : (p && p.name) || '';
+        if (!name) continue;
+        const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
+        state.completedOrders.push({
+          at: nowIso,
+          partName: name,
+          qty: (Number(e.qty) || 1) * per,
+          sku: e.sku,
+          customer: e.customer || '',
+          originalOrderDate: e.date || nowIso,
+          kind: 'print',
+        });
+      }
+    }
+    // Remove the edits (mutates state.orderEdits in place)
+    const editIds = new Set(edits.map(e => e.id));
+    state.orderEdits = state.orderEdits.filter(e => !editIds.has(e.id));
+    // Drop the matching rows from state.orders
+    state.orders = state.orders.filter(o => {
+      const rowKey = `${o.customer || ''}||${o.orderId || ''}||${o.sku}`;
+      return !editKeys.has(rowKey) || !edits.some(e =>
+        (e.customer || '') === (o.customer || '') &&
+        (e.orderId || '') === (o.orderId || '') &&
+        e.sku === o.sku
+      );
+    });
+    cleaned++;
+  }
+  return cleaned;
+}
+
 // Log a manual inventory change to state.inventoryHistory. Use BEFORE
 // modifying state.inventory so we can capture the prior value accurately.
 // Call this only for MANUAL changes (walk-through count save, +/- buttons,
@@ -7747,6 +7867,12 @@ function printPlate(clicked, qtyOverride) {
     }
   }
 
+  // Custom-order auto-cleanup: after any Done that credits inventory, check
+  // if any custom orders (from state.orderEdits kind='add') are now fully
+  // covered by inventory. If so, remove their edits + rows so they don't
+  // reappear on the next CSV import.
+  const customCleanup = cleanupFulfilledCustomOrders();
+
   save();
   renderQueue();
   renderInventory();
@@ -7759,6 +7885,9 @@ function printPlate(clicked, qtyOverride) {
     toast(`+${qty} ${part} · new plate yield saved (${yieldUpdatedCount} SKU${yieldUpdatedCount === 1 ? '' : 's'})`);
   } else {
     toast(`+${qty} ${part} → inventory (stock: ${Number(state.inventory[part] || 0)})`);
+  }
+  if (customCleanup > 0) {
+    toast(`${customCleanup} custom order${customCleanup === 1 ? '' : 's'} fulfilled — edits cleaned up`);
   }
 }
 
@@ -8712,6 +8841,7 @@ function renderInventoryHistory() {
     'inventory-edit': '+/- edit',
     'delete': 'Deleted',
     'sku-adjust': 'SKU adjust',
+    'custom-order-fulfilled': 'Custom order shipped',
     'manual': 'Manual',
   };
   const cap = 100;
