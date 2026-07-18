@@ -2145,6 +2145,168 @@ body {
   color: var(--ink-dim);
 }
 
+/* ============================================================
+   ADJUST INVENTORY BY SKU (Inventory page)
+   ============================================================ */
+.sku-adjust-block {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+.sku-adjust-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.sku-adjust-title-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.sku-adjust-body {
+  padding: 14px 16px 16px;
+}
+.sku-adjust-body.hidden { display: none; }
+.sku-adjust-hint {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.sku-adjust-search {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--ink);
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-family: inherit;
+  margin-bottom: 10px;
+}
+.sku-adjust-search:focus { outline: none; border-color: var(--amber); }
+.sku-adjust-results {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin-bottom: 12px;
+  display: none;
+}
+.sku-adjust-results.show { display: block; }
+.sku-adjust-result {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  font-size: 12px;
+}
+.sku-adjust-result:hover { background: var(--bg); }
+.sku-adjust-result:last-child { border-bottom: none; }
+.sku-adjust-result-sku {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--amber);
+  font-weight: 700;
+}
+.sku-adjust-result-name {
+  color: var(--ink-dim);
+  margin-top: 2px;
+}
+.sku-adjust-selected {
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  border-radius: 4px;
+  padding: 14px 16px;
+}
+.sku-adjust-selected.hidden { display: none; }
+.sku-adjust-selected-head {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.sku-adjust-selected-sku {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--amber);
+}
+.sku-adjust-selected-name {
+  font-size: 13px;
+  color: var(--ink-dim);
+  margin-top: 2px;
+}
+.sku-adjust-parts-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.sku-adjust-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.sku-adjust-part-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 3px;
+  background: var(--panel);
+  font-size: 12px;
+}
+.sku-adjust-part-name { color: var(--ink); word-break: break-word; }
+.sku-adjust-part-per {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+}
+.sku-adjust-part-stock {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  text-align: right;
+  min-width: 60px;
+}
+.sku-adjust-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sku-adjust-qty-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.sku-adjust-qty {
+  width: 80px;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--ink);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+}
+.sku-adjust-qty:focus { outline: none; border-color: var(--amber); }
+
 /* Gridiron lockdown hides everything except mobile inventory. The Paint
    nav item is for Collin only — hide for everyone else. */
 body:not(.is-collin) .nav-collin-only { display: none !important; }
@@ -2557,6 +2719,29 @@ body:not(.mode-mobile) .nav-paint-mobile-only { display: none !important; }
   margin-bottom: 10px;
   font-family: inherit;
 }
+
+/* Custom order modal form fields */
+.cust-order-label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.cust-order-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--ink);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.cust-order-input:focus { outline: none; border-color: var(--amber); }
 .edit-modal-results {
   max-height: 280px;
   overflow-y: auto;
@@ -4922,6 +5107,36 @@ body.mode-mobile .mobile-only { display: block; }
         </div>
       </div>
 
+      <div class="sku-adjust-block" id="sku-adjust-block">
+        <div class="sku-adjust-header">
+          <div class="sku-adjust-title">
+            <span class="sku-adjust-title-text">Adjust inventory by SKU</span>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="sku-adjust-toggle">Show</button>
+        </div>
+        <div class="sku-adjust-body hidden" id="sku-adjust-body">
+          <div class="sku-adjust-hint">
+            Add or subtract a whole SKU's worth of parts at once. Every part in the SKU's recipe changes by the qty you enter (× the part's per-unit qty).
+          </div>
+          <input type="text" class="sku-adjust-search" id="sku-adjust-search" placeholder="Search SKU or product name…" autocomplete="off">
+          <div class="sku-adjust-results" id="sku-adjust-results"></div>
+          <div class="sku-adjust-selected hidden" id="sku-adjust-selected">
+            <div class="sku-adjust-selected-head">
+              <div class="sku-adjust-selected-sku" id="sku-adjust-selected-sku"></div>
+              <div class="sku-adjust-selected-name" id="sku-adjust-selected-name"></div>
+            </div>
+            <div class="sku-adjust-parts-title">Parts in this SKU:</div>
+            <div class="sku-adjust-parts" id="sku-adjust-parts"></div>
+            <div class="sku-adjust-actions">
+              <label class="sku-adjust-qty-label">Qty:</label>
+              <input type="number" min="1" max="999" value="1" id="sku-adjust-qty" class="sku-adjust-qty">
+              <button class="btn btn-primary" id="sku-adjust-add">+ Add stock</button>
+              <button class="btn btn-danger" id="sku-adjust-sub">– Subtract stock</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="stats" style="grid-template-columns: repeat(4, 1fr);">
         <div class="stat">
           <div class="stat-label">Counted parts</div>
@@ -5067,6 +5282,11 @@ body.mode-mobile .mobile-only { display: block; }
           <div>
             <div class="page-sub">Change a customer's SKU, qty, or add/remove items. Edits stick across CSV imports — no need to update ShipStation.</div>
           </div>
+        </div>
+
+        <div style="display:flex;gap:12px;align-items:center;margin-top:14px;margin-bottom:14px;flex-wrap:wrap;">
+          <button class="btn btn-primary" id="edit-new-order-btn">+ Add custom order</button>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.06em;">For orders that aren't in ShipStation</span>
         </div>
 
         <!-- Search box -->
@@ -8491,6 +8711,7 @@ function renderInventoryHistory() {
     'manual-stock': 'Stock update',
     'inventory-edit': '+/- edit',
     'delete': 'Deleted',
+    'sku-adjust': 'SKU adjust',
     'manual': 'Manual',
   };
   const cap = 100;
@@ -9051,6 +9272,12 @@ function renderEditOrders() {
       renderEditOrdersResults();
     });
   }
+  // Wire the "+ Add custom order" button once
+  const newBtn = document.getElementById('edit-new-order-btn');
+  if (newBtn && !newBtn._wired) {
+    newBtn._wired = true;
+    newBtn.addEventListener('click', openCustomOrderModal);
+  }
 }
 
 function renderEditOrdersResults() {
@@ -9428,6 +9655,202 @@ function doAddLine(ctx, sku, item, qty) {
   renderQueue();
   renderSidebarCounts();
   toast(`Added ${sku} × ${qty}`);
+}
+
+// ============================================================
+// CUSTOM ORDER — for orders not in ShipStation
+// ============================================================
+// Opens a modal to build a new order line-by-line. Each line becomes a
+// persistent `add` orderEdit so re-imports don't lose it. Order-level fields
+// (customer, orderId, date) are captured on every line so applyOrderEdits
+// can insert them correctly on each future import.
+function openCustomOrderModal() {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center;padding:24px;';
+  const todayIso = new Date().toISOString().slice(0, 10);
+  wrap.innerHTML = `
+    <div style="background:var(--panel);border:1px solid var(--line-bright);border-radius:6px;padding:24px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:0.04em;color:var(--ink);margin-bottom:6px;">Add custom order</div>
+      <div style="font-size:12px;color:var(--ink-dim);margin-bottom:18px;">
+        For orders that aren't in ShipStation. Persists across CSV imports as a set of edits.
+      </div>
+
+      <!-- Order-level fields -->
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div>
+          <label class="cust-order-label">Customer name *</label>
+          <input type="text" data-cust-name class="cust-order-input" placeholder="Jane Doe" required>
+        </div>
+        <div>
+          <label class="cust-order-label">Order # (optional)</label>
+          <input type="text" data-cust-orderid class="cust-order-input" placeholder="#12345">
+        </div>
+        <div>
+          <label class="cust-order-label">Date</label>
+          <input type="date" data-cust-date class="cust-order-input" value="${todayIso}">
+        </div>
+      </div>
+
+      <!-- Line items list -->
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">Line items</div>
+      <div data-lines style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
+      <button class="btn btn-ghost btn-sm" data-add-line>+ Add line item</button>
+
+      <!-- Actions -->
+      <div style="display:flex;justify-content:space-between;margin-top:20px;padding-top:16px;border-top:1px solid var(--line);">
+        <button class="btn btn-ghost" data-cancel>Cancel</button>
+        <button class="btn btn-primary" data-save disabled>Save order</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  const custNameInput = wrap.querySelector('[data-cust-name]');
+  const orderIdInput = wrap.querySelector('[data-cust-orderid]');
+  const dateInput = wrap.querySelector('[data-cust-date]');
+  const linesEl = wrap.querySelector('[data-lines]');
+  const addLineBtn = wrap.querySelector('[data-add-line]');
+  const saveBtn = wrap.querySelector('[data-save]');
+  const cancelBtn = wrap.querySelector('[data-cancel]');
+
+  // In-memory list of picked line items: [{ sku, item, qty }]
+  const lines = [];
+
+  const renderLines = () => {
+    if (lines.length === 0) {
+      linesEl.innerHTML = `<div style="color:var(--ink-faint);font-size:12px;padding:10px;text-align:center;border:1px dashed var(--line);border-radius:4px;">No line items yet. Click "Add line item" to pick a SKU.</div>`;
+    } else {
+      linesEl.innerHTML = lines.map((l, i) => `
+        <div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:10px 12px;">
+          <div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--amber);font-weight:700;">${escapeHtml(l.sku)}</div>
+            <div style="font-size:12px;color:var(--ink-dim);margin-top:2px;">${escapeHtml(l.item || '(no name)')}</div>
+          </div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--ink);font-weight:700;">× ${l.qty}</div>
+          <button class="btn btn-sm btn-danger" data-remove-line="${i}">×</button>
+        </div>`).join('');
+      linesEl.querySelectorAll('[data-remove-line]').forEach(b => {
+        b.addEventListener('click', () => {
+          lines.splice(parseInt(b.dataset.removeLine, 10), 1);
+          renderLines();
+          updateSaveState();
+        });
+      });
+    }
+  };
+
+  const updateSaveState = () => {
+    const cust = custNameInput.value.trim();
+    saveBtn.disabled = !(cust && lines.length > 0);
+  };
+
+  custNameInput.addEventListener('input', updateSaveState);
+
+  addLineBtn.addEventListener('click', () => {
+    openSkuPickerForCustomOrder((chosen) => {
+      lines.push(chosen);
+      renderLines();
+      updateSaveState();
+    });
+  });
+
+  saveBtn.addEventListener('click', () => {
+    const cust = custNameInput.value.trim();
+    if (!cust || lines.length === 0) return;
+    const oid = orderIdInput.value.trim();
+    // Build ISO date at noon local time so timezone slippage doesn't push it a day
+    const dateStr = dateInput.value || todayIso;
+    const dateIso = new Date(dateStr + 'T12:00:00').toISOString();
+    // Create one `add` orderEdit per line item
+    for (const l of lines) {
+      recordOrderEdit({
+        kind: 'add',
+        orderId: oid,
+        customer: cust,
+        date: dateIso,
+        sku: l.sku,
+        item: l.item || '',
+        qty: l.qty,
+      });
+    }
+    reapplyOrderEditsToState();
+    renderEditOrders();
+    renderQueue();
+    renderSidebarCounts();
+    toast(`Added order for ${cust} · ${lines.length} line${lines.length === 1 ? '' : 's'}`);
+    document.body.removeChild(wrap);
+  });
+
+  cancelBtn.addEventListener('click', () => document.body.removeChild(wrap));
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) document.body.removeChild(wrap); });
+
+  renderLines();
+  updateSaveState();
+  setTimeout(() => custNameInput.focus(), 50);
+}
+
+// A slimmer SKU picker used inside the custom-order modal. Returns via
+// callback so it doesn't clobber the parent modal.
+function openSkuPickerForCustomOrder(onPick) {
+  const skus = Object.keys(state.library).map(sku => ({
+    sku,
+    name: (state.library[sku] && state.library[sku].name) || ''
+  }));
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2100;display:flex;align-items:center;justify-content:center;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:var(--panel);border:1px solid var(--line-bright);border-radius:6px;padding:24px;max-width:520px;width:100%;max-height:80vh;overflow-y:auto;">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:0.04em;color:var(--ink);margin-bottom:10px;">Pick a SKU</div>
+      <input type="text" class="edit-modal-search" placeholder="Search library by SKU or name…" autofocus>
+      <div class="edit-modal-results"></div>
+      <div style="margin-top:14px;display:flex;align-items:center;gap:10px;">
+        <label style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim);letter-spacing:0.06em;text-transform:uppercase;">Qty</label>
+        <input type="number" min="1" max="999" value="1" data-qty style="width:80px;background:var(--bg);border:1px solid var(--line-bright);color:var(--ink);padding:8px 10px;border-radius:4px;font-family:'JetBrains Mono',monospace;">
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:18px;">
+        <button class="btn btn-ghost" data-cancel>Cancel</button>
+        <button class="btn btn-primary" data-add disabled>Add to order</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const search = wrap.querySelector('.edit-modal-search');
+  const results = wrap.querySelector('.edit-modal-results');
+  const qtyInput = wrap.querySelector('[data-qty]');
+  const addBtn = wrap.querySelector('[data-add]');
+  let chosen = null;
+  const renderList = (q) => {
+    const term = q.trim().toLowerCase();
+    const filtered = term
+      ? skus.filter(s => s.sku.toLowerCase().includes(term) || s.name.toLowerCase().includes(term))
+      : skus;
+    results.innerHTML = filtered.slice(0, 50).map(s => `
+      <div class="edit-modal-result" data-sku="${escapeAttr(s.sku)}">
+        <div class="edit-modal-result-sku">${escapeHtml(s.sku)}</div>
+        <div class="edit-modal-result-name">${escapeHtml(s.name || '(no name)')}</div>
+      </div>`).join('') || '<div style="padding:14px;text-align:center;color:var(--ink-faint);font-size:12px;">No matches</div>';
+    results.querySelectorAll('[data-sku]').forEach(el => {
+      el.addEventListener('click', () => {
+        chosen = {
+          sku: el.dataset.sku,
+          item: (state.library[el.dataset.sku] && state.library[el.dataset.sku].name) || '',
+        };
+        results.querySelectorAll('.edit-modal-result').forEach(r => r.style.background = '');
+        el.style.background = 'rgba(240,168,48,0.15)';
+        addBtn.disabled = false;
+      });
+    });
+  };
+  search.addEventListener('input', () => renderList(search.value));
+  addBtn.addEventListener('click', () => {
+    if (!chosen) return;
+    const qty = Math.max(1, parseInt(qtyInput.value, 10) || 1);
+    onPick({ sku: chosen.sku, item: chosen.item, qty });
+    document.body.removeChild(wrap);
+  });
+  wrap.querySelector('[data-cancel]').addEventListener('click', () => document.body.removeChild(wrap));
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) document.body.removeChild(wrap); });
+  renderList('');
+  setTimeout(() => search.focus(), 50);
 }
 
 function renderHistory() {
@@ -10154,6 +10577,157 @@ document.getElementById('btn-resort-inventory').addEventListener('click', () => 
     // When opening, re-render to make sure the latest entries are visible
     if (isHidden) renderInventoryHistory();
   });
+})();
+
+// ============================================================
+// ADJUST INVENTORY BY SKU
+// ============================================================
+// Pick a SKU, enter a qty, and every part in the SKU's recipe changes by
+// qty × part.qty. Logs each part change to inventoryHistory with a
+// 'sku-adjust' reason so the audit trail explains where the change came from.
+(function wireSkuAdjust() {
+  const toggleBtn = document.getElementById('sku-adjust-toggle');
+  const body = document.getElementById('sku-adjust-body');
+  const search = document.getElementById('sku-adjust-search');
+  const results = document.getElementById('sku-adjust-results');
+  const selectedBox = document.getElementById('sku-adjust-selected');
+  const selSkuEl = document.getElementById('sku-adjust-selected-sku');
+  const selNameEl = document.getElementById('sku-adjust-selected-name');
+  const partsList = document.getElementById('sku-adjust-parts');
+  const qtyInput = document.getElementById('sku-adjust-qty');
+  const addBtn = document.getElementById('sku-adjust-add');
+  const subBtn = document.getElementById('sku-adjust-sub');
+  if (!toggleBtn || !body || !search) return;
+
+  // Collapsible header behavior
+  toggleBtn.addEventListener('click', () => {
+    const isHidden = body.classList.contains('hidden');
+    body.classList.toggle('hidden', !isHidden);
+    toggleBtn.textContent = isHidden ? 'Hide' : 'Show';
+    if (isHidden) {
+      // Reset the search state on open
+      search.value = '';
+      results.classList.remove('show');
+      selectedBox.classList.add('hidden');
+      qtyInput.value = '1';
+    }
+  });
+
+  let selectedSku = null;
+
+  const renderPartsList = () => {
+    if (!selectedSku) return;
+    const lib = state.library[selectedSku];
+    if (!lib || !Array.isArray(lib.parts) || lib.parts.length === 0) {
+      partsList.innerHTML = `<div style="padding:8px;color:var(--ink-faint);font-size:12px;">No parts defined for this SKU. Add parts in Parts Library first.</div>`;
+      addBtn.disabled = true;
+      subBtn.disabled = true;
+      return;
+    }
+    addBtn.disabled = false;
+    subBtn.disabled = false;
+    partsList.innerHTML = lib.parts.map(p => {
+      const name = (typeof p === 'string') ? p : (p && p.name) || '';
+      const per  = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
+      const stock = Number(state.inventory[name] || 0);
+      return `
+        <div class="sku-adjust-part-row">
+          <div class="sku-adjust-part-name">${escapeHtml(name)}</div>
+          <div class="sku-adjust-part-per">×${per} per unit</div>
+          <div class="sku-adjust-part-stock">${stock} in stock</div>
+        </div>`;
+    }).join('');
+  };
+
+  const selectSku = (sku) => {
+    selectedSku = sku;
+    const lib = state.library[sku];
+    const name = (lib && lib.name) || sku;
+    selSkuEl.textContent = sku;
+    selNameEl.textContent = name;
+    selectedBox.classList.remove('hidden');
+    results.classList.remove('show');
+    search.value = `${sku} — ${name}`;
+    renderPartsList();
+  };
+
+  const renderResults = (q) => {
+    const term = q.trim().toLowerCase();
+    if (!term) {
+      results.classList.remove('show');
+      return;
+    }
+    const matches = Object.keys(state.library)
+      .map(sku => ({ sku, name: (state.library[sku] && state.library[sku].name) || '' }))
+      .filter(s => s.sku.toLowerCase().includes(term) || s.name.toLowerCase().includes(term))
+      .slice(0, 30);
+    if (matches.length === 0) {
+      results.innerHTML = `<div style="padding:14px;text-align:center;color:var(--ink-faint);font-size:12px;">No matches</div>`;
+      results.classList.add('show');
+      return;
+    }
+    results.innerHTML = matches.map(s => `
+      <div class="sku-adjust-result" data-sku="${escapeAttr(s.sku)}">
+        <div class="sku-adjust-result-sku">${escapeHtml(s.sku)}</div>
+        <div class="sku-adjust-result-name">${escapeHtml(s.name || '(no name)')}</div>
+      </div>`).join('');
+    results.querySelectorAll('[data-sku]').forEach(el => {
+      el.addEventListener('click', () => selectSku(el.dataset.sku));
+    });
+    results.classList.add('show');
+  };
+
+  search.addEventListener('input', () => {
+    // If user retypes after selecting, treat as new search
+    if (selectedSku && !search.value.startsWith(selectedSku)) {
+      selectedSku = null;
+      selectedBox.classList.add('hidden');
+    }
+    renderResults(search.value);
+  });
+
+  search.addEventListener('focus', () => {
+    if (search.value.trim() && !selectedSku) renderResults(search.value);
+  });
+
+  const applyAdjustment = (direction) => {
+    if (!selectedSku) return;
+    const lib = state.library[selectedSku];
+    if (!lib || !Array.isArray(lib.parts) || lib.parts.length === 0) return;
+    const qty = Math.max(1, parseInt(qtyInput.value, 10) || 1);
+    const sign = direction === 'add' ? 1 : -1;
+    const changes = [];
+    // Aggregate part quantities (in case the same part appears twice in the SKU)
+    const perPart = {};
+    for (const p of lib.parts) {
+      const name = (typeof p === 'string') ? p : (p && p.name) || '';
+      if (!name) continue;
+      const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
+      perPart[name] = (perPart[name] || 0) + per;
+    }
+    for (const [name, per] of Object.entries(perPart)) {
+      const delta = sign * qty * per;
+      const before = Number(state.inventory[name] || 0);
+      const after = Math.max(0, before + delta);
+      if (after === before) continue;
+      if (after === 0) delete state.inventory[name];
+      else state.inventory[name] = after;
+      state.countedParts[name] = true;
+      logInventoryChange(name, before, after, 'sku-adjust');
+      changes.push({ name, before, after, delta: after - before });
+    }
+    save();
+    renderQueue();
+    renderInventory();
+    renderSidebarCounts();
+    const verb = direction === 'add' ? 'Added' : 'Subtracted';
+    toast(`${verb} ${qty} × ${selectedSku} · ${changes.length} parts updated`);
+    // Refresh the parts list panel with new stock counts
+    renderPartsList();
+  };
+
+  addBtn.addEventListener('click', () => applyAdjustment('add'));
+  subBtn.addEventListener('click', () => applyAdjustment('sub'));
 })();
 // ============================================================
 // WALK THROUGH MODE — full-screen inventory entry for phones
