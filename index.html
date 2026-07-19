@@ -5985,6 +5985,11 @@ function save() {
   // The library may have changed; drop the cached parts catalog so the next
   // autocomplete read is fresh.
   try { invalidatePartsCatalog(); } catch {}
+  // Same for the buildQueue cache — any state mutation invalidates it.
+  try { invalidateBuildQueueCache(); } catch {}
+  // Also invalidate the sidebar count cache so it recomputes next render.
+  _sidebarQueueCounts.resin = null;
+  _sidebarQueueCounts.fdm = null;
   if (typeof MS !== 'undefined' && MS.invalidateCache) { try { MS.invalidateCache(); } catch {} }
   // Push to cloud if we're connected and signed in. This is the critical path
   // for cross-device sync and must ALWAYS run, even if local storage failed.
@@ -6503,7 +6508,25 @@ document.addEventListener('click', (e) => {
 // ============================================================
 // DERIVED DATA
 // ============================================================
+// buildQueue is EXPENSIVE at scale (13k+ demand rows). Since the same inputs
+// often produce identical output within a single render cycle (renderQueue
+// calls it for resin AND fdm; renderSidebarCounts also calls it twice), we
+// cache the last result and reuse when the underlying data hasn't changed.
+// The cache is invalidated whenever save() runs (any state mutation).
+let _buildQueueCache = { key: null, byType: {} };
+function invalidateBuildQueueCache() { _buildQueueCache = { key: null, byType: {} }; }
+
 function buildQueue(typeFilter) {
+  // Cheap cache key: cardinalities. If the number of orders, parts, or
+  // inventory entries changes, or if any of the maps mutate, save() will
+  // have already called invalidateBuildQueueCache(). This key just protects
+  // against re-runs within a single tick.
+  const cacheKey = `${state.orders.length}|${Object.keys(state.library).length}|${Object.keys(state.inventory).length}|${(state.partsNeeded || []).length}|${Object.keys(state.paintParts || {}).length}`;
+  if (_buildQueueCache.key !== cacheKey) {
+    _buildQueueCache = { key: cacheKey, byType: {} };
+  }
+  const cacheSlot = typeFilter || '__all__';
+  if (_buildQueueCache.byType[cacheSlot]) return _buildQueueCache.byType[cacheSlot];
   // Expand orders into one row per (order × part). Each row needs `qty` units.
   // We always run FIFO inventory consumption across ALL queue rows (regardless
   // of typeFilter) since inventory is shared between resin & FDM. We then
@@ -6614,7 +6637,9 @@ function buildQueue(typeFilter) {
   needRows.sort((a, b) => new Date(a.date) - new Date(b.date));
   const finalVisible = [...needRows, ...visible];
 
-  return { visible: finalVisible, allRows: allRowsType };
+  const result = { visible: finalVisible, allRows: allRowsType };
+  _buildQueueCache.byType[cacheSlot] = result;
+  return result;
 }
 
 // Total demand per part across all open orders (ignores inventory)
@@ -6748,9 +6773,23 @@ function renderQueue(type) {
   }
   const section = document.getElementById(`view-queue-${type}`);
   if (!section) return;
+  // Perf: skip the DOM work for the queue that isn't currently visible. The
+  // sidebar count for the hidden queue still updates via renderSidebarCounts
+  // (which reads from the cached _sidebarQueueCounts). When the user
+  // navigates to the hidden queue via switchView, renderQueue is called
+  // explicitly and this early-return doesn't apply.
+  if (section.classList.contains('hidden')) {
+    // Still populate the count cache so sidebar is accurate.
+    const built = buildQueue(type);
+    _sidebarQueueCounts[type] = built.visible.length;
+    return;
+  }
 
   const built = buildQueue(type);
   const all = built.visible;
+  // Populate the sidebar count cache so renderSidebarCounts doesn't have to
+  // re-run buildQueue for this type.
+  _sidebarQueueCounts[type] = all.length;
   const today = new Date(); today.setHours(0,0,0,0);
 
   // Search + age filter (scoped to this queue)
@@ -7934,6 +7973,9 @@ function confirmPrintPlate(clicked, onConfirm) {
 }
 
 function renderLibrary() {
+  // Perf: skip when Library view is hidden. switchView calls this on nav-in.
+  const view = document.getElementById('view-library');
+  if (view && view.classList.contains('hidden')) return;
   const all = libraryRows();
   const q = state.librarySearch.toLowerCase().trim();
   const sf = state.statusFilter;
@@ -8488,6 +8530,8 @@ function addSkuPrompt() {
 }
 
 function renderOrders() {
+  const view = document.getElementById('view-orders');
+  if (view && view.classList.contains('hidden')) return;
   const q = state.ordersSearch.toLowerCase().trim();
   const filtered = state.orders.filter(o => {
     if (!q) return true;
@@ -8534,6 +8578,10 @@ function renderOrders() {
 }
 
 function renderInventory() {
+  // Perf: skip when the inventory view isn't visible. switchView will call
+  // renderInventory explicitly when the user navigates in.
+  const view = document.getElementById('view-inventory');
+  if (view && view.classList.contains('hidden')) return;
   // Build the union of: parts ever defined in any SKU + parts already in inventory + parts already counted
   const partsSet = new Set();
   for (const sku of Object.keys(state.library)) {
@@ -8828,9 +8876,16 @@ function renderInventoryHistory() {
   const container = document.getElementById('inv-history-container');
   if (!container) return;
   const entries = (state.inventoryHistory || []).slice().reverse(); // newest first
-  // Update the count badge in the header
+  // Update the count badge in the header (cheap, always do this)
   const countEl = document.getElementById('inv-history-count');
   if (countEl) countEl.textContent = entries.length.toLocaleString();
+  // Perf: skip the heavy row rendering if the history is collapsed OR the
+  // inventory view itself is hidden. Count badge above is already updated so
+  // the user sees the correct count without paying for row rendering.
+  const body = document.getElementById('inv-history-body');
+  if (body && body.classList.contains('hidden')) return;
+  const view = document.getElementById('view-inventory');
+  if (view && view.classList.contains('hidden')) return;
   if (entries.length === 0) {
     container.innerHTML = `<div class="empty-sub" style="padding:30px;text-align:center;">No manual inventory changes yet. Edits from walk-through, stock update, +/-, and delete will appear here.</div>`;
     return;
@@ -9984,6 +10039,8 @@ function openSkuPickerForCustomOrder(onPick) {
 }
 
 function renderHistory() {
+  const view = document.getElementById('view-history');
+  if (view && view.classList.contains('hidden')) return;
   const tbl = document.getElementById('completed-table');
   if (!tbl) return;
   const list = (state.completedOrders || []).slice().sort((a, b) =>
@@ -10026,9 +10083,23 @@ function renderHistory() {
 }
 
 
+// Cached queue counts, set by renderQueue after buildQueue runs. Lets
+// renderSidebarCounts avoid re-running buildQueue (which is expensive at
+// scale with 13k+ demand rows).
+const _sidebarQueueCounts = { resin: null, fdm: null };
+
 function renderSidebarCounts() {
-  const resinCount = buildQueue('resin').visible.length;
-  const fdmCount   = buildQueue('fdm').visible.length;
+  // Prefer cached counts populated by renderQueue. If we don't have them yet
+  // (e.g. app just booted), fall back to buildQueue — but only once, and
+  // stash the result so subsequent calls reuse it.
+  let resinCount = _sidebarQueueCounts.resin;
+  let fdmCount = _sidebarQueueCounts.fdm;
+  if (resinCount === null || fdmCount === null) {
+    resinCount = buildQueue('resin').visible.length;
+    fdmCount = buildQueue('fdm').visible.length;
+    _sidebarQueueCounts.resin = resinCount;
+    _sidebarQueueCounts.fdm = fdmCount;
+  }
   document.getElementById('nav-queue-resin-count').textContent = resinCount.toLocaleString();
   document.getElementById('nav-queue-fdm-count').textContent   = fdmCount.toLocaleString();
   document.getElementById('nav-library-count').textContent = Object.keys(state.library).length;
