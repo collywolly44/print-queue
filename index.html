@@ -6795,13 +6795,14 @@ function renderQueue(type) {
   // Search + age filter (scoped to this queue)
   const q = (state.queueSearch[type] || '').toLowerCase().trim();
   const af = state.ageFilter[type] || 'all';
-  const filtered = all.filter(r => {
+  const todayMsFilter = today.getTime();
+  let filtered = all.filter(r => {
     if (q) {
       const blob = `${r.customer} ${r.sku} ${r.part} ${r.item}`.toLowerCase();
       if (!blob.includes(q)) return false;
     }
     if (af !== 'all') {
-      const age = daysBetween(new Date(r.date), today);
+      const age = (todayMsFilter - new Date(r.date).getTime()) / 86400000;
       if (af === '7' && age < 7) return false;
       if (af === '14' && age < 14) return false;
     }
@@ -6812,7 +6813,11 @@ function renderQueue(type) {
   section.querySelector('[data-stat="parts"]').textContent = all.length.toLocaleString();
   const distinctOrders = new Set(all.map(r => r.orderId)).size;
   section.querySelector('[data-stat="orders"]').textContent = distinctOrders;
-  const aged = all.filter(r => daysBetween(new Date(r.date), today) >= 7).length;
+  const todayMs = today.getTime();
+  const aged = all.filter(r => {
+    const d = new Date(r.date).getTime();
+    return (todayMs - d) / 86400000 >= 7;
+  }).length;
   section.querySelector('[data-stat="aged"]').textContent = aged;
   // Undef SKUs: count SKUs in orders whose library has no parts of this type
   const undef = new Set();
@@ -6862,20 +6867,89 @@ function renderQueue(type) {
   html += `
     <div class="queue-row queue-header">
       <div class="qcell">#</div>
-      <div class="qcell">Order Date</div>
+      <div class="qcell">Oldest Order</div>
       <div class="qcell">Age</div>
-      <div class="qcell">Customer</div>
+      <div class="qcell">Orders</div>
       <div class="qcell">SKU</div>
       <div class="qcell">Part to Print</div>
       <div class="qcell">Qty</div>
       <div class="qcell">Action</div>
     </div>`;
 
-  // FDM ordering:
+  // ============================================================
+  // GROUPING: collapse multiple orders needing the same part into one row.
+  // Mirrors the resin queue's grouping. Each grouped row shows:
+  //   - Oldest order date (for age/priority)
+  //   - Total remaining qty across all customer orders
+  //   - Order + customer count
+  //   - One Done button that credits inventory for the whole part
+  //
+  // Part Needed rows (_isNeed) stay un-grouped — each Part Needed is a
+  // distinct alert with its own identity.
+  // ============================================================
+  const fdmNeeds = filtered.filter(r => r._isNeed);
+  const fdmOrders = filtered.filter(r => !r._isNeed);
+  const fdmByPart = new Map();
+  for (const r of fdmOrders) {
+    const key = r.part;
+    if (!fdmByPart.has(key)) {
+      fdmByPart.set(key, {
+        rows: [],
+        totalRemaining: 0,
+        totalOriginal: 0,
+        oldestDate: r.date,
+        oldestRow: r,
+        customers: new Set(),
+        skus: new Set(),
+      });
+    }
+    const g = fdmByPart.get(key);
+    g.rows.push(r);
+    g.totalRemaining += r._remaining;
+    g.totalOriginal += r.originalQty;
+    if (new Date(r.date).getTime() < new Date(g.oldestDate).getTime()) {
+      g.oldestDate = r.date;
+      g.oldestRow = r;
+    }
+    if (r.customer) g.customers.add(r.customer);
+    if (r.sku) g.skus.add(r.sku);
+  }
+
+  // Build grouped pseudo-rows with the same shape as raw rows so the sort/
+  // render/Done logic below works uniformly. Groups get a synthetic key
+  // (`__group__partName`).
+  const fdmGrouped = [];
+  for (const [partName, g] of fdmByPart.entries()) {
+    const oldest = g.oldestRow;
+    const groupHasVehicle = g.rows.some(r => r._orderIsVehicle);
+    fdmGrouped.push({
+      key: `__group__${partName}`,
+      orderId: oldest.orderId,
+      part: partName,
+      sku: oldest.sku,
+      customer: oldest.customer,
+      item: oldest.item,
+      date: g.oldestDate,
+      qty: g.totalOriginal,
+      originalQty: g.totalOriginal,
+      _remaining: g.totalRemaining,
+      _covered: Math.max(0, g.totalOriginal - g.totalRemaining),
+      _isGroup: true,
+      _customerCount: g.customers.size,
+      _orderCount: g.rows.length,
+      _skuCount: g.skus.size,
+      _underlyingRows: g.rows,
+      _orderIsVehicle: groupHasVehicle,
+    });
+  }
+  // Combine: needs first (they'll sort to top via tierFor), then groups
+  filtered = [...fdmNeeds, ...fdmGrouped];
+
+  // FDM ordering (unchanged):
   //   1. Part Needed cards
-  //   2. Overdue STANDARD orders (past the standard threshold)
-  //   3. Overdue VEHICLE orders (past the vehicle threshold)
-  //   4. Everything else, oldest order first
+  //   2. Overdue STANDARD groups (past the standard threshold)
+  //   3. Overdue VEHICLE groups (past the vehicle threshold)
+  //   4. Everything else, oldest first
   //
   // Within each priority tier, oldest order date wins.
   // Use user-configurable thresholds from state (default 18 standard, 28 vehicle)
@@ -6887,16 +6961,29 @@ function renderQueue(type) {
     if (r._orderIsVehicle && ageDays >= vehThr) return 2;
     return 3;
   };
+  // Pre-compute sort keys to avoid parsing dates and re-computing ages
+  // inside every comparator call. At 13k rows this saves ~50k Date allocations.
+  for (const r of filtered) {
+    r._sortTs = new Date(r.date).getTime();
+    r._sortAge = daysBetween(new Date(r.date), today);
+    r._sortTier = tierFor(r, r._sortAge);
+  }
   filtered.sort((a, b) => {
-    const aAge = daysBetween(new Date(a.date), today);
-    const bAge = daysBetween(new Date(b.date), today);
-    const aT = tierFor(a, aAge);
-    const bT = tierFor(b, bAge);
-    if (aT !== bT) return aT - bT;
-    return new Date(a.date) - new Date(b.date);
+    if (a._sortTier !== b._sortTier) return a._sortTier - b._sortTier;
+    return a._sortTs - b._sortTs;
   });
 
-  filtered.forEach((r, i) => {
+  // Perf: cap the DOM at 500 rows. At scale (13k+), rendering everything
+  // makes the page unresponsive. We render the 500 highest-priority rows
+  // and note the overflow at the bottom. Users clear the top of the queue
+  // first, so items past #500 become visible naturally as work progresses.
+  const RENDER_CAP = 500;
+  const totalFiltered = filtered.length;
+  const rowsToRender = filtered.length > RENDER_CAP
+    ? filtered.slice(0, RENDER_CAP)
+    : filtered;
+
+  rowsToRender.forEach((r, i) => {
     const age = daysBetween(new Date(r.date), today);
     const agedClass = age >= 14 ? 'aged-2' : age >= 7 ? 'aged-1' : '';
     const rowClass = age >= 14 ? 'row-aged-2' : age >= 7 ? 'row-aged-1' : '';
@@ -6907,29 +6994,56 @@ function renderQueue(type) {
       ? `<span class="qty-badge ${showQty>1?'multi':''}" title="Need ${r.originalQty}, ${r._covered} from stock">×${showQty}<sup style="font-size:9px;color:var(--green);margin-left:3px;">−${r._covered}</sup></span>`
       : `<span class="qty-badge ${showQty>1?'multi':''}">×${showQty}</span>`;
     const needRowClass = r._isNeed ? ' queue-row-need' : '';
-    const customerCell = r._isNeed
-      ? `<div class="qcell qcell-customer"><span class="queue-need-tag">Part Needed</span></div>`
-      : `<div class="qcell qcell-customer">${escapeHtml(r.customer)}</div>`;
+    // "Orders" cell: Part Needed → tag; grouped → order+customer counts;
+    // single-order fallback → customer name (rare, only if a part appears
+    // in exactly one order and isn't grouped away).
+    let ordersCell;
+    if (r._isNeed) {
+      ordersCell = `<div class="qcell qcell-customer"><span class="queue-need-tag">Part Needed</span></div>`;
+    } else if (r._isGroup) {
+      const orderLabel = r._orderCount === 1 ? '1 order' : `${r._orderCount} orders`;
+      const custLabel = r._customerCount === 1 ? '1 customer' : `${r._customerCount} customers`;
+      ordersCell = `<div class="qcell qcell-customer" title="Oldest: ${escapeAttr(r.customer)}">${orderLabel} · ${custLabel}</div>`;
+    } else {
+      ordersCell = `<div class="qcell qcell-customer">${escapeHtml(r.customer)}</div>`;
+    }
+    // SKU cell: grouped rows may span multiple SKUs; show count if so.
+    let skuText;
+    if (r._isGroup && r._skuCount > 1) {
+      skuText = `${r._skuCount} SKUs`;
+    } else {
+      skuText = r.sku;
+    }
     html += `
       <div class="queue-row ${rowClass}${needRowClass}" data-key="${escapeAttr(r.key)}">
         <div class="qcell qcell-num">${i+1}</div>
         <div class="qcell qcell-date">${dateStr}</div>
         <div class="qcell qcell-age ${agedClass}"><span class="badge">${age}d</span></div>
-        ${customerCell}
-        <div class="qcell qcell-sku">${escapeHtml(r.sku)}</div>
+        ${ordersCell}
+        <div class="qcell qcell-sku">${escapeHtml(skuText)}</div>
         <div class="qcell qcell-part">${escapeHtml(r.part)}</div>
         <div class="qcell qcell-qty">${qtyHtml}</div>
         <div class="qcell qcell-action"><button class="btn-done">Done</button></div>
       </div>`;
   });
   html += '</div>';
+  if (totalFiltered > RENDER_CAP) {
+    html += `<div style="text-align:center;padding:16px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.06em;">
+      Showing top ${RENDER_CAP.toLocaleString()} of ${totalFiltered.toLocaleString()} groups. Clear the top of the queue to see more.
+    </div>`;
+  }
   container.innerHTML = html;
+
+  // Perf: O(1) Done lookups. Without this, each click did a linear scan
+  // over built.visible (13k+ rows). Only the rendered rows need indexing.
+  const visibleByKey = new Map();
+  for (const r of rowsToRender) visibleByKey.set(r.key, r);
 
   container.querySelectorAll('.queue-row[data-key]').forEach(row => {
     const btn = row.querySelector('.btn-done');
     btn.addEventListener('click', () => {
       const key = row.dataset.key;
-      const clicked = built.visible.find(r => r.key === key);
+      const clicked = visibleByKey.get(key);
       if (!clicked) return;
       // Part-needed alerts: skip the plate modal, no inventory change. Mark resolved.
       if (clicked._isNeed) {
