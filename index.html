@@ -1023,10 +1023,17 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  position: sticky;
-  top: 16px;
 }
 .queue-sidebar > * { flex: 0 0 auto; }
+
+/* Stats block stays pinned at the top of the viewport as you scroll the
+   kanban board / FDM list. Only pins the stats — the productivity card and
+   Top 10 scroll normally beneath it. */
+.queue-sidebar .stats.stats-vertical {
+  position: sticky;
+  top: 16px;
+  z-index: 5;
+}
 
 /* Vertical stat stack for sidebar */
 .stats.stats-vertical {
@@ -1116,6 +1123,9 @@ body {
   line-height: 1;
 }
 .productivity-value.muted { color: var(--ink-dim); }
+#prod-eta {
+  font-size: 22px;
+}
 .productivity-sub {
   padding: 6px 14px 10px;
   font-family: 'JetBrains Mono', monospace;
@@ -1258,9 +1268,11 @@ body {
   .queue-sidebar {
     flex-direction: column;
     gap: 12px;
-    position: static;
   }
   .queue-sidebar > * { flex: 1 1 auto; }
+  .queue-sidebar .stats.stats-vertical {
+    position: static;
+  }
   .stats.stats-vertical {
     flex-direction: row;
     flex-wrap: wrap;
@@ -5048,7 +5060,12 @@ body.mode-mobile .mobile-only { display: block; }
               <div class="productivity-label">Daily average</div>
               <div class="productivity-value muted" id="prod-avg">0</div>
             </div>
-            <div class="productivity-sub" id="prod-sub">Based on last 30 days of Done clicks</div>
+            <div class="productivity-sub" id="prod-sub">Toward pending demand · last 30 days</div>
+            <div class="productivity-row" style="border-top:1px solid var(--line-bright);">
+              <div class="productivity-label">Time to clear</div>
+              <div class="productivity-value" id="prod-eta">—</div>
+            </div>
+            <div class="productivity-sub" id="prod-eta-sub">At current pace</div>
           </div>
 
           <div class="top10-block top10-sidebar">
@@ -8077,6 +8094,25 @@ function printPlate(clicked, qtyOverride) {
   const yld = partYield(lib, part);
   const qty = (typeof qtyOverride === 'number' && qtyOverride >= 0) ? qtyOverride : yld;
 
+  // Compute how many of these units will actually satisfy pending customer
+  // demand vs. overflow into inventory buffer. Used by the productivity card
+  // so the "printed today" number reflects work that closed orders, not
+  // plate overproduction.
+  let priorDemand = 0;
+  for (const o of state.orders) {
+    const oLib = state.library[o.sku];
+    if (!oLib || !Array.isArray(oLib.parts)) continue;
+    for (const p of oLib.parts) {
+      const pname = (typeof p === 'string') ? p : (p && p.name);
+      if (pname !== part) continue;
+      const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
+      priorDemand += (Number(o.qty) || 0) * per;
+    }
+  }
+  const priorStock = Number(state.inventory[part] || 0);
+  const unmetDemand = Math.max(0, priorDemand - priorStock);
+  const qtyToDemand = Math.min(qty, unmetDemand);
+
   if (qty > 0) {
     const newStock = Number(state.inventory[part] || 0) + qty;
     state.inventory[part] = newStock;
@@ -8087,6 +8123,7 @@ function printPlate(clicked, qtyOverride) {
       at: new Date().toISOString(),
       partName: part,
       qty,
+      qtyToDemand,   // NEW: units of this print that went toward pending demand
       sku: clicked.sku || '',
       customer: clicked.customer || '',
       originalOrderDate: clicked.date || null,
@@ -9210,16 +9247,19 @@ function addPriorityItems(type, text) {
   return lines.length;
 }
 
-// Compute print productivity for the FDM sidebar:
-//   - Today: qty of FDM parts printed since midnight
-//   - Daily average: qty of FDM parts printed in the last 30 days / 30
-// A part is FDM if any SKU in the library defines it with type='fdm'. We
-// build a Set of FDM part names once, then filter completedOrders by
-// kind='print' + part in that set.
+// Compute print productivity for the FDM sidebar. Uses `qtyToDemand` (units
+// that satisfied pending orders) rather than raw plate yield, so overproduction
+// into inventory doesn't inflate the numbers. Also estimates days-to-clear
+// based on current backlog ÷ average.
+//
+// A part is FDM if any SKU in the library defines it with type='fdm'. Old
+// completedOrders entries (before qtyToDemand existed) fall back to qty.
 function renderProductivity() {
   const todayEl = document.getElementById('prod-today');
   const avgEl = document.getElementById('prod-avg');
   const subEl = document.getElementById('prod-sub');
+  const etaEl = document.getElementById('prod-eta');
+  const etaSubEl = document.getElementById('prod-eta-sub');
   if (!todayEl) return;
 
   // Build set of FDM part names
@@ -9245,7 +9285,8 @@ function renderProductivity() {
     if (!fdmParts.has(c.partName)) continue;
     const at = new Date(c.at);
     if (isNaN(at.getTime())) continue;
-    const qty = Number(c.qty) || 0;
+    // Prefer qtyToDemand (new field) — fall back to qty for old entries
+    const qty = (typeof c.qtyToDemand === 'number') ? c.qtyToDemand : (Number(c.qty) || 0);
     if (at >= todayStart) printedToday += qty;
     if (at >= thirtyDaysAgo) printedLast30 += qty;
   }
@@ -9256,14 +9297,55 @@ function renderProductivity() {
   todayEl.textContent = printedToday.toLocaleString();
   avgEl.textContent = avgDisplay;
   if (subEl) {
-    // Vs-average indicator
     if (printedToday === 0) {
-      subEl.textContent = 'Based on last 30 days · Nothing done yet today';
+      subEl.textContent = 'Toward pending demand · Nothing done yet today';
     } else if (dailyAvg > 0) {
       const pct = Math.round((printedToday / dailyAvg) * 100);
-      subEl.textContent = `Based on last 30 days · Today is ${pct}% of average`;
+      subEl.textContent = `Toward pending demand · Today is ${pct}% of average`;
     } else {
-      subEl.textContent = 'Based on last 30 days';
+      subEl.textContent = 'Toward pending demand · last 30 days';
+    }
+  }
+
+  // ETA: total remaining FDM demand ÷ daily average
+  if (etaEl) {
+    // Get remaining FDM demand from the built queue (already computed)
+    let fdmBacklog = 0;
+    try {
+      const built = buildQueue('fdm');
+      if (built && Array.isArray(built.visible)) {
+        for (const r of built.visible) {
+          if (r._isNeed) continue;  // Part Needed cards aren't inventory demand
+          fdmBacklog += Number(r._remaining) || 0;
+        }
+      }
+    } catch {}
+
+    if (fdmBacklog === 0) {
+      etaEl.textContent = '—';
+      etaEl.classList.add('muted');
+      if (etaSubEl) etaSubEl.textContent = 'Caught up · no pending demand';
+    } else if (dailyAvg <= 0) {
+      etaEl.textContent = '?';
+      etaEl.classList.add('muted');
+      if (etaSubEl) etaSubEl.textContent = `${fdmBacklog.toLocaleString()} parts pending · need history to estimate`;
+    } else {
+      const days = fdmBacklog / dailyAvg;
+      etaEl.classList.remove('muted');
+      let daysDisplay;
+      if (days < 1) daysDisplay = '< 1 day';
+      else if (days < 10) daysDisplay = `${days.toFixed(1)} days`;
+      else if (days < 100) daysDisplay = `${Math.round(days)} days`;
+      else {
+        const weeks = Math.round(days / 7);
+        daysDisplay = `~${weeks} weeks`;
+      }
+      etaEl.textContent = daysDisplay;
+      if (etaSubEl) {
+        const doneDate = new Date(now.getTime() + days * 86400000);
+        const dateStr = doneDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: days > 300 ? 'numeric' : undefined });
+        etaSubEl.textContent = `${fdmBacklog.toLocaleString()} parts pending · clears ~${dateStr}`;
+      }
     }
   }
 }
