@@ -1013,18 +1013,20 @@ body {
 /* Queue layout: main work area on top, stats sidebar always below.
    This avoids the stats panel ever covering the rightmost kanban column. */
 .queue-layout {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 24px;
+  align-items: start;
 }
 .queue-main { min-width: 0; }
 .queue-sidebar {
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 16px;
+  position: sticky;
+  top: 16px;
 }
-.queue-sidebar > * { flex: 1 1 320px; }
+.queue-sidebar > * { flex: 0 0 auto; }
 
 /* Vertical stat stack for sidebar */
 .stats.stats-vertical {
@@ -1048,6 +1050,80 @@ body {
 /* Top 10 compact mode for sidebar */
 .top10-block.top10-sidebar {
   margin-bottom: 0;
+}
+
+/* Prominent search bar on FDM queue */
+.search.search-prominent {
+  border-color: var(--line-bright);
+  min-width: 340px;
+  font-size: 14px;
+  padding: 10px 14px;
+}
+.search.search-prominent:focus {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px rgba(240,168,48,0.15);
+}
+
+/* Print productivity card in the FDM sidebar */
+.productivity-block {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin: 12px 0;
+  overflow: hidden;
+}
+.productivity-head {
+  padding: 10px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+.productivity-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  font-size: 12px;
+  color: var(--amber);
+}
+.productivity-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 14px;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.productivity-row:last-of-type { border-bottom: none; }
+.productivity-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.productivity-value {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 26px;
+  color: var(--amber);
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+.productivity-value.muted { color: var(--ink-dim); }
+.productivity-sub {
+  padding: 6px 14px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.4;
 }
 .top10-block.top10-sidebar .top10-head {
   padding: 10px 14px;
@@ -1175,10 +1251,14 @@ body {
   .stat-label { font-size: 9px; letter-spacing: 0.14em; }
 
   /* Sidebar (stats + top10) goes below queue on mobile */
-  .queue-layout { gap: 14px; }
+  .queue-layout {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
   .queue-sidebar {
     flex-direction: column;
     gap: 12px;
+    position: static;
   }
   .queue-sidebar > * { flex: 1 1 auto; }
   .stats.stats-vertical {
@@ -4938,7 +5018,7 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="queue-layout">
         <div class="queue-main">
           <div class="toolbar">
-            <input type="text" class="search" data-queue-search placeholder="Filter by customer, SKU, or part…">
+            <input type="text" class="search search-prominent" data-queue-search placeholder="Search for a part to print (part name, SKU, or customer)…">
             <button class="filter-chip active" data-age-filter="all">All</button>
             <button class="filter-chip" data-age-filter="7">7+ days</button>
             <button class="filter-chip" data-age-filter="14">14+ days</button>
@@ -4953,6 +5033,22 @@ body.mode-mobile .mobile-only { display: block; }
             <div class="stat"><div class="stat-label">Distinct orders</div><div class="stat-value" data-stat="orders">0</div></div>
             <div class="stat"><div class="stat-label">Aged 7+ days</div><div class="stat-value alert" data-stat="aged">0</div></div>
             <div class="stat"><div class="stat-label">Undefined SKUs</div><div class="stat-value warn" data-stat="undef">0</div></div>
+          </div>
+
+          <div class="productivity-block">
+            <div class="productivity-head">
+              <span class="productivity-mark">◈</span>
+              <span>Print productivity</span>
+            </div>
+            <div class="productivity-row">
+              <div class="productivity-label">Printed today</div>
+              <div class="productivity-value" id="prod-today">0</div>
+            </div>
+            <div class="productivity-row">
+              <div class="productivity-label">Daily average</div>
+              <div class="productivity-value muted" id="prod-avg">0</div>
+            </div>
+            <div class="productivity-sub" id="prod-sub">Based on last 30 days of Done clicks</div>
           </div>
 
           <div class="top10-block top10-sidebar">
@@ -6835,6 +6931,7 @@ function renderQueue(type) {
 
   renderSidebarCounts();
   renderTop10(type);
+  if (type === 'fdm') renderProductivity();
 
   // Resin → kanban board. FDM → list.
   if (type === 'resin') {
@@ -9111,6 +9208,64 @@ function addPriorityItems(type, text) {
   renderPriority(type);
   renderSidebarCounts();
   return lines.length;
+}
+
+// Compute print productivity for the FDM sidebar:
+//   - Today: qty of FDM parts printed since midnight
+//   - Daily average: qty of FDM parts printed in the last 30 days / 30
+// A part is FDM if any SKU in the library defines it with type='fdm'. We
+// build a Set of FDM part names once, then filter completedOrders by
+// kind='print' + part in that set.
+function renderProductivity() {
+  const todayEl = document.getElementById('prod-today');
+  const avgEl = document.getElementById('prod-avg');
+  const subEl = document.getElementById('prod-sub');
+  if (!todayEl) return;
+
+  // Build set of FDM part names
+  const fdmParts = new Set();
+  for (const sku of Object.keys(state.library)) {
+    const lib = state.library[sku];
+    if (!lib || !Array.isArray(lib.parts)) continue;
+    for (const p of lib.parts) {
+      if (typeof p === 'string') continue;  // legacy strings default to resin
+      if (p && p.type === 'fdm' && p.name) fdmParts.add(p.name);
+    }
+  }
+
+  const now = new Date();
+  const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400000);
+
+  let printedToday = 0;
+  let printedLast30 = 0;
+
+  for (const c of (state.completedOrders || [])) {
+    if (c.kind !== 'print') continue;
+    if (!fdmParts.has(c.partName)) continue;
+    const at = new Date(c.at);
+    if (isNaN(at.getTime())) continue;
+    const qty = Number(c.qty) || 0;
+    if (at >= todayStart) printedToday += qty;
+    if (at >= thirtyDaysAgo) printedLast30 += qty;
+  }
+
+  const dailyAvg = printedLast30 / 30;
+  const avgDisplay = dailyAvg >= 10 ? Math.round(dailyAvg) : dailyAvg.toFixed(1);
+
+  todayEl.textContent = printedToday.toLocaleString();
+  avgEl.textContent = avgDisplay;
+  if (subEl) {
+    // Vs-average indicator
+    if (printedToday === 0) {
+      subEl.textContent = 'Based on last 30 days · Nothing done yet today';
+    } else if (dailyAvg > 0) {
+      const pct = Math.round((printedToday / dailyAvg) * 100);
+      subEl.textContent = `Based on last 30 days · Today is ${pct}% of average`;
+    } else {
+      subEl.textContent = 'Based on last 30 days';
+    }
+  }
 }
 
 function renderTop10(type) {
