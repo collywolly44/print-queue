@@ -5698,6 +5698,7 @@ const MAX_SNAPSHOTS = 2;
 // Snapshot frequency: take a new snapshot at most every 20 minutes during normal
 // editing. Destructive changes always trigger a snapshot regardless of timing.
 const SNAPSHOT_MIN_INTERVAL_MS = 20 * 60 * 1000;
+let _dataVersion = 0;   // logical timestamp of the data we currently hold; drives newest-wins
 const MACHINES = ['unassigned', 'mars4', 'mars4h', 'saturn3', 'saturn3h', 'mega'];
 const MACHINE_LABELS = {
   unassigned: 'Unassigned',
@@ -6032,6 +6033,8 @@ function logInventoryChange(partName, before, after, reason) {
 }
 
 function save() {
+  // Stamp the data's version on every real (non-suspended) edit. Newest wins.
+  if (!_suspendCloudWrites) _dataVersion = Date.now();
   const blob = {
     orders: state.orders,
     library: state.library,
@@ -6049,6 +6052,7 @@ function save() {
     overdueStandard: state.overdueStandard,
     overdueVehicle: state.overdueVehicle,
     orderEdits: state.orderEdits,
+    dataVersion: _dataVersion,
     lastSync: new Date().toISOString(),
   };
 
@@ -6138,12 +6142,39 @@ function scheduleCloudPush(blob) {
   _cloudPushTimer = setTimeout(async () => {
     if (!_fbReady || !_fbUser) return;
     try {
-      // Read the very latest local state at write time (in case more edits happened)
       const raw = localStorage.getItem(STORAGE_KEY);
       const current = raw ? JSON.parse(raw) : blob;
+
+      // NEWEST-WINS GUARD: check the cloud before overwriting. If the cloud is
+      // newer than what this device holds, pull it instead of clobbering it.
+      try {
+        const existingSnap = await window._fb.get(cloudRef());
+        if (existingSnap.exists()) {
+          const cloudVal = existingSnap.val();
+          const cloudTs = Number(cloudVal._updatedAt) || 0;
+          if (cloudTs > _dataVersion) {
+            const incoming = transformKeys(cloudVal, fbDecodeKey);
+            delete incoming._writeToken;
+            delete incoming._updatedAt;
+            _suspendCloudWrites = true;
+            _dataVersion = cloudTs;
+            applyRestoreBlob(incoming);
+            _suspendCloudWrites = false;
+            _cloudPushPending = false;
+            setUnsyncedFlag(false);
+            if (_fbUser) cloudStatus('connected', displayName(_fbUser.email));
+            toast('Kept newer data from another device', 'info');
+            return;
+          }
+        }
+      } catch (readErr) {
+        console.warn('Pre-push cloud read failed; pushing anyway:', readErr);
+      }
+
       const sanitized = transformKeys(current, fbEncodeKey);
       _localWriteToken = Date.now() + ':' + Math.random();
       sanitized._writeToken = _localWriteToken;
+      sanitized._updatedAt = _dataVersion;
       await window._fb.set(cloudRef(), sanitized);
       _cloudPushPending = false;
       setUnsyncedFlag(false);
@@ -6289,6 +6320,7 @@ function load() {
     }
     if (blob.lastSync) updateLastSync(blob.lastSync);
     state.lastImport = blob.lastImport || null;
+    _dataVersion = Number(blob.dataVersion) || (blob.lastSync ? new Date(blob.lastSync).getTime() : 0) || 0;
     migrateLibrary();
   } catch (e) { console.error('Load failed', e); }
 }
@@ -12636,51 +12668,57 @@ function transformKeys(value, fn) {
 // (one-time seed). Otherwise replace local with cloud.
 async function pullFromCloudOnce() {
   if (_initialPullDone) return;
-  // If local storage has unpushed edits from before a refresh, DON'T let the
-  // cloud pull clobber them. Push local up instead — the cloud will echo back
-  // and everyone else picks it up. This is the fix for the "edited, refreshed
-  // on slow internet, edit vanished" bug.
-  const localUnsynced = hasUnsyncedFlag();
   try {
     const snap = await window._fb.get(cloudRef());
-    if (localUnsynced) {
-      // Force-push local up to cloud, ignoring whatever the cloud has.
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const blob = raw ? JSON.parse(raw) : null;
-      if (blob) {
-        try {
-          const sanitized = transformKeys(blob, fbEncodeKey);
-          _localWriteToken = Date.now() + ':' + Math.random();
-          sanitized._writeToken = _localWriteToken;
-          await window._fb.set(cloudRef(), sanitized);
-          setUnsyncedFlag(false);
-          cloudStatus("connected", displayName(_fbUser.email));
-          toast('Pushed unsynced local edits to cloud');
-        } catch (pushErr) {
-          console.error('Force-push of local unsynced data failed:', pushErr);
-          cloudStatus('offline', 'Sync failed — will retry');
-          toast('Could not push local edits — will retry on next change', 'error');
-        }
+    const localRaw = localStorage.getItem(STORAGE_KEY);
+    const localBlob = localRaw ? JSON.parse(localRaw) : null;
+    const localTs = (localBlob &&
+      (Number(localBlob.dataVersion) ||
+       (localBlob.lastSync ? new Date(localBlob.lastSync).getTime() : 0))) || 0;
+
+    if (snap.exists()) {
+      const cloudVal = snap.val();
+      const cloudTs = Number(cloudVal._updatedAt) || 0;
+
+      // NEWEST WINS. A slept device holds an old localTs, so cloudTs wins and it
+      // pulls the good data down instead of pushing its stale copy up.
+      if (cloudTs >= localTs) {
+        const blob = transformKeys(cloudVal, fbDecodeKey);
+        delete blob._writeToken;
+        delete blob._updatedAt;
+        _suspendCloudWrites = true;
+        _dataVersion = cloudTs;
+        applyRestoreBlob(blob);
+        _suspendCloudWrites = false;
+        setUnsyncedFlag(false);
+        cloudStatus('connected', displayName(_fbUser.email));
+        toast('Synced from cloud');
+      } else if (localBlob) {
+        // Local is genuinely newer (a real offline edit) — push it up.
+        const sanitized = transformKeys(localBlob, fbEncodeKey);
+        _localWriteToken = Date.now() + ':' + Math.random();
+        _dataVersion = localTs;
+        sanitized._writeToken = _localWriteToken;
+        sanitized._updatedAt = localTs;
+        await window._fb.set(cloudRef(), sanitized);
+        setUnsyncedFlag(false);
+        cloudStatus('connected', displayName(_fbUser.email));
+        toast('Your device had newer data — pushed to cloud');
       } else {
-        cloudStatus("connected", displayName(_fbUser.email));
+        cloudStatus('connected', displayName(_fbUser.email));
       }
-    } else if (snap.exists()) {
-      const raw = snap.val();
-      // Decode any sanitized keys before applying locally
-      const blob = transformKeys(raw, fbDecodeKey);
-      applyRestoreBlob(blob);
-      cloudStatus("connected", displayName(_fbUser.email));
-      toast('Synced from cloud');
     } else {
-      // First-ever connection: cloud is empty. Push current local data up.
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const blob = raw ? JSON.parse(raw) : null;
-      if (blob && (Object.keys(blob.library || {}).length > 0 || (blob.orders || []).length > 0)) {
-        const sanitized = transformKeys(blob, fbEncodeKey);
+      // Cloud empty (first run) — seed with local.
+      if (localBlob && (Object.keys(localBlob.library || {}).length > 0 || (localBlob.orders || []).length > 0)) {
+        const sanitized = transformKeys(localBlob, fbEncodeKey);
+        _localWriteToken = Date.now() + ':' + Math.random();
+        _dataVersion = localTs || Date.now();
+        sanitized._writeToken = _localWriteToken;
+        sanitized._updatedAt = _dataVersion;
         await window._fb.set(cloudRef(), sanitized);
         toast('First sync — uploaded local data to cloud');
       }
-      cloudStatus("connected", displayName(_fbUser.email));
+      cloudStatus('connected', displayName(_fbUser.email));
     }
     _initialPullDone = true;
   } catch (e) {
@@ -12714,13 +12752,17 @@ function watchCloudConnection() {
     if (!snap.exists()) return;
     const raw = snap.val();
     // If this update's _writeToken matches ours, it's our own echo — ignore.
-    if (raw && raw._writeToken && raw._writeToken === _localWriteToken) return;
-    // Otherwise it came from another device (or another tab). Apply it.
+   if (raw && raw._writeToken && raw._writeToken === _localWriteToken) return;
+    // NEWEST-WINS: ignore a snapshot that isn't newer than what we already hold
+    // (guards against a stale snapshot arriving during a reconnection race).
+    const incomingTs = Number(raw._updatedAt) || 0;
+    if (incomingTs && incomingTs <= _dataVersion) return;
     try {
       const blob = transformKeys(raw, fbDecodeKey);
-      // Strip the internal token before applying
       delete blob._writeToken;
+      delete blob._updatedAt;
       _suspendCloudWrites = true;
+      _dataVersion = incomingTs || Date.now();
       applyRestoreBlob(blob);
       _suspendCloudWrites = false;
       // Subtle hint instead of a noisy toast on every echo
