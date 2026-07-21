@@ -6120,52 +6120,14 @@ const UNSYNCED_KEY = 'print_queue_unsynced_v1';
 // a page refresh, so if the user makes an edit then refreshes before the
 // cloud push finishes, boot code knows to push local up instead of letting
 // the cloud pull overwrite the local edit.
-// A pending-edit flag older than this is NOT trusted to force-push. Without
-// this, a device that fell asleep mid-push would wake up, see its own day-old
-// "unsynced" flag, and force its STALE copy over everyone's newer work.
-const UNSYNCED_STALE_MS = 10 * 60 * 1000; // 10 minutes
 function setUnsyncedFlag(v) {
   try {
-    if (v) localStorage.setItem(UNSYNCED_KEY, String(Date.now()));
+    if (v) localStorage.setItem(UNSYNCED_KEY, '1');
     else localStorage.removeItem(UNSYNCED_KEY);
   } catch {}
 }
 function hasUnsyncedFlag() {
-  try {
-    const v = localStorage.getItem(UNSYNCED_KEY);
-    if (!v) return false;
-    const t = parseInt(v, 10);
-    if (!isFinite(t)) return true;                 // legacy '1' value — treat as unsynced
-    return (Date.now() - t) < UNSYNCED_STALE_MS;    // ignore stale (e.g. slept overnight) flags
-  } catch { return false; }
-}
-
-// Version-guarded whole-document write. Uses a Firebase transaction so a device
-// holding a STALE copy of /workspace (e.g. it was asleep and never saw newer
-// edits) CANNOT overwrite fresher data. The write only commits when the server's
-// version is one we've already observed (_serverVerSeen) — or when the current
-// cloud value is our own last write. Returns {committed, staleBlocked}.
-async function cloudWriteGuarded(sanitized) {
-  const newToken = Date.now() + ':' + Math.random();
-  let staleBlocked = false;
-  const res = await window._fb.runTransaction(cloudRef(), (cloud) => {
-    const serverVer = (cloud && typeof cloud._ver === 'number') ? cloud._ver : 0;
-    const isOwnEcho = cloud && cloud._writeToken && cloud._writeToken === _localWriteToken;
-    // Someone else advanced the cloud past what we've seen — refuse to clobber it.
-    if (serverVer > _serverVerSeen && !isOwnEcho) { staleBlocked = true; return; }
-    const out = Object.assign({}, sanitized);
-    delete out._writeToken; delete out._ver;   // never trust incoming meta
-    out._ver = serverVer + 1;
-    out._writeToken = newToken;
-    return out;
-  }, { applyLocally: false });
-  if (res && res.committed) {
-    _localWriteToken = newToken;
-    const v = res.snapshot && res.snapshot.val ? res.snapshot.val() : null;
-    if (v && typeof v._ver === 'number') _serverVerSeen = Math.max(_serverVerSeen, v._ver);
-    return { committed: true, staleBlocked: false };
-  }
-  return { committed: false, staleBlocked };
+  try { return localStorage.getItem(UNSYNCED_KEY) === '1'; } catch { return false; }
 }
 
 function scheduleCloudPush(blob) {
@@ -6180,26 +6142,14 @@ function scheduleCloudPush(blob) {
       const raw = localStorage.getItem(STORAGE_KEY);
       const current = raw ? JSON.parse(raw) : blob;
       const sanitized = transformKeys(current, fbEncodeKey);
-      const { committed, staleBlocked } = await cloudWriteGuarded(sanitized);
-      if (committed) {
-        _cloudPushPending = false;
-        setUnsyncedFlag(false);
-        // Confirm sync succeeded in the status pill. Uses 'connected' (not
-        // 'online') because that's the CSS state that lights up green.
-        if (_fbUser) cloudStatus('connected', displayName(_fbUser.email));
-      } else if (staleBlocked) {
-        // Another device has data newer than anything this device has seen —
-        // almost always because this device was asleep/offline. Do NOT overwrite
-        // it. Pull the fresh state down instead; the just-made edit is dropped
-        // rather than allowed to clobber newer work.
-        _cloudPushPending = false;
-        setUnsyncedFlag(false);
-        cloudStatus('connecting', 'Newer data on server — syncing down…');
-        await resyncFromCloud(true);
-        toast('Another device had newer changes — pulled them in. Re-check your last edit.', 'error');
-      } else {
-        throw new Error('cloud transaction did not commit');
-      }
+      _localWriteToken = Date.now() + ':' + Math.random();
+      sanitized._writeToken = _localWriteToken;
+      await window._fb.set(cloudRef(), sanitized);
+      _cloudPushPending = false;
+      setUnsyncedFlag(false);
+      // Confirm sync succeeded in the status pill. Uses 'connected' (not
+      // 'online') because that's the CSS state that lights up green.
+      if (_fbUser) cloudStatus('connected', displayName(_fbUser.email));
     } catch (e) {
       console.error('Cloud push failed:', e);
       // Leave the unsynced flag set — a future push attempt will clear it.
@@ -12492,12 +12442,6 @@ let _initialPullDone = false;
 let _suspendCloudWrites = false;   // true while applying a cloud update locally
 let _localWriteToken = null;       // last token we wrote; used to ignore our own pushback
 let _watchUnsub = null;            // unsubscribe fn for the cloud value listener
-let _serverVerSeen = 0;            // highest /workspace._ver this device has observed.
-                                   // A write is only allowed to overwrite the cloud if the
-                                   // server's version is <= this. A device that has been
-                                   // asleep/offline holds an old _serverVerSeen, so its write
-                                   // is refused instead of clobbering newer data.
-let _resyncInFlight = false;       // guard so overlapping wake/focus events don't stack pulls
 
 function cloudStatus(state, label) {
   const el = document.getElementById('cloud-status');
@@ -12532,7 +12476,6 @@ async function initFirebase() {
       ref: dbMod.ref,
       get: dbMod.get,
       set: dbMod.set,
-      runTransaction: dbMod.runTransaction,
       onValue: dbMod.onValue,
       onDisconnect: dbMod.onDisconnect,
       serverTimestamp: dbMod.serverTimestamp,
@@ -12700,32 +12643,19 @@ async function pullFromCloudOnce() {
   const localUnsynced = hasUnsyncedFlag();
   try {
     const snap = await window._fb.get(cloudRef());
-    // Record the version we just read as "seen" — this is a fresh page load, so
-    // whatever the server currently holds is the baseline this device is aware of.
-    if (snap.exists() && typeof snap.val()._ver === 'number') {
-      _serverVerSeen = Math.max(_serverVerSeen, snap.val()._ver);
-    }
     if (localUnsynced) {
-      // Force-push local up to cloud. Because we just set _serverVerSeen to the
-      // server's current version above, the guarded write will commit (this is the
-      // legitimate "edited then refreshed" recovery), but it still stamps a new
-      // version so other devices see it as the latest.
+      // Force-push local up to cloud, ignoring whatever the cloud has.
       const raw = localStorage.getItem(STORAGE_KEY);
       const blob = raw ? JSON.parse(raw) : null;
       if (blob) {
         try {
           const sanitized = transformKeys(blob, fbEncodeKey);
-          const { committed } = await cloudWriteGuarded(sanitized);
-          if (committed) {
-            setUnsyncedFlag(false);
-            cloudStatus("connected", displayName(_fbUser.email));
-            toast('Pushed unsynced local edits to cloud');
-          } else {
-            // Server had even newer data than our fresh read — take it, don't clobber.
-            await resyncFromCloud(true);
-            setUnsyncedFlag(false);
-            toast('Cloud had newer data — pulled it in', 'error');
-          }
+          _localWriteToken = Date.now() + ':' + Math.random();
+          sanitized._writeToken = _localWriteToken;
+          await window._fb.set(cloudRef(), sanitized);
+          setUnsyncedFlag(false);
+          cloudStatus("connected", displayName(_fbUser.email));
+          toast('Pushed unsynced local edits to cloud');
         } catch (pushErr) {
           console.error('Force-push of local unsynced data failed:', pushErr);
           cloudStatus('offline', 'Sync failed — will retry');
@@ -12738,7 +12668,6 @@ async function pullFromCloudOnce() {
       const raw = snap.val();
       // Decode any sanitized keys before applying locally
       const blob = transformKeys(raw, fbDecodeKey);
-      delete blob._writeToken; delete blob._ver;
       applyRestoreBlob(blob);
       cloudStatus("connected", displayName(_fbUser.email));
       toast('Synced from cloud');
@@ -12748,7 +12677,7 @@ async function pullFromCloudOnce() {
       const blob = raw ? JSON.parse(raw) : null;
       if (blob && (Object.keys(blob.library || {}).length > 0 || (blob.orders || []).length > 0)) {
         const sanitized = transformKeys(blob, fbEncodeKey);
-        await cloudWriteGuarded(sanitized);
+        await window._fb.set(cloudRef(), sanitized);
         toast('First sync — uploaded local data to cloud');
       }
       cloudStatus("connected", displayName(_fbUser.email));
@@ -12769,11 +12698,7 @@ function watchCloudConnection() {
     if (snap.val() === true) {
       cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : "Online");
       hideOfflineOverlay();
-      // (Re)connected. Pull the latest state DOWN first, so a device that was
-      // offline/asleep catches up before it can push anything up. The guarded
-      // write below will refuse to clobber if we're still behind.
-      resyncFromCloud(false);
-      // If we have unflushed edits pending, push them now (version-guarded).
+      // If we have unflushed edits pending, push them now
       if (_cloudPushPending) {
         scheduleCloudPush(null);
       }
@@ -12788,17 +12713,13 @@ function watchCloudConnection() {
   _watchUnsub = window._fb.onValue(cloudRef(), (snap) => {
     if (!snap.exists()) return;
     const raw = snap.val();
-    // Record the newest server version we've observed — even for our own echo —
-    // so our next write is based on the current cloud and isn't flagged stale.
-    if (raw && typeof raw._ver === 'number') _serverVerSeen = Math.max(_serverVerSeen, raw._ver);
     // If this update's _writeToken matches ours, it's our own echo — ignore.
     if (raw && raw._writeToken && raw._writeToken === _localWriteToken) return;
     // Otherwise it came from another device (or another tab). Apply it.
     try {
       const blob = transformKeys(raw, fbDecodeKey);
-      // Strip the internal sync metadata before applying
+      // Strip the internal token before applying
       delete blob._writeToken;
-      delete blob._ver;
       _suspendCloudWrites = true;
       applyRestoreBlob(blob);
       _suspendCloudWrites = false;
@@ -12813,49 +12734,6 @@ function watchCloudConnection() {
     }
   });
 }
-
-// Re-pull the latest workspace from the cloud. Called when the tab becomes
-// visible again (laptop woke from sleep, phone unlocked, tab refocused) or when
-// the connection is re-established — so a device that has been idle/asleep syncs
-// DOWN to the latest state before it can push anything UP. This, together with
-// the version-guarded write, is what stops a stale cached copy from overwriting
-// newer work. `force` bypasses the unsynced-edit check and always takes cloud.
-async function resyncFromCloud(force) {
-  if (!_fbReady || !_fbUser || !_initialPullDone || _resyncInFlight) return;
-  // Don't stomp genuinely-fresh local edits; the guarded push will reconcile
-  // those. (Stale/overnight flags already read as false via hasUnsyncedFlag.)
-  if (!force && hasUnsyncedFlag()) return;
-  _resyncInFlight = true;
-  try {
-    const snap = await window._fb.get(cloudRef());
-    if (snap.exists()) {
-      const raw = snap.val();
-      const serverVer = (typeof raw._ver === 'number') ? raw._ver : 0;
-      if (force || serverVer > _serverVerSeen) {
-        _serverVerSeen = Math.max(_serverVerSeen, serverVer);
-        const blob = transformKeys(raw, fbDecodeKey);
-        delete blob._writeToken; delete blob._ver;
-        _suspendCloudWrites = true;
-        applyRestoreBlob(blob);
-        _suspendCloudWrites = false;
-        if (_fbUser) cloudStatus('connected', displayName(_fbUser.email));
-      }
-    }
-  } catch (e) {
-    console.error('Resync-from-cloud failed:', e);
-  } finally {
-    _suspendCloudWrites = false;
-    _resyncInFlight = false;
-  }
-}
-
-// Wake / refocus → pull fresh before any local write can fire. This is the
-// direct fix for "opened the app on a device that was asleep and it overwrote
-// everything with its cached version."
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') resyncFromCloud(false);
-});
-window.addEventListener('focus', () => resyncFromCloud(false));
 
 // Full-screen "offline" lock — prevents edits when not connected to cloud.
 function showOfflineOverlay() {
