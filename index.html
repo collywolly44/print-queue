@@ -12190,7 +12190,8 @@ applyImportMode(state.importMode || 'replace');
 })();
 
 // Shared: apply a blob (from file or snapshot) into live state.
-function applyRestoreBlob(blob) {
+function applyRestoreBlob(blob, opts) {
+  const fromCloud = opts && opts.fromCloud;
   state.orders = blob.orders || [];
   state.library = blob.library || {};
   state.inventory = blob.inventory || {};
@@ -12235,7 +12236,24 @@ function applyRestoreBlob(blob) {
     state.orderEdits = Array.isArray(blob.orderEdits) ? blob.orderEdits : [];
   }
   migrateLibrary();
-  save();
+  if (fromCloud) {
+    // Applying data that CAME from the cloud — do NOT call save() (which would
+    // re-stamp the timestamp and push a redundant echo back up, potentially
+    // stomping a concurrent edit from another device). Just persist to
+    // localStorage preserving the cloud's own lastSync, and clear the
+    // unsynced flag since we're now in sync with cloud.
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
+    } catch (e) {
+      console.warn('Local persist of cloud data failed (quota?):', e);
+    }
+    setUnsyncedFlag(false);
+    try { invalidateBuildQueueCache(); } catch {}
+    _sidebarQueueCounts.resin = null;
+    _sidebarQueueCounts.fdm = null;
+  } else {
+    save();
+  }
   renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
   // Refresh mobile Sent Today list in case partsNeeded changed via cloud sync
   if (typeof PN !== 'undefined' && PN.renderSentToday) PN.renderSentToday();
@@ -12636,50 +12654,70 @@ function transformKeys(value, fn) {
 // (one-time seed). Otherwise replace local with cloud.
 async function pullFromCloudOnce() {
   if (_initialPullDone) return;
-  // If local storage has unpushed edits from before a refresh, DON'T let the
-  // cloud pull clobber them. Push local up instead — the cloud will echo back
-  // and everyone else picks it up. This is the fix for the "edited, refreshed
-  // on slow internet, edit vanished" bug.
+  // Conflict resolution on boot. We have three signals:
+  //   - localUnsynced: this device has edits that never confirmed a cloud push
+  //   - local lastSync timestamp: when this device last saved
+  //   - cloud lastSync timestamp: when the cloud copy was last written
+  //
+  // The old logic force-pushed local up whenever localUnsynced was set. That
+  // caused catastrophic data loss: a device asleep for a day with one stale
+  // unsynced edit would wake up and overwrite a whole day of newer work from
+  // other devices. Now we compare timestamps and only push local up when
+  // local is actually NEWER than cloud.
   const localUnsynced = hasUnsyncedFlag();
   try {
     const snap = await window._fb.get(cloudRef());
-    if (localUnsynced) {
-      // Force-push local up to cloud, ignoring whatever the cloud has.
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const blob = raw ? JSON.parse(raw) : null;
-      if (blob) {
-        try {
-          const sanitized = transformKeys(blob, fbEncodeKey);
-          _localWriteToken = Date.now() + ':' + Math.random();
-          sanitized._writeToken = _localWriteToken;
-          await window._fb.set(cloudRef(), sanitized);
-          setUnsyncedFlag(false);
-          cloudStatus("connected", displayName(_fbUser.email));
-          toast('Pushed unsynced local edits to cloud');
-        } catch (pushErr) {
-          console.error('Force-push of local unsynced data failed:', pushErr);
-          cloudStatus('offline', 'Sync failed — will retry');
-          toast('Could not push local edits — will retry on next change', 'error');
-        }
-      } else {
-        cloudStatus("connected", displayName(_fbUser.email));
-      }
-    } else if (snap.exists()) {
-      const raw = snap.val();
-      // Decode any sanitized keys before applying locally
-      const blob = transformKeys(raw, fbDecodeKey);
-      applyRestoreBlob(blob);
-      cloudStatus("connected", displayName(_fbUser.email));
-      toast('Synced from cloud');
-    } else {
+    const cloudExists = snap.exists();
+    const cloudRaw = cloudExists ? snap.val() : null;
+    const cloudBlob = cloudRaw ? transformKeys(cloudRaw, fbDecodeKey) : null;
+    const cloudTime = cloudBlob && cloudBlob.lastSync ? new Date(cloudBlob.lastSync).getTime() : 0;
+
+    const localRaw = localStorage.getItem(STORAGE_KEY);
+    const localBlob = localRaw ? JSON.parse(localRaw) : null;
+    const localTime = localBlob && localBlob.lastSync ? new Date(localBlob.lastSync).getTime() : 0;
+
+    // Decide direction:
+    //   - No cloud data → push local up (first sync)
+    //   - Local newer than cloud → push local up (this device has the latest)
+    //   - Cloud newer than or equal to local → pull cloud down (another device
+    //     did newer work; do NOT clobber it even if we have an unsynced flag)
+    if (!cloudExists) {
       // First-ever connection: cloud is empty. Push current local data up.
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const blob = raw ? JSON.parse(raw) : null;
-      if (blob && (Object.keys(blob.library || {}).length > 0 || (blob.orders || []).length > 0)) {
-        const sanitized = transformKeys(blob, fbEncodeKey);
+      if (localBlob && (Object.keys(localBlob.library || {}).length > 0 || (localBlob.orders || []).length > 0)) {
+        const sanitized = transformKeys(localBlob, fbEncodeKey);
+        _localWriteToken = Date.now() + ':' + Math.random();
+        sanitized._writeToken = _localWriteToken;
         await window._fb.set(cloudRef(), sanitized);
+        setUnsyncedFlag(false);
         toast('First sync — uploaded local data to cloud');
       }
+      cloudStatus("connected", displayName(_fbUser.email));
+    } else if (localBlob && localTime > cloudTime) {
+      // Local is genuinely newer — safe to push up. This covers the
+      // "edited then refreshed on slow internet" case: local has the latest
+      // edit and a newer timestamp, so it wins.
+      const sanitized = transformKeys(localBlob, fbEncodeKey);
+      _localWriteToken = Date.now() + ':' + Math.random();
+      sanitized._writeToken = _localWriteToken;
+      await window._fb.set(cloudRef(), sanitized);
+      setUnsyncedFlag(false);
+      cloudStatus("connected", displayName(_fbUser.email));
+      if (localUnsynced) toast('Pushed your latest local edits to cloud');
+    } else {
+      // Cloud is newer than (or same as) local. Another device has newer
+      // work — pull it down. This is the critical fix: a stale device with
+      // an unsynced flag will NO LONGER overwrite newer cloud data.
+      if (localUnsynced && localTime > 0 && cloudTime > localTime) {
+        // We're about to discard a local unsynced edit because the cloud is
+        // newer. Warn the user so it's not silent.
+        const mins = Math.round((cloudTime - localTime) / 60000);
+        toast(`Loaded newer data from another device (${mins > 60 ? Math.round(mins/60)+'h' : mins+'m'} ahead). Your unsynced local change was replaced.`, 'error');
+      } else {
+        toast('Synced from cloud');
+      }
+      applyRestoreBlob(cloudBlob, { fromCloud: true });
+      // fromCloud:true means applyRestoreBlob persists locally without
+      // re-pushing — no redundant echo, cloud's timestamp is preserved.
       cloudStatus("connected", displayName(_fbUser.email));
     }
     _initialPullDone = true;
@@ -12720,8 +12758,22 @@ function watchCloudConnection() {
       const blob = transformKeys(raw, fbDecodeKey);
       // Strip the internal token before applying
       delete blob._writeToken;
+      // Timestamp guard: don't apply an incoming cloud update that's OLDER
+      // than what we already have locally. Protects against a stale device
+      // pushing outdated data and clobbering newer local work.
+      const incomingTime = blob.lastSync ? new Date(blob.lastSync).getTime() : 0;
+      const localRaw = localStorage.getItem(STORAGE_KEY);
+      const localBlobNow = localRaw ? JSON.parse(localRaw) : null;
+      const localTimeNow = localBlobNow && localBlobNow.lastSync ? new Date(localBlobNow.lastSync).getTime() : 0;
+      if (incomingTime > 0 && localTimeNow > 0 && incomingTime < localTimeNow) {
+        // Incoming is older than local — ignore it, and push our newer copy
+        // back up so the stale device gets corrected.
+        console.warn('Ignoring older cloud update:', new Date(incomingTime), '<', new Date(localTimeNow));
+        scheduleCloudPush(null);
+        return;
+      }
       _suspendCloudWrites = true;
-      applyRestoreBlob(blob);
+      applyRestoreBlob(blob, { fromCloud: true });
       _suspendCloudWrites = false;
       // Subtle hint instead of a noisy toast on every echo
       cloudStatus('connected', _fbUser ? `${displayName(_fbUser.email)} · synced` : "Online");
