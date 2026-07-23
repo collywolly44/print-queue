@@ -750,15 +750,12 @@ body {
 .kanban-help strong { color: var(--ink-dim); font-weight: 700; }
 .kanban-board {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) repeat(5, minmax(190px, 1fr));
+  /* minmax(0, …) with no floor: all six columns ALWAYS fit the available row,
+     so the board never produces a horizontal scrollbar and the MEGA column is
+     never pushed off the edge. Card internals below are all shrink-safe. */
+  grid-template-columns: minmax(0, 1.3fr) repeat(5, minmax(0, 1fr));
   gap: 10px;
   min-height: 400px;
-  /* Contain the board within .queue-main at ALL widths. Without this, `fr`
-     columns refuse to shrink below their cards' min-content width, the grid
-     overflows visibly to the right, and the sticky sidebar (z-index 5) paints
-     over the rightmost columns. */
-  overflow-x: auto;
-  padding-bottom: 4px;
 }
 .kanban-col {
   background: var(--panel);
@@ -767,6 +764,9 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 200px;
+  /* Grid items default to min-width:auto, which refuses to shrink below the
+     cards' intrinsic width and forces the 6th column off the row. */
+  min-width: 0;
   transition: background 0.12s, border-color 0.12s;
 }
 .kanban-col.drag-over {
@@ -774,6 +774,7 @@ body {
   border-color: var(--amber);
 }
 .kanban-col-head {
+  min-width: 0;
   padding: 10px 12px;
   border-bottom: 1px solid var(--line);
   display: flex; align-items: center; justify-content: space-between;
@@ -786,9 +787,14 @@ body {
   letter-spacing: 0.08em;
   color: var(--ink);
   text-transform: uppercase;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .kanban-col[data-machine="unassigned"] .kanban-col-title { color: var(--amber); }
 .kanban-col-count {
+  flex-shrink: 0;
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   color: var(--ink-faint);
@@ -818,6 +824,7 @@ body {
   opacity: 0.6;
 }
 .kanban-card {
+  min-width: 0;
   background: var(--bg);
   border: 1px solid var(--line-bright);
   border-radius: 3px;
@@ -852,6 +859,8 @@ body {
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow-wrap: anywhere;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 .kanban-card-qty {
   font-family: 'JetBrains Mono', monospace;
@@ -875,6 +884,7 @@ body {
   line-height: 1.25;
 }
 .kanban-card-customer {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -898,6 +908,7 @@ body {
   border-top: 1px solid var(--line);
 }
 .kanban-card-sku {
+  min-width: 0;
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   color: var(--ink-faint);
@@ -920,7 +931,8 @@ body {
   cursor: pointer;
   transition: all 0.12s;
   flex-shrink: 0;
-  min-width: 76px;
+  min-width: 0;
+  white-space: nowrap;
 }
 .kanban-done:hover {
   background: var(--green);
@@ -956,18 +968,19 @@ body {
   }
 }
 
-/* On narrower screens, shrink the columns so all six still fit the row.
-   Floors are low enough that a ~1300px content width holds UNASSIGNED plus
-   all five printers with no horizontal scroll; below that it scrolls. */
+/* On narrower screens the columns still all fit (minmax(0,…) above) — tighten
+   the card internals so the content stays legible instead of scrolling. */
 @media (max-width: 1400px) {
-  .kanban-board {
-    grid-template-columns: minmax(180px, 1.3fr) repeat(5, minmax(172px, 1fr));
-    overflow-x: auto;
-    padding-bottom: 8px;
-  }
-  .kanban-board .kanban-card { padding: 6px 8px 7px; }
-  .kanban-card-part { font-size: 14px; }
-  .kanban-done { min-width: 62px; padding: 4px 10px; }
+  .kanban-board { gap: 8px; }
+  .kanban-board .kanban-card { padding: 6px 7px 7px; }
+  .kanban-card-part { font-size: 13px; }
+  .kanban-card-customer { font-size: 11px; }
+  .kanban-card-date { font-size: 10px; }
+  .kanban-card-sku { font-size: 10px; }
+  .kanban-card-bottom { gap: 6px; }
+  .kanban-done { padding: 4px 8px; font-size: 11px; letter-spacing: 0.06em; }
+  .kanban-col-head { padding: 8px 9px; }
+  .kanban-col-title { font-size: 13px; letter-spacing: 0.04em; }
 }
 
 /* Priority Print block (top of queue) */
