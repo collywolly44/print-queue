@@ -5063,6 +5063,7 @@ body.mode-mobile .mobile-only { display: block; }
         <aside class="queue-sidebar">
           <div class="stats stats-vertical">
             <div class="stat"><div class="stat-label">Parts to print</div><div class="stat-value" data-stat="parts">0</div></div>
+            <div class="stat"><div class="stat-label">Distinct parts</div><div class="stat-value muted" data-stat="rows">0</div></div>
             <div class="stat"><div class="stat-label">Distinct orders</div><div class="stat-value" data-stat="orders">0</div></div>
             <div class="stat"><div class="stat-label">Aged 7+ days</div><div class="stat-value alert" data-stat="aged">0</div></div>
             <div class="stat"><div class="stat-label">Undefined SKUs</div><div class="stat-value warn" data-stat="undef">0</div></div>
@@ -5108,6 +5109,7 @@ body.mode-mobile .mobile-only { display: block; }
         <aside class="queue-sidebar">
           <div class="stats stats-vertical">
             <div class="stat"><div class="stat-label">Parts to print</div><div class="stat-value" data-stat="parts">0</div></div>
+            <div class="stat"><div class="stat-label">Distinct parts</div><div class="stat-value muted" data-stat="rows">0</div></div>
             <div class="stat"><div class="stat-label">Distinct orders</div><div class="stat-value" data-stat="orders">0</div></div>
             <div class="stat"><div class="stat-label">Aged 7+ days</div><div class="stat-value alert" data-stat="aged">0</div></div>
             <div class="stat"><div class="stat-label">Undefined SKUs</div><div class="stat-value warn" data-stat="undef">0</div></div>
@@ -6700,6 +6702,24 @@ document.addEventListener('click', (e) => {
 let _buildQueueCache = { key: null, byType: {} };
 function invalidateBuildQueueCache() { _buildQueueCache = { key: null, byType: {} }; }
 
+// Total UNITS of work in a built queue — the number of parts you actually
+// have to print, not the number of queue rows. An order for 5 of a part is
+// one row but five units.
+//
+// This is the single source of truth for "Parts to print", the nav counts,
+// and the FDM Time-to-clear backlog, so those three always reconcile.
+// Part Needed cards are excluded: they're alerts, not demand against stock,
+// and the ETA excludes them too.
+function queueUnitCount(built) {
+  if (!built || !Array.isArray(built.visible)) return 0;
+  let units = 0;
+  for (const r of built.visible) {
+    if (r._isNeed) continue;
+    units += Number(r._remaining) || 0;
+  }
+  return units;
+}
+
 function buildQueue(typeFilter) {
   // Cheap cache key: cardinalities. If the number of orders, parts, or
   // inventory entries changes, or if any of the maps mutate, save() will
@@ -6965,7 +6985,7 @@ function renderQueue(type) {
   if (section.classList.contains('hidden')) {
     // Still populate the count cache so sidebar is accurate.
     const built = buildQueue(type);
-    _sidebarQueueCounts[type] = built.visible.length;
+    _sidebarQueueCounts[type] = queueUnitCount(built);
     return;
   }
 
@@ -6973,7 +6993,7 @@ function renderQueue(type) {
   const all = built.visible;
   // Populate the sidebar count cache so renderSidebarCounts doesn't have to
   // re-run buildQueue for this type.
-  _sidebarQueueCounts[type] = all.length;
+  _sidebarQueueCounts[type] = queueUnitCount(built);
   const today = new Date(); today.setHours(0,0,0,0);
 
   // Search + age filter (scoped to this queue)
@@ -6994,7 +7014,21 @@ function renderQueue(type) {
   });
 
   // Stats
-  section.querySelector('[data-stat="parts"]').textContent = all.length.toLocaleString();
+  // Units, not rows — matches the nav count and the FDM Time-to-clear backlog.
+  section.querySelector('[data-stat="parts"]').textContent = queueUnitCount(built).toLocaleString();
+  // Distinct parts = the number of cards actually rendered, since both queues
+  // group by part name (one card per unique part). This is the number the user
+  // can count on screen — NOT all.length, which is order line items and matches
+  // nothing visible.
+  const rowsEl = section.querySelector('[data-stat="rows"]');
+  if (rowsEl) {
+    const distinctParts = new Set();
+    for (const r of all) {
+      if (r._isNeed) continue;
+      if (r.part) distinctParts.add(r.part);
+    }
+    rowsEl.textContent = distinctParts.size.toLocaleString();
+  }
   const distinctOrders = new Set(all.map(r => r.orderId)).size;
   section.querySelector('[data-stat="orders"]').textContent = distinctOrders;
   const todayMs = today.getTime();
@@ -9427,13 +9461,7 @@ function renderProductivity() {
     // Get remaining FDM demand from the built queue (already computed)
     let fdmBacklog = 0;
     try {
-      const built = buildQueue('fdm');
-      if (built && Array.isArray(built.visible)) {
-        for (const r of built.visible) {
-          if (r._isNeed) continue;  // Part Needed cards aren't inventory demand
-          fdmBacklog += Number(r._remaining) || 0;
-        }
-      }
+      fdmBacklog = queueUnitCount(buildQueue('fdm'));
     } catch {}
 
     if (fdmBacklog === 0) {
@@ -9443,7 +9471,7 @@ function renderProductivity() {
     } else if (dailyAvg <= 0) {
       etaEl.textContent = '?';
       etaEl.classList.add('muted');
-      if (etaSubEl) etaSubEl.textContent = `${fdmBacklog.toLocaleString()} parts pending · need history to estimate`;
+      if (etaSubEl) etaSubEl.textContent = `${fdmBacklog.toLocaleString()} units to print · need history to estimate`;
     } else {
       const days = fdmBacklog / dailyAvg;
       etaEl.classList.remove('muted');
@@ -9459,7 +9487,7 @@ function renderProductivity() {
       if (etaSubEl) {
         const doneDate = new Date(now.getTime() + days * 86400000);
         const dateStr = doneDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: days > 300 ? 'numeric' : undefined });
-        etaSubEl.textContent = `${fdmBacklog.toLocaleString()} parts pending · clears ~${dateStr}`;
+        etaSubEl.textContent = `${fdmBacklog.toLocaleString()} units to print · clears ~${dateStr}`;
       }
     }
   }
