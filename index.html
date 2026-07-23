@@ -750,9 +750,15 @@ body {
 .kanban-help strong { color: var(--ink-dim); font-weight: 700; }
 .kanban-board {
   display: grid;
-  grid-template-columns: 1.4fr repeat(5, 1fr);
+  grid-template-columns: minmax(220px, 1.4fr) repeat(5, minmax(190px, 1fr));
   gap: 10px;
   min-height: 400px;
+  /* Contain the board within .queue-main at ALL widths. Without this, `fr`
+     columns refuse to shrink below their cards' min-content width, the grid
+     overflows visibly to the right, and the sticky sidebar (z-index 5) paints
+     over the rightmost columns. */
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
 .kanban-col {
   background: var(--panel);
@@ -1010,19 +1016,27 @@ body {
 .priority-row .pcell-action { justify-content: center; }
 
 /* Top 10 block */
-/* Queue layout: main work area on top, stats sidebar always below.
-   This avoids the stats panel ever covering the rightmost kanban column. */
+/* Queue layout: main work area (kanban / FDM list) on the left, stats sidebar
+   in a fixed 340px right column. The board is overflow-contained so it can
+   never bleed under the sidebar. */
 .queue-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   gap: 24px;
   align-items: start;
 }
-.queue-main { min-width: 0; }
+.queue-main {
+  min-width: 0;
+  /* Establish a stacking context at the default level so nothing inside the
+     board can be painted over by the sidebar's sticky stats block. */
+  position: relative;
+  z-index: 1;
+}
 .queue-sidebar {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
 }
 .queue-sidebar > * { flex: 0 0 auto; }
 
@@ -1032,7 +1046,7 @@ body {
 .queue-sidebar .stats.stats-vertical {
   position: sticky;
   top: 16px;
-  z-index: 5;
+  z-index: 0;
 }
 
 /* Vertical stat stack for sidebar */
@@ -5977,6 +5991,11 @@ function cleanupFulfilledCustomOrders() {
           customer: e.customer || '',
           originalOrderDate: e.date || nowIso,
           kind: 'print',
+          printType: (typeof p === 'string') ? 'resin' : (p.type === 'fdm' ? 'fdm' : 'resin'),
+          // These parts were pulled from existing inventory to close a custom
+          // order — nothing was actually printed. Keep them in History for
+          // traceability, but exclude them from productivity numbers.
+          synthetic: true,
         });
       }
     }
@@ -8128,6 +8147,10 @@ function printPlate(clicked, qtyOverride) {
       customer: clicked.customer || '',
       originalOrderDate: clicked.date || null,
       kind: 'print',
+      // Stamp the print type at completion time. Grouped pseudo-rows don't
+      // carry `type`, so resolve from the library by part name instead of
+      // reading clicked.type (which is undefined for group cards).
+      printType: partPrintType(part),
     });
   }
 
@@ -9247,6 +9270,26 @@ function addPriorityItems(type, text) {
   return lines.length;
 }
 
+// Resolve the print type ('fdm' | 'resin') for a part name by scanning the
+// library. A part is FDM if ANY SKU defines it with type='fdm' (types
+// propagate across SKUs sharing a part name). Legacy string parts and parts
+// with no explicit type default to resin.
+//
+// Called at completion time so completedOrders entries carry the type they
+// were printed as — history stays correct even if the library changes later.
+function partPrintType(name) {
+  if (!name) return 'resin';
+  for (const sku of Object.keys(state.library)) {
+    const lib = state.library[sku];
+    if (!lib || !Array.isArray(lib.parts)) continue;
+    for (const p of lib.parts) {
+      if (typeof p === 'string') continue;   // legacy strings default to resin
+      if (p && p.name === name && p.type === 'fdm') return 'fdm';
+    }
+  }
+  return 'resin';
+}
+
 // Compute print productivity for the FDM sidebar. Uses `qtyToDemand` (units
 // that satisfied pending orders) rather than raw plate yield, so overproduction
 // into inventory doesn't inflate the numbers. Also estimates days-to-clear
@@ -9279,31 +9322,51 @@ function renderProductivity() {
 
   let printedToday = 0;
   let printedLast30 = 0;
+  let earliestInWindow = null;   // oldest FDM print inside the 30-day window
 
   for (const c of (state.completedOrders || [])) {
     if (c.kind !== 'print') continue;
-    if (!fdmParts.has(c.partName)) continue;
+    // Custom-order auto-close entries pull from inventory — nothing was
+    // printed, so they must not inflate productivity.
+    if (c.synthetic) continue;
+    // Prefer the type stamped at completion time. Fall back to inferring from
+    // the current library for entries logged before printType existed.
+    const ptype = c.printType || (fdmParts.has(c.partName) ? 'fdm' : 'resin');
+    if (ptype !== 'fdm') continue;
     const at = new Date(c.at);
     if (isNaN(at.getTime())) continue;
     // Prefer qtyToDemand (new field) — fall back to qty for old entries
     const qty = (typeof c.qtyToDemand === 'number') ? c.qtyToDemand : (Number(c.qty) || 0);
     if (at >= todayStart) printedToday += qty;
-    if (at >= thirtyDaysAgo) printedLast30 += qty;
+    if (at >= thirtyDaysAgo) {
+      printedLast30 += qty;
+      if (earliestInWindow === null || at < earliestInWindow) earliestInWindow = at;
+    }
   }
 
-  const dailyAvg = printedLast30 / 30;
+  // Divide by ACTUAL days of history, not a flat 30. Dividing a week's worth
+  // of work by 30 understates the average and badly inflates Time to clear.
+  // Window is inclusive of today and capped at 30.
+  let daysOfHistory = 30;
+  if (earliestInWindow) {
+    const earliestDay = new Date(earliestInWindow); earliestDay.setHours(0,0,0,0);
+    const span = Math.floor((todayStart.getTime() - earliestDay.getTime()) / 86400000) + 1;
+    daysOfHistory = Math.min(30, Math.max(1, span));
+  }
+  const dailyAvg = printedLast30 / daysOfHistory;
   const avgDisplay = dailyAvg >= 10 ? Math.round(dailyAvg) : dailyAvg.toFixed(1);
 
   todayEl.textContent = printedToday.toLocaleString();
   avgEl.textContent = avgDisplay;
   if (subEl) {
+    const windowLabel = daysOfHistory === 1 ? 'today only' : `last ${daysOfHistory} days`;
     if (printedToday === 0) {
-      subEl.textContent = 'Toward pending demand · Nothing done yet today';
+      subEl.textContent = `FDM only · Nothing done yet today`;
     } else if (dailyAvg > 0) {
       const pct = Math.round((printedToday / dailyAvg) * 100);
-      subEl.textContent = `Toward pending demand · Today is ${pct}% of average`;
+      subEl.textContent = `FDM only · Today is ${pct}% of ${windowLabel} average`;
     } else {
-      subEl.textContent = 'Toward pending demand · last 30 days';
+      subEl.textContent = `FDM only · ${windowLabel}`;
     }
   }
 
