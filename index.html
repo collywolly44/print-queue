@@ -940,32 +940,47 @@ body {
   color: #0a1c0d;
 }
 
-/* --- Resin queue: give the kanban board the full content width ---------
-   Six columns alongside a 340px sidebar forces the MEGA column off-screen
-   and squeezes part names down to ellipses. The stats/Top 10 panel is
-   reference info, not something you interact with while dragging cards, so
-   on anything short of a very wide monitor it drops below the board and the
-   board gets the whole row. Above 1750px there's room for both side by side. */
-@media (max-width: 1750px) {
-  #view-queue-resin .queue-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  #view-queue-resin .queue-sidebar {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 16px;
-  }
-  /* Un-pin the stats block once it's a horizontal strip below the board. */
-  #view-queue-resin .queue-sidebar .stats.stats-vertical {
-    position: static;
-    flex: 1 1 260px;
-    min-width: 260px;
-  }
-  #view-queue-resin .queue-sidebar .top10-block {
-    flex: 2 1 420px;
-    min-width: 320px;
-  }
+/* --- Resin queue: the kanban board always gets the full content width -----
+   The stats/Top 10 panel is reference info you don't touch while dragging
+   cards, so it always sits BELOW the board (as a horizontal strip), freeing
+   the whole row for wide columns. */
+#view-queue-resin .queue-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+#view-queue-resin .queue-sidebar {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+}
+/* Un-pin the stats block once it's a horizontal strip below the board. */
+#view-queue-resin .queue-sidebar .stats.stats-vertical {
+  position: static;
+  flex: 1 1 260px;
+  min-width: 260px;
+}
+#view-queue-resin .queue-sidebar .top10-block {
+  flex: 2 1 420px;
+  min-width: 320px;
+}
+
+/* Unassigned is a staging area, not a printer — give it the full top row so
+   the five printer columns each get 1/5 of the board instead of 1/6. Its
+   cards lay out horizontally so an near-empty staging strip stays short. */
+#kanban-resin {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+#kanban-resin .kanban-col[data-machine="unassigned"] {
+  grid-column: 1 / -1;
+}
+#kanban-resin .kanban-col[data-machine="unassigned"] .kanban-col-body {
+  flex-direction: row;
+  flex-wrap: wrap;
+  max-height: 220px;
+}
+#kanban-resin .kanban-col[data-machine="unassigned"] .kanban-card {
+  flex: 1 1 220px;
+  max-width: 300px;
 }
 
 /* On narrower screens the columns still all fit (minmax(0,…) above) — tighten
