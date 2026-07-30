@@ -6790,7 +6790,31 @@ function buildQueue(typeFilter) {
       });
     }
   }
-  allRowsAll.sort((a, b) => new Date(a.date) - new Date(b.date));
+  // --- Inventory allocation order -----------------------------------------
+  // Allocate on-hand stock in QUEUE-PRIORITY order, not pure oldest-first, so a
+  // standard order past its threshold reserves parts BEFORE an older vehicle
+  // order that needs the same part. Net effect: the standard order shows
+  // satisfied from stock, and the leftover demand for that part falls to the
+  // (slower) vehicle orders. Within a tier it's still oldest-order-first.
+  //
+  // Tiers here mirror the display tiers in renderQueue exactly, computed per
+  // underlying order row on its own age + vehicle flag.
+  // NOTE: this makes buildQueue depend on the overdue thresholds; the slider's
+  // Save calls save() -> invalidateBuildQueueCache(), so a threshold change
+  // re-runs this allocation.
+  const _cStd = state.overdueStandard || 18;
+  const _cVeh = state.overdueVehicle || 28;
+  const _cToday = new Date(); _cToday.setHours(0, 0, 0, 0);
+  const consumeTier = (r) => {
+    const age = daysBetween(new Date(r.date), _cToday);
+    if (!r._orderIsVehicle && age >= _cStd) return 1;  // standard, overdue
+    if (r._orderIsVehicle && age >= _cVeh) return 2;   // vehicle, overdue
+    return 3;                                          // not yet overdue
+  };
+  allRowsAll.forEach(r => { r._consumeTier = consumeTier(r); });
+  allRowsAll.sort((a, b) =>
+    (a._consumeTier - b._consumeTier) || (new Date(a.date) - new Date(b.date))
+  );
 
   const stock = {};
   for (const [k, v] of Object.entries(state.inventory)) stock[k] = Number(v) || 0;
