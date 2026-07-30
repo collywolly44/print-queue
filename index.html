@@ -7189,11 +7189,31 @@ function renderQueue(type) {
   // Use user-configurable thresholds from state (default 18 standard, 28 vehicle)
   const stdThr = state.overdueStandard || 18;
   const vehThr = state.overdueVehicle || 28;
+  // Tier a SINGLE underlying order on its own age and its own vehicle flag.
+  const rowTier = (row, ageDays) => {
+    if (!row._orderIsVehicle && ageDays >= stdThr) return 1;
+    if (row._orderIsVehicle && ageDays >= vehThr) return 2;
+    return 3;
+  };
+  // A grouped card is demand from several orders for the same part. Tier it on
+  // the BEST tier any underlying order qualifies for — NOT on the collapsed
+  // group flag. Otherwise a single vehicle order sharing the part drags the
+  // whole card into the vehicle tier and buries pure-standard orders that have
+  // been waiting past the standard threshold. A part that appears ONLY on
+  // vehicle orders never reaches the standard branch, so it correctly stays in
+  // the vehicle tier. Mirrors the resin queue's groupTier.
   const tierFor = (r, ageDays) => {
     if (r._isNeed) return 0;
-    if (!r._orderIsVehicle && ageDays >= stdThr) return 1;
-    if (r._orderIsVehicle && ageDays >= vehThr) return 2;
-    return 3;
+    if (Array.isArray(r._underlyingRows) && r._underlyingRows.length) {
+      let best = 3;
+      for (const ur of r._underlyingRows) {
+        const t = rowTier(ur, daysBetween(new Date(ur.date), today));
+        if (t < best) best = t;
+        if (best === 1) break;  // can't do better
+      }
+      return best;
+    }
+    return rowTier(r, ageDays);
   };
   // Pre-compute sort keys to avoid parsing dates and re-computing ages
   // inside every comparator call. At 13k rows this saves ~50k Date allocations.
