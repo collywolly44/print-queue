@@ -6380,12 +6380,26 @@ function scheduleCloudPush(blob) {
         if (res && res.committed && res.snapshot && res.snapshot.exists()) {
           const mergedBlob = transformKeys(res.snapshot.val(), fbDecodeKey);
           delete mergedBlob._writeToken;
+          // If local advanced since this push fired (rapid successive Done
+          // clicks), this committed result is already stale — re-applying it
+          // would briefly revert the newer work, causing parts to flash back.
+          // Skip; the queued newer push will sync the latest. Still advance the
+          // ancestor so the next push's deltas are computed correctly.
+          let superseded = false;
+          try {
+            const nowRaw = localStorage.getItem(STORAGE_KEY);
+            const nowBlob = nowRaw ? JSON.parse(nowRaw) : null;
+            if (nowBlob && nowBlob.lastSync && localBlob.lastSync &&
+                nowBlob.lastSync !== localBlob.lastSync) superseded = true;
+          } catch {}
           const changed =
             !_invEqual(mergedBlob.inventory, localBlob.inventory) ||
             !_byIdEqual(mergedBlob.orderEdits, localBlob.orderEdits) ||
             !_byIdEqual(mergedBlob.partsNeeded, localBlob.partsNeeded) ||
             !_completedEqual(mergedBlob.completedOrders, localBlob.completedOrders);
-          if (changed) {
+          if (window._syncDebug) console.log('[sync] push done',
+            { changed, superseded, pushedAt: localBlob.lastSync, committedInvKeys: Object.keys(mergedBlob.inventory||{}).length });
+          if (changed && !superseded) {
             _suspendCloudWrites = true;
             applyRestoreBlob(mergedBlob, { fromCloud: true });  // persists + resets base
             _suspendCloudWrites = false;
@@ -13137,7 +13151,7 @@ function watchCloudConnection() {
     // merge it. The pending push runs a transaction against the freshest cloud
     // (which includes this update) and then syncs local to the merged result,
     // so nothing is missed; it's just deferred by <1s until the push lands.
-    if (_cloudPushPending) return;
+    if (_cloudPushPending) { if (window._syncDebug) console.log('[sync] listener skipped (push pending)'); return; }
     // Otherwise it came from another device (or another tab). Apply it.
     try {
       const blob = transformKeys(raw, fbDecodeKey);
@@ -13158,6 +13172,10 @@ function watchCloudConnection() {
         return;
       }
       _suspendCloudWrites = true;
+      if (window._syncDebug) console.log('[sync] listener APPLYING foreign update',
+        { incomingTime: blob.lastSync, localTime: localBlobNow && localBlobNow.lastSync,
+          token: raw._writeToken, tokenWasOurs: _recentWriteTokens.includes(raw._writeToken),
+          invKeys: Object.keys(blob.inventory||{}).length });
       applyRestoreBlob(blob, { fromCloud: true });
       _suspendCloudWrites = false;
       // Subtle hint instead of a noisy toast on every echo
