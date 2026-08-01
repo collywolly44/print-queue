@@ -6218,6 +6218,64 @@ function hasUnsyncedFlag() {
   try { return localStorage.getItem(UNSYNCED_KEY) === '1'; } catch { return false; }
 }
 
+// ===== Multi-writer merge sync =========================================
+// The whole workspace is stored as one blob and pushed with a transaction
+// that MERGES three high-churn, independently-edited collections against the
+// freshest cloud copy, instead of blindly overwriting. This stops two devices
+// editing DIFFERENT things at the same time from clobbering each other:
+//   - inventory      : per-part counts (merged by part)
+//   - orderEdits      : keyed by unique edit id (merged by id)
+//   - completedOrders : append-only log (unioned)
+// Everything else remains last-writer-wins (unchanged) — that's the scoped
+// first pass. `_syncBase` is the common ancestor: the state this device last
+// agreed with the cloud, used so we can tell what THIS device changed (and
+// what it deleted) versus what another device changed.
+let _syncBase = null;  // { inventory:{}, orderEditIds:[] } — null until first sync
+function _captureSyncBase() {
+  _syncBase = {
+    inventory: Object.assign({}, state.inventory || {}),
+    orderEditIds: (state.orderEdits || []).map(e => e && e.id).filter(Boolean),
+  };
+}
+// Merge inventory: start from cloud, then re-apply only the parts THIS device
+// changed or removed relative to the common ancestor. Parts another device
+// changed (and we didn't touch) keep the cloud value.
+function _mergeInventory(cloudInv, localInv, baseInv) {
+  const out = Object.assign({}, cloudInv || {});
+  const base = baseInv || {}, local = localInv || {};
+  for (const k of Object.keys(local)) {
+    if ((Number(local[k]) || 0) !== (Number(base[k]) || 0)) out[k] = Number(local[k]) || 0;
+  }
+  for (const k of Object.keys(base)) {
+    if (!(k in local)) delete out[k];  // this device removed the part
+  }
+  return out;
+}
+// Merge orderEdits by id: cloud's set, then our adds/updates win for ids we
+// hold, and ids we deleted (present in ancestor, absent locally) are removed.
+function _mergeOrderEdits(cloudEdits, localEdits, baseIds) {
+  const byId = new Map();
+  for (const e of (cloudEdits || [])) if (e && e.id) byId.set(e.id, e);
+  const localIds = new Set();
+  for (const e of (localEdits || [])) if (e && e.id) { byId.set(e.id, e); localIds.add(e.id); }
+  for (const id of (baseIds || [])) if (!localIds.has(id)) byId.delete(id);
+  return Array.from(byId.values());
+}
+function _completedKey(c) {
+  return [c.at, c.partName, c.sku, c.customer, c.kind, c.qty, c.qtyToDemand].join('|');
+}
+// Merge completedOrders as an append-only union (dedup by content key), so two
+// people clicking Done at once never drop each other's records. Capped to the
+// newest entries to avoid unbounded growth across repeated merges.
+function _mergeCompleted(cloudC, localC) {
+  const seen = new Set(), out = [];
+  for (const c of (cloudC || [])) { const k = _completedKey(c); if (!seen.has(k)) { seen.add(k); out.push(c); } }
+  for (const c of (localC || [])) { const k = _completedKey(c); if (!seen.has(k)) { seen.add(k); out.push(c); } }
+  const CAP = 5000;
+  return out.length > CAP ? out.slice(out.length - CAP) : out;
+}
+// ======================================================================
+
 function scheduleCloudPush(blob) {
   if (!_fbReady || !_fbUser || _suspendCloudWrites) return;
   _cloudPushPending = true;
@@ -6228,11 +6286,58 @@ function scheduleCloudPush(blob) {
     try {
       // Read the very latest local state at write time (in case more edits happened)
       const raw = localStorage.getItem(STORAGE_KEY);
-      const current = raw ? JSON.parse(raw) : blob;
-      const sanitized = transformKeys(current, fbEncodeKey);
+      const localBlob = raw ? JSON.parse(raw) : blob;
       _localWriteToken = Date.now() + ':' + Math.random();
-      sanitized._writeToken = _localWriteToken;
-      await window._fb.set(cloudRef(), sanitized);
+
+      if (!window._fb.runTransaction || !_syncBase) {
+        // No transaction support, or no common ancestor established yet (very
+        // first push before the initial pull finished) — fall back to a plain
+        // whole-blob write, which is the original behavior.
+        const sanitized = transformKeys(localBlob, fbEncodeKey);
+        sanitized._writeToken = _localWriteToken;
+        await window._fb.set(cloudRef(), sanitized);
+      } else {
+        const base = _syncBase;
+        const res = await window._fb.runTransaction(cloudRef(), (encCurrent) => {
+          if (encCurrent === null || encCurrent === undefined) {
+            // Cloud empty — seed it with our full local blob.
+            const s = transformKeys(localBlob, fbEncodeKey);
+            s._writeToken = _localWriteToken;
+            return s;
+          }
+          const cloud = transformKeys(encCurrent, fbDecodeKey);
+          // Start from our local blob (last-writer-wins for everything), then
+          // override the three collections with a proper merge against cloud.
+          const merged = Object.assign({}, localBlob);
+          merged.inventory       = _mergeInventory(cloud.inventory, localBlob.inventory, base.inventory);
+          merged.orderEdits      = _mergeOrderEdits(cloud.orderEdits, localBlob.orderEdits, base.orderEditIds);
+          merged.completedOrders = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
+          merged.lastSync = localBlob.lastSync;
+          merged._writeToken = _localWriteToken;
+          return transformKeys(merged, fbEncodeKey);
+        }, { applyLocally: false });
+
+        // Sync local to the committed merged result so this device picks up
+        // whatever another device merged in. Only re-render if the merge
+        // actually changed our three tracked collections (avoids UI churn on
+        // every keystroke-driven push when nothing else changed).
+        if (res && res.committed && res.snapshot && res.snapshot.exists()) {
+          const mergedBlob = transformKeys(res.snapshot.val(), fbDecodeKey);
+          delete mergedBlob._writeToken;
+          const changed =
+            JSON.stringify(mergedBlob.inventory || {})       !== JSON.stringify(localBlob.inventory || {}) ||
+            JSON.stringify(mergedBlob.orderEdits || [])      !== JSON.stringify(localBlob.orderEdits || []) ||
+            JSON.stringify(mergedBlob.completedOrders || []) !== JSON.stringify(localBlob.completedOrders || []);
+          if (changed) {
+            _suspendCloudWrites = true;
+            applyRestoreBlob(mergedBlob, { fromCloud: true });  // persists + resets base
+            _suspendCloudWrites = false;
+          } else {
+            _captureSyncBase();  // nothing merged in — just advance the ancestor
+          }
+        }
+      }
+
       _cloudPushPending = false;
       setUnsyncedFlag(false);
       // Confirm sync succeeded in the status pill. Uses 'connected' (not
@@ -6240,6 +6345,7 @@ function scheduleCloudPush(blob) {
       if (_fbUser) cloudStatus('connected', displayName(_fbUser.email));
     } catch (e) {
       console.error('Cloud push failed:', e);
+      _suspendCloudWrites = false;
       // Leave the unsynced flag set — a future push attempt will clear it.
       cloudStatus('offline', 'Sync failed — will retry on next change');
       // Retry once after a short delay in case it was a transient iOS/network blip
@@ -12453,6 +12559,8 @@ function applyRestoreBlob(blob, opts) {
     try { invalidateBuildQueueCache(); } catch {}
     _sidebarQueueCounts.resin = null;
     _sidebarQueueCounts.fdm = null;
+    // We now match the cloud — this is the new common ancestor for merges.
+    _captureSyncBase();
   } else {
     save();
   }
@@ -12696,6 +12804,7 @@ async function initFirebase() {
       ref: dbMod.ref,
       get: dbMod.get,
       set: dbMod.set,
+      runTransaction: dbMod.runTransaction,
       onValue: dbMod.onValue,
       onDisconnect: dbMod.onDisconnect,
       serverTimestamp: dbMod.serverTimestamp,
@@ -12923,6 +13032,10 @@ async function pullFromCloudOnce() {
       cloudStatus("connected", displayName(_fbUser.email));
     }
     _initialPullDone = true;
+    // After the boot pull, local state matches the cloud (we either pulled it
+    // down or pushed ours up). Capture that as the merge common ancestor so the
+    // first real edit's push knows what changed vs. this agreed baseline.
+    _captureSyncBase();
   } catch (e) {
     console.error('Cloud pull failed:', e);
     cloudStatus('offline', 'Offline');
