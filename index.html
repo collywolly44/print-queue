@@ -6240,14 +6240,24 @@ function _captureSyncBase() {
 // Merge inventory: start from cloud, then re-apply only the parts THIS device
 // changed or removed relative to the common ancestor. Parts another device
 // changed (and we didn't touch) keep the cloud value.
+// Merge inventory by DELTA, not absolute value. A Done click deposits parts
+// (+N), a ship subtracts (−N), adjustments are ±N — all additive. So we apply
+// THIS device's change relative to the common ancestor on top of the cloud's
+// current value. Two devices depositing to the same part at once therefore
+// SUM (10 +4 +3 = 17) instead of one overwriting the other.
 function _mergeInventory(cloudInv, localInv, baseInv) {
   const out = Object.assign({}, cloudInv || {});
   const base = baseInv || {}, local = localInv || {};
-  for (const k of Object.keys(local)) {
-    if ((Number(local[k]) || 0) !== (Number(base[k]) || 0)) out[k] = Number(local[k]) || 0;
-  }
-  for (const k of Object.keys(base)) {
-    if (!(k in local)) delete out[k];  // this device removed the part
+  const keys = new Set([...Object.keys(base), ...Object.keys(local)]);
+  for (const k of keys) {
+    const inLocal = Object.prototype.hasOwnProperty.call(local, k);
+    const inBase  = Object.prototype.hasOwnProperty.call(base, k);
+    if (!inLocal && inBase) { delete out[k]; continue; }  // this device removed the part
+    const delta = (Number(local[k]) || 0) - (Number(base[k]) || 0);
+    if (delta !== 0) {
+      const v = (Number(out[k]) || 0) + delta;
+      out[k] = v < 0 ? 0 : v;
+    }
   }
   return out;
 }
@@ -13068,6 +13078,13 @@ function watchCloudConnection() {
     const raw = snap.val();
     // If this update's _writeToken matches ours, it's our own echo — ignore.
     if (raw && raw._writeToken && raw._writeToken === _localWriteToken) return;
+    // If THIS device has an un-pushed local change waiting (e.g. a Done deposit
+    // still in the debounce window), do NOT overwrite local with this incoming
+    // update — that would erase the pending deposit before its own push can
+    // merge it. The pending push runs a transaction against the freshest cloud
+    // (which includes this update) and then syncs local to the merged result,
+    // so nothing is missed; it's just deferred by <1s until the push lands.
+    if (_cloudPushPending) return;
     // Otherwise it came from another device (or another tab). Apply it.
     try {
       const blob = transformKeys(raw, fbDecodeKey);
