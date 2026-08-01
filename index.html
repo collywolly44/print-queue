@@ -6230,11 +6230,14 @@ function hasUnsyncedFlag() {
 // first pass. `_syncBase` is the common ancestor: the state this device last
 // agreed with the cloud, used so we can tell what THIS device changed (and
 // what it deleted) versus what another device changed.
-let _syncBase = null;  // { inventory:{}, orderEditIds:[] } — null until first sync
+let _syncBase = null;  // { inventory:{}, orderEdits:[], partsNeeded:[] } — null until first sync
 function _captureSyncBase() {
   _syncBase = {
     inventory: Object.assign({}, state.inventory || {}),
-    orderEditIds: (state.orderEdits || []).map(e => e && e.id).filter(Boolean),
+    // Deep snapshots so later in-place mutations (resolvedAt/placedAt on a
+    // partsNeeded entry) are detectable as changes vs this ancestor.
+    orderEdits: JSON.parse(JSON.stringify(state.orderEdits || [])),
+    partsNeeded: JSON.parse(JSON.stringify(state.partsNeeded || [])),
   };
 }
 // Merge inventory: start from cloud, then re-apply only the parts THIS device
@@ -6261,14 +6264,25 @@ function _mergeInventory(cloudInv, localInv, baseInv) {
   }
   return out;
 }
-// Merge orderEdits by id: cloud's set, then our adds/updates win for ids we
-// hold, and ids we deleted (present in ancestor, absent locally) are removed.
-function _mergeOrderEdits(cloudEdits, localEdits, baseIds) {
+// Merge an id-keyed array (orderEdits, partsNeeded) by diffing against the
+// common ancestor: cloud's set is the base, then THIS device's adds and
+// genuine edits win for their ids, and ids this device deleted are removed.
+// Entries this device did NOT touch keep the cloud version — so another
+// device's in-place update (e.g. marking a needed part resolved) survives.
+function _mergeById(cloudArr, localArr, baseArr) {
   const byId = new Map();
-  for (const e of (cloudEdits || [])) if (e && e.id) byId.set(e.id, e);
-  const localIds = new Set();
-  for (const e of (localEdits || [])) if (e && e.id) { byId.set(e.id, e); localIds.add(e.id); }
-  for (const id of (baseIds || [])) if (!localIds.has(id)) byId.delete(id);
+  for (const e of (cloudArr || [])) if (e && e.id != null) byId.set(e.id, e);
+  const baseById = new Map();
+  for (const e of (baseArr || [])) if (e && e.id != null) baseById.set(e.id, e);
+  const localById = new Map();
+  for (const e of (localArr || [])) if (e && e.id != null) localById.set(e.id, e);
+  // deletions by this device: present in ancestor, gone locally
+  for (const id of baseById.keys()) if (!localById.has(id)) byId.delete(id);
+  // adds / real edits by this device (only entries that changed vs ancestor)
+  for (const [id, e] of localById) {
+    const b = baseById.get(id);
+    if (!b || JSON.stringify(b) !== JSON.stringify(e)) byId.set(id, e);
+  }
   return Array.from(byId.values());
 }
 function _completedKey(c) {
@@ -6320,7 +6334,8 @@ function scheduleCloudPush(blob) {
           // override the three collections with a proper merge against cloud.
           const merged = Object.assign({}, localBlob);
           merged.inventory       = _mergeInventory(cloud.inventory, localBlob.inventory, base.inventory);
-          merged.orderEdits      = _mergeOrderEdits(cloud.orderEdits, localBlob.orderEdits, base.orderEditIds);
+          merged.orderEdits      = _mergeById(cloud.orderEdits, localBlob.orderEdits, base.orderEdits);
+          merged.partsNeeded     = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base.partsNeeded);
           merged.completedOrders = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
           merged.lastSync = localBlob.lastSync;
           merged._writeToken = _localWriteToken;
@@ -6337,6 +6352,7 @@ function scheduleCloudPush(blob) {
           const changed =
             JSON.stringify(mergedBlob.inventory || {})       !== JSON.stringify(localBlob.inventory || {}) ||
             JSON.stringify(mergedBlob.orderEdits || [])      !== JSON.stringify(localBlob.orderEdits || []) ||
+            JSON.stringify(mergedBlob.partsNeeded || [])     !== JSON.stringify(localBlob.partsNeeded || []) ||
             JSON.stringify(mergedBlob.completedOrders || []) !== JSON.stringify(localBlob.completedOrders || []);
           if (changed) {
             _suspendCloudWrites = true;
