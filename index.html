@@ -6231,13 +6231,14 @@ function hasUnsyncedFlag() {
 // agreed with the cloud, used so we can tell what THIS device changed (and
 // what it deleted) versus what another device changed.
 let _syncBase = null;  // { inventory:{}, orderEdits:[], partsNeeded:[] } — null until first sync
-function _captureSyncBase() {
+function _captureSyncBase(src) {
+  const s = src || state;
   _syncBase = {
-    inventory: Object.assign({}, state.inventory || {}),
+    inventory: Object.assign({}, s.inventory || {}),
     // Deep snapshots so later in-place mutations (resolvedAt/placedAt on a
     // partsNeeded entry) are detectable as changes vs this ancestor.
-    orderEdits: JSON.parse(JSON.stringify(state.orderEdits || [])),
-    partsNeeded: JSON.parse(JSON.stringify(state.partsNeeded || [])),
+    orderEdits: JSON.parse(JSON.stringify(s.orderEdits || [])),
+    partsNeeded: JSON.parse(JSON.stringify(s.partsNeeded || [])),
   };
 }
 // Merge inventory: start from cloud, then re-apply only the parts THIS device
@@ -6298,6 +6299,32 @@ function _mergeCompleted(cloudC, localC) {
   const CAP = 5000;
   return out.length > CAP ? out.slice(out.length - CAP) : out;
 }
+// Order-INSENSITIVE content equality for the merged collections. Used to decide
+// whether a push's merged result actually differs from what we already have. A
+// merge reorders keys/entries (cloud first, then ours), so a stringified compare
+// would report "changed" on every push and trigger a needless full re-render —
+// which is what caused the "parts vanish, flash back, vanish again" glitch.
+function _invEqual(a, b) {
+  a = a || {}; b = b || {};
+  const ak = Object.keys(a);
+  if (ak.length !== Object.keys(b).length) return false;
+  for (const k of ak) if ((Number(a[k]) || 0) !== (Number(b[k]) || 0)) return false;
+  return true;
+}
+function _byIdEqual(a, b) {
+  a = a || []; b = b || [];
+  if (a.length !== b.length) return false;
+  const ma = new Map(a.map(e => [e && e.id, JSON.stringify(e)]));
+  for (const e of b) { if (!e) continue; if (ma.get(e.id) !== JSON.stringify(e)) return false; }
+  return true;
+}
+function _completedEqual(a, b) {
+  a = a || []; b = b || [];
+  if (a.length !== b.length) return false;
+  const sa = new Set(a.map(_completedKey));
+  for (const c of b) if (!sa.has(_completedKey(c))) return false;
+  return true;
+}
 // ======================================================================
 
 function scheduleCloudPush(blob) {
@@ -6312,6 +6339,10 @@ function scheduleCloudPush(blob) {
       const raw = localStorage.getItem(STORAGE_KEY);
       const localBlob = raw ? JSON.parse(raw) : blob;
       _localWriteToken = Date.now() + ':' + Math.random();
+      // Remember recent tokens (not just the latest) so a superseded push's
+      // echo is still recognized as ours and ignored by the listener.
+      _recentWriteTokens.push(_localWriteToken);
+      if (_recentWriteTokens.length > 40) _recentWriteTokens.shift();
 
       if (!window._fb.runTransaction || !_syncBase) {
         // No transaction support, or no common ancestor established yet (very
@@ -6350,16 +6381,16 @@ function scheduleCloudPush(blob) {
           const mergedBlob = transformKeys(res.snapshot.val(), fbDecodeKey);
           delete mergedBlob._writeToken;
           const changed =
-            JSON.stringify(mergedBlob.inventory || {})       !== JSON.stringify(localBlob.inventory || {}) ||
-            JSON.stringify(mergedBlob.orderEdits || [])      !== JSON.stringify(localBlob.orderEdits || []) ||
-            JSON.stringify(mergedBlob.partsNeeded || [])     !== JSON.stringify(localBlob.partsNeeded || []) ||
-            JSON.stringify(mergedBlob.completedOrders || []) !== JSON.stringify(localBlob.completedOrders || []);
+            !_invEqual(mergedBlob.inventory, localBlob.inventory) ||
+            !_byIdEqual(mergedBlob.orderEdits, localBlob.orderEdits) ||
+            !_byIdEqual(mergedBlob.partsNeeded, localBlob.partsNeeded) ||
+            !_completedEqual(mergedBlob.completedOrders, localBlob.completedOrders);
           if (changed) {
             _suspendCloudWrites = true;
             applyRestoreBlob(mergedBlob, { fromCloud: true });  // persists + resets base
             _suspendCloudWrites = false;
           } else {
-            _captureSyncBase();  // nothing merged in — just advance the ancestor
+            _captureSyncBase(mergedBlob);  // nothing merged in — advance ancestor to committed cloud
           }
         }
       }
@@ -12795,6 +12826,7 @@ let _fbReady = false;
 let _initialPullDone = false;
 let _suspendCloudWrites = false;   // true while applying a cloud update locally
 let _localWriteToken = null;       // last token we wrote; used to ignore our own pushback
+let _recentWriteTokens = [];       // recent tokens, so superseded pushes' echoes are still recognized as ours
 let _watchUnsub = null;            // unsubscribe fn for the cloud value listener
 
 function cloudStatus(state, label) {
@@ -13023,6 +13055,7 @@ async function pullFromCloudOnce() {
       if (localBlob && (Object.keys(localBlob.library || {}).length > 0 || (localBlob.orders || []).length > 0)) {
         const sanitized = transformKeys(localBlob, fbEncodeKey);
         _localWriteToken = Date.now() + ':' + Math.random();
+        _recentWriteTokens.push(_localWriteToken); if (_recentWriteTokens.length > 40) _recentWriteTokens.shift();
         sanitized._writeToken = _localWriteToken;
         await window._fb.set(cloudRef(), sanitized);
         setUnsyncedFlag(false);
@@ -13035,6 +13068,7 @@ async function pullFromCloudOnce() {
       // edit and a newer timestamp, so it wins.
       const sanitized = transformKeys(localBlob, fbEncodeKey);
       _localWriteToken = Date.now() + ':' + Math.random();
+      _recentWriteTokens.push(_localWriteToken); if (_recentWriteTokens.length > 40) _recentWriteTokens.shift();
       sanitized._writeToken = _localWriteToken;
       await window._fb.set(cloudRef(), sanitized);
       setUnsyncedFlag(false);
@@ -13093,7 +13127,10 @@ function watchCloudConnection() {
     if (!snap.exists()) return;
     const raw = snap.val();
     // If this update's _writeToken matches ours, it's our own echo — ignore.
-    if (raw && raw._writeToken && raw._writeToken === _localWriteToken) return;
+    // If this update's _writeToken is one of OUR recent writes, it's our own
+    // echo — ignore it (covers rapid pushes where the latest token moved on).
+    if (raw && raw._writeToken &&
+        (raw._writeToken === _localWriteToken || _recentWriteTokens.includes(raw._writeToken))) return;
     // If THIS device has an un-pushed local change waiting (e.g. a Done deposit
     // still in the debounce window), do NOT overwrite local with this incoming
     // update — that would erase the pending deposit before its own push can
