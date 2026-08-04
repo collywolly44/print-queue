@@ -9638,6 +9638,29 @@ function renderProductivity() {
     }
   }
 
+  // Map each part name to its plate yield, and a "counts toward the estimate?"
+  // test. Parts with a big plate yield (tiny parts, hundreds per plate) clear
+  // almost instantly and distort the pace/ETA, so productivity counts only
+  // SMALL-BATCH parts: yield < 5. Parts with no yield on record are INCLUDED.
+  const yieldByPart = {};
+  for (const sku of Object.keys(state.library)) {
+    const lib = state.library[sku];
+    if (!lib || !Array.isArray(lib.parts)) continue;
+    for (const p of lib.parts) {
+      const name = typeof p === 'string' ? p : (p && p.name);
+      if (!name) continue;
+      const y = typeof p === 'string' ? 1 : (Number(p.yield) || 0);
+      // Keep the max yield seen — if a part is ever a high-yield plate, treat it as big-batch.
+      if (!(name in yieldByPart) || y > yieldByPart[name]) yieldByPart[name] = y;
+    }
+  }
+  const smallBatch = (name) => {
+    if (!name || !(name in yieldByPart)) return true;  // not in library / no yield → include
+    const y = yieldByPart[name];
+    if (!y || y <= 0) return true;                     // yield not set yet → include
+    return y < 5;                                      // only count small-batch parts
+  };
+
   const now = new Date();
   const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400000);
@@ -9655,6 +9678,8 @@ function renderProductivity() {
     // the current library for entries logged before printType existed.
     const ptype = c.printType || (fdmParts.has(c.partName) ? 'fdm' : 'resin');
     if (ptype !== 'fdm') continue;
+    // Only small-batch parts (yield < 5, or no yield yet) count toward the pace.
+    if (!smallBatch(c.partName)) continue;
     const at = new Date(c.at);
     if (isNaN(at.getTime())) continue;
     // Prefer qtyToDemand (new field) — fall back to qty for old entries
@@ -9692,12 +9717,18 @@ function renderProductivity() {
     }
   }
 
-  // ETA: total remaining FDM demand ÷ daily average
+  // ETA: remaining SMALL-BATCH FDM demand ÷ daily average. Both sides use the
+  // same yield<5 filter, so big high-yield parts (which clear in one plate)
+  // don't distort the days-to-clear estimate.
   if (etaEl) {
-    // Get remaining FDM demand from the built queue (already computed)
     let fdmBacklog = 0;
     try {
-      fdmBacklog = queueUnitCount(buildQueue('fdm'));
+      const built = buildQueue('fdm');
+      for (const r of (built.visible || [])) {
+        if (r._isNeed) continue;
+        if (!smallBatch(r.part)) continue;
+        fdmBacklog += Number(r._remaining) || 0;
+      }
     } catch {}
 
     if (fdmBacklog === 0) {
