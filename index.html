@@ -2272,6 +2272,46 @@ body {
   font-size: 12px;
 }
 .inv-hist-row:last-child { border-bottom: none; }
+.hist-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.hist-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-dim);
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.hist-tab:hover { color: var(--ink); }
+.hist-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.ledger-controls { margin-bottom: 4px; }
+.ledger-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 12px 16px;
+  margin-top: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.ledger-summary .ls-item { display: flex; flex-direction: column; gap: 2px; }
+.ledger-summary .ls-label {
+  font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint);
+}
+.ledger-summary .ls-value { font-size: 18px; font-weight: 700; color: var(--ink); }
+.ledger-summary .ls-value.pos { color: #3fb950; }
+.ledger-summary .ls-value.neg { color: #e5533c; }
 .inv-hist-row.header {
   background: var(--bg);
   font-family: 'JetBrains Mono', monospace;
@@ -5392,12 +5432,29 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="page-header">
         <div>
           <h1 class="page-title">History</h1>
-          <div class="page-sub">Everything Done from queues, paint, and Part Needed cards. Newest first.</div>
+          <div class="page-sub">Completed prints and the full inventory ledger. Newest first.</div>
         </div>
       </div>
-      <div class="dash-panel" style="padding:0;overflow:hidden;">
-        <div class="completed-table" id="completed-table">
-          <div class="empty-sub" style="padding:30px;text-align:center;">No completed items yet — hit Done on a queue card to start tracking.</div>
+      <div class="hist-tabs">
+        <button class="hist-tab active" data-hist-tab="completed">Completed</button>
+        <button class="hist-tab" data-hist-tab="ledger">Inventory ledger</button>
+      </div>
+      <div data-hist-panel="completed">
+        <div class="dash-panel" style="padding:0;overflow:hidden;">
+          <div class="completed-table" id="completed-table">
+            <div class="empty-sub" style="padding:30px;text-align:center;">No completed items yet — hit Done on a queue card to start tracking.</div>
+          </div>
+        </div>
+      </div>
+      <div data-hist-panel="ledger" class="hidden">
+        <div class="ledger-controls">
+          <input type="text" id="ledger-search" class="search" placeholder="Search a part name to see every change to its count…" autocomplete="off">
+        </div>
+        <div id="ledger-summary" class="ledger-summary hidden"></div>
+        <div class="dash-panel" style="padding:0;overflow:hidden;margin-top:10px;">
+          <div id="ledger-container">
+            <div class="empty-sub" style="padding:30px;text-align:center;">Loading…</div>
+          </div>
         </div>
       </div>
     </section>
@@ -6108,9 +6165,11 @@ function logInventoryChange(partName, before, after, reason) {
     reason: reason || 'manual',
     who,
   });
-  // Cap at 2000 entries to keep storage bounded
-  if (state.inventoryHistory.length > 2000) {
-    state.inventoryHistory = state.inventoryHistory.slice(-2000);
+  // Cap at 8000 entries to keep storage bounded. Higher than before because
+  // this log now captures prints and CSV ship-subtractions too, not just
+  // manual edits — the user relies on it as a full per-part audit trail.
+  if (state.inventoryHistory.length > 8000) {
+    state.inventoryHistory = state.inventoryHistory.slice(-8000);
   }
   // Refresh the history viewer if its DOM exists (cheap — just re-renders the
   // top-of-page card on the Inventory view).
@@ -6161,7 +6220,7 @@ function save() {
       // 2) Trim the long history arrays in BOTH state and the blob we're saving
       const trim = (arr, keep) => Array.isArray(arr) ? arr.slice(-keep) : arr;
       state.shippedHistory   = trim(state.shippedHistory, 1500);
-      state.inventoryHistory = trim(state.inventoryHistory, 800);
+      state.inventoryHistory = trim(state.inventoryHistory, 3000);
       state.completedOrders  = trim(state.completedOrders, 1500);
       blob.shippedHistory    = state.shippedHistory;
       blob.inventoryHistory  = state.inventoryHistory;
@@ -8457,6 +8516,7 @@ function printPlate(clicked, qtyOverride) {
   if (qty > 0) {
     const newStock = Number(state.inventory[part] || 0) + qty;
     state.inventory[part] = newStock;
+    logInventoryChange(part, priorStock, newStock, 'print');  // full audit trail
     state.countedParts[part] = true; // printing implies we know the count
     // Log this print to completedOrders history (for dashboard + history view)
     if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
@@ -9484,6 +9544,8 @@ function renderInventoryHistory() {
     return;
   }
   const REASON_LABEL = {
+    'print': 'Printed (Done)',
+    'csv-ship': 'Shipped (CSV)',
     'walkthrough': 'Walk-through',
     'manual-stock': 'Stock update',
     'inventory-edit': '+/- edit',
@@ -10841,7 +10903,127 @@ function renderHistory() {
     html += `<div class="empty-sub" style="padding:14px;text-align:center;">…and ${list.length - cap} older entries.</div>`;
   }
   tbl.innerHTML = html;
+  renderHistoryLedger();
 }
+
+// Shared labels for inventory-change reasons across both the Inventory-page
+// card and the History-page ledger.
+const INV_REASON_LABEL = {
+  'print': 'Printed (Done)',
+  'csv-ship': 'Shipped (CSV)',
+  'walkthrough': 'Walk-through',
+  'manual-stock': 'Stock update',
+  'inventory-edit': '+/- edit',
+  'delete': 'Deleted',
+  'sku-adjust': 'SKU adjust',
+  'custom-order-fulfilled': 'Custom order shipped',
+  'manual': 'Manual',
+};
+
+// The full, searchable inventory ledger on the History page. Shows EVERY change
+// to inventory — prints, CSV shipments, edits, adjustments, deletes — from the
+// (now comprehensive) inventoryHistory log. Searching a part name shows its
+// entire timeline plus a running total, so a wrong count can be traced.
+function renderHistoryLedger() {
+  const container = document.getElementById('ledger-container');
+  if (!container) return;
+  const view = document.getElementById('view-history');
+  if (view && view.classList.contains('hidden')) return;
+  const panel = document.querySelector('[data-hist-panel="ledger"]');
+  if (panel && panel.classList.contains('hidden')) return;
+
+  const q = (document.getElementById('ledger-search')?.value || '').trim().toLowerCase();
+  let entries = (state.inventoryHistory || []).slice().reverse(); // newest first
+  if (q) entries = entries.filter(e => (e.partName || '').toLowerCase().includes(q));
+
+  // Per-part running summary when searching — the fast way to spot a bad count.
+  const summaryEl = document.getElementById('ledger-summary');
+  if (summaryEl) {
+    if (q && entries.length) {
+      let added = 0, removed = 0;
+      for (const e of entries) {
+        const d = Number(e.delta) || 0;
+        if (d > 0) added += d; else removed += -d;
+      }
+      const parts = new Set(entries.map(e => e.partName));
+      const net = added - removed;
+      // Current stock only meaningful when the search resolves to one part.
+      let stockLine = '';
+      if (parts.size === 1) {
+        const only = [...parts][0];
+        const cur = Number(state.inventory[only] || 0);
+        stockLine = `<div class="ls-item"><span class="ls-label">Current stock</span><span class="ls-value">${cur.toLocaleString()}</span></div>`;
+      }
+      summaryEl.innerHTML =
+        `<div class="ls-item"><span class="ls-label">Changes</span><span class="ls-value">${entries.length.toLocaleString()}</span></div>` +
+        `<div class="ls-item"><span class="ls-label">Total added</span><span class="ls-value pos">+${added.toLocaleString()}</span></div>` +
+        `<div class="ls-item"><span class="ls-label">Total removed</span><span class="ls-value neg">−${removed.toLocaleString()}</span></div>` +
+        `<div class="ls-item"><span class="ls-label">Net</span><span class="ls-value ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : '−'}${Math.abs(net).toLocaleString()}</span></div>` +
+        stockLine +
+        (parts.size > 1 ? `<div class="ls-item"><span class="ls-label">Parts matched</span><span class="ls-value">${parts.size}</span></div>` : '');
+      summaryEl.classList.remove('hidden');
+    } else {
+      summaryEl.classList.add('hidden');
+    }
+  }
+
+  if (entries.length === 0) {
+    container.innerHTML = `<div class="empty-sub" style="padding:30px;text-align:center;">${
+      q ? `No inventory changes for “${escapeHtml(q)}”.` : 'No inventory changes recorded yet.'
+    }</div>`;
+    return;
+  }
+
+  // When searching a specific part, show its whole timeline; otherwise cap.
+  const cap = q ? 3000 : 400;
+  const visible = entries.slice(0, cap);
+  let html = `
+    <div class="inv-hist-row header">
+      <div>When</div>
+      <div>Part</div>
+      <div>Change</div>
+      <div style="text-align:center;">Delta</div>
+      <div>Reason</div>
+      <div>Who</div>
+    </div>`;
+  for (const e of visible) {
+    const at = new Date(e.at);
+    const timeStr = isNaN(at.getTime()) ? '—'
+      : `${at.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })} · ${at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    const delta = Number(e.delta) || 0;
+    const deltaClass = delta > 0 ? 'positive' : (delta < 0 ? 'negative' : '');
+    const deltaStr = delta > 0 ? `+${delta}` : `${delta}`;
+    const reason = INV_REASON_LABEL[e.reason] || e.reason || '—';
+    html += `
+      <div class="inv-hist-row">
+        <div class="inv-hist-time">${escapeHtml(timeStr)}</div>
+        <div class="inv-hist-part">${escapeHtml(e.partName || '')}</div>
+        <div class="inv-hist-change">${e.before} → ${e.after}</div>
+        <div class="inv-hist-delta ${deltaClass}">${deltaStr}</div>
+        <div class="inv-hist-reason">${escapeHtml(reason)}</div>
+        <div class="inv-hist-who">${escapeHtml(e.who || '—')}</div>
+      </div>`;
+  }
+  if (entries.length > cap) {
+    html += `<div class="empty-sub" style="padding:14px;text-align:center;">…and ${entries.length - cap} more. Narrow with search to see a specific part's full timeline.</div>`;
+  }
+  container.innerHTML = html;
+}
+
+(function wireHistoryTabs() {
+  document.querySelectorAll('.hist-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.histTab;
+      document.querySelectorAll('.hist-tab').forEach(t => t.classList.toggle('active', t === tab));
+      document.querySelectorAll('[data-hist-panel]').forEach(p => {
+        p.classList.toggle('hidden', p.dataset.histPanel !== target);
+      });
+      if (target === 'ledger') renderHistoryLedger();
+    });
+  });
+  const search = document.getElementById('ledger-search');
+  if (search) search.addEventListener('input', () => renderHistoryLedger());
+})();
 
 
 // Cached queue counts, set by renderQueue after buildQueue runs. Lets
@@ -11159,6 +11341,13 @@ function importCSV(text) {
       else state.inventory[part] = next;
       shippedSubtractions[part] = (shippedSubtractions[part] || 0) + sub;
     }
+  }
+  // Record each part's net ship-subtraction to the inventory ledger, so CSV
+  // imports show up in the searchable history like every other change.
+  for (const part of Object.keys(shippedSubtractions)) {
+    const before = (part in inventoryBefore) ? inventoryBefore[part] : 0;
+    const after = Number(state.inventory[part] || 0);
+    if (before !== after) logInventoryChange(part, before, after, 'csv-ship');
   }
   // Cap shipped history at 5000 entries to prevent unbounded growth
   if (state.shippedHistory.length > 5000) {
