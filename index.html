@@ -6358,6 +6358,27 @@ function _mergeCompleted(cloudC, localC) {
   const CAP = 5000;
   return out.length > CAP ? out.slice(out.length - CAP) : out;
 }
+// The inventory ledger is append-only like completedOrders — union it too, so a
+// print/ship/edit logged on one device is never clobbered by another device's
+// last-writer-wins push. Without this, a second device could drop just-logged
+// ledger entries (why repeated prints of one part showed only a single change).
+function _invHistKey(e) {
+  return [e.at, e.partName, e.delta, e.before, e.after, e.reason, e.who].join('|');
+}
+function _mergeInvHistory(cloudH, localH) {
+  const seen = new Set(), out = [];
+  for (const e of (cloudH || [])) { const k = _invHistKey(e); if (!seen.has(k)) { seen.add(k); out.push(e); } }
+  for (const e of (localH || [])) { const k = _invHistKey(e); if (!seen.has(k)) { seen.add(k); out.push(e); } }
+  const CAP = 8000;
+  return out.length > CAP ? out.slice(out.length - CAP) : out;
+}
+function _invHistEqual(a, b) {
+  a = a || []; b = b || [];
+  if (a.length !== b.length) return false;
+  const sa = new Set(a.map(_invHistKey));
+  for (const e of b) if (!sa.has(_invHistKey(e))) return false;
+  return true;
+}
 // Order-INSENSITIVE content equality for the merged collections. Used to decide
 // whether a push's merged result actually differs from what we already have. A
 // merge reorders keys/entries (cloud first, then ours), so a stringified compare
@@ -6427,6 +6448,7 @@ function scheduleCloudPush(blob) {
           merged.orderEdits      = _mergeById(cloud.orderEdits, localBlob.orderEdits, base.orderEdits);
           merged.partsNeeded     = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base.partsNeeded);
           merged.completedOrders = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
+          merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
           merged.lastSync = localBlob.lastSync;
           merged._writeToken = _localWriteToken;
           return transformKeys(merged, fbEncodeKey);
@@ -6455,7 +6477,8 @@ function scheduleCloudPush(blob) {
             !_invEqual(mergedBlob.inventory, localBlob.inventory) ||
             !_byIdEqual(mergedBlob.orderEdits, localBlob.orderEdits) ||
             !_byIdEqual(mergedBlob.partsNeeded, localBlob.partsNeeded) ||
-            !_completedEqual(mergedBlob.completedOrders, localBlob.completedOrders);
+            !_completedEqual(mergedBlob.completedOrders, localBlob.completedOrders) ||
+            !_invHistEqual(mergedBlob.inventoryHistory, localBlob.inventoryHistory);
           if (window._syncDebug) console.log('[sync] push done',
             { changed, superseded, pushedAt: localBlob.lastSync, committedInvKeys: Object.keys(mergedBlob.inventory||{}).length });
           if (changed && !superseded) {
