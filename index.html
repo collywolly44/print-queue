@@ -7679,27 +7679,34 @@ function renderQueue(type) {
     if (recountBtn) {
       recountBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const part = clicked.part;
+        const c = visibleByKey.get(row.dataset.key);
+        const part = c && c.part;
         if (!part) return;
-        if (state.countedParts && state.countedParts[part]) delete state.countedParts[part];
-        // Audit note in the inventory ledger (zero delta — stock unchanged).
-        // logInventoryChange skips no-ops, so push directly.
-        if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
         const cur = Number(state.inventory[part] || 0);
-        state.inventoryHistory.push({
-          at: new Date().toISOString(),
-          partName: part,
-          delta: 0,
-          before: cur,
-          after: cur,
-          reason: 'recount-flag',
-          who: (typeof _fbUser !== 'undefined' && _fbUser && _fbUser.email) ? displayName(_fbUser.email) : '',
+        confirmModal({
+          title: 'Flag for recount?',
+          text: `Move "${part}" to Uncounted so it gets re-verified. Its current stock (${cur}) is kept — nothing is zeroed. It'll drop out of the queue until you recount it.`,
+          onConfirm: () => {
+            if (state.countedParts && state.countedParts[part]) delete state.countedParts[part];
+            // Audit note in the inventory ledger (zero delta — stock unchanged).
+            // logInventoryChange skips no-ops, so push directly.
+            if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
+            state.inventoryHistory.push({
+              at: new Date().toISOString(),
+              partName: part,
+              delta: 0,
+              before: cur,
+              after: cur,
+              reason: 'recount-flag',
+              who: (typeof _fbUser !== 'undefined' && _fbUser && _fbUser.email) ? displayName(_fbUser.email) : '',
+            });
+            save();
+            renderQueue();
+            renderInventory();
+            renderSidebarCounts();
+            toast(`${part} flagged for recount — moved to Uncounted (stock kept: ${cur})`);
+          }
         });
-        save();
-        renderQueue();
-        renderInventory();
-        renderSidebarCounts();
-        toast(`${part} flagged for recount — moved to Uncounted (stock kept: ${cur})`);
       });
     }
     btn.addEventListener('click', () => {
@@ -9871,6 +9878,16 @@ function renderProductivity() {
     return y < 5;                                      // only count small-batch parts
   };
 
+  // If the user has selected parts in the Tools → Print Tracker, the FDM
+  // productivity (Printed today / Daily average / Time to clear) reflects ONLY
+  // those parts. With nothing selected, it falls back to the small-batch filter.
+  const _trk = state.trackedParts || {};
+  const _trackedKeys = Object.keys(_trk).filter(p => _trk[p]);
+  const _useTracked = _trackedKeys.length > 0;
+  const _trackedSet = new Set(_trackedKeys);
+  const inScope = _useTracked ? (name) => _trackedSet.has(name) : smallBatch;
+  const scopeLabel = _useTracked ? 'Tracked parts' : 'FDM only';
+
   const now = new Date();
   const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400000);
@@ -9889,7 +9906,7 @@ function renderProductivity() {
     const ptype = c.printType || (fdmParts.has(c.partName) ? 'fdm' : 'resin');
     if (ptype !== 'fdm') continue;
     // Only small-batch parts (yield < 5, or no yield yet) count toward the pace.
-    if (!smallBatch(c.partName)) continue;
+    if (!inScope(c.partName)) continue;
     const at = new Date(c.at);
     if (isNaN(at.getTime())) continue;
     // Prefer qtyToDemand (new field) — fall back to qty for old entries
@@ -9918,12 +9935,12 @@ function renderProductivity() {
   if (subEl) {
     const windowLabel = daysOfHistory === 1 ? 'today only' : `last ${daysOfHistory} days`;
     if (printedToday === 0) {
-      subEl.textContent = `FDM only · Nothing done yet today`;
+      subEl.textContent = `${scopeLabel} · Nothing done yet today`;
     } else if (dailyAvg > 0) {
       const pct = Math.round((printedToday / dailyAvg) * 100);
-      subEl.textContent = `FDM only · Today is ${pct}% of ${windowLabel} average`;
+      subEl.textContent = `${scopeLabel} · Today is ${pct}% of ${windowLabel} average`;
     } else {
-      subEl.textContent = `FDM only · ${windowLabel}`;
+      subEl.textContent = `${scopeLabel} · ${windowLabel}`;
     }
   }
 
@@ -9936,7 +9953,7 @@ function renderProductivity() {
       const built = buildQueue('fdm');
       for (const r of (built.visible || [])) {
         if (r._isNeed) continue;
-        if (!smallBatch(r.part)) continue;
+        if (!inScope(r.part)) continue;
         fdmBacklog += Number(r._remaining) || 0;
       }
     } catch {}
@@ -11840,6 +11857,7 @@ function switchView(name) {
       if (typeof renderDupSkuWarning === 'function') renderDupSkuWarning();
       if (target === 'parttype') renderPartTypeTagger();
       else if (target === 'edit') renderEditOrders();
+      else if (target === 'tracker') renderPrintTracker();
       else renderSlaSorter();
     }
     else if (name === 'paint') renderPaintMobile();
