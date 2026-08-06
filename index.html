@@ -329,7 +329,7 @@ body {
 }
 .queue-row {
   display: grid;
-  grid-template-columns: 60px 110px 90px 1fr 1fr 1.5fr 70px 100px;
+  grid-template-columns: 60px 110px 90px 1fr 1fr 1.5fr 70px 150px;
   gap: 0;
   padding: 0;
   border-bottom: 1px solid var(--line);
@@ -435,7 +435,23 @@ body {
   color: var(--amber);
 }
 
-.qcell-action { justify-content: center; }
+.qcell-action { justify-content: center; display: flex; align-items: center; gap: 6px; }
+.btn-recount {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--line-bright);
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+.btn-recount:hover { background: var(--amber); border-color: var(--amber); color: #1a1205; }
 .btn-done {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
@@ -1479,6 +1495,9 @@ body {
     grid-area: done;
     align-self: stretch;
     display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
     align-items: center;
   }
   .btn-done {
@@ -2292,6 +2311,43 @@ body {
   transition: color 0.12s, border-color 0.12s;
 }
 .hist-tab:hover { color: var(--ink); }
+.tracker-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  padding: 16px 18px;
+  margin-top: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.trk-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 90px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.trk-row:last-child { border-bottom: none; }
+.trk-row:hover { background: var(--panel-2); }
+.trk-row.tracked { background: rgba(212,168,75,0.06); }
+.trk-row.tracked:hover { background: rgba(212,168,75,0.1); }
+.trk-check {
+  width: 20px; height: 20px; border-radius: 4px;
+  border: 1px solid var(--line-bright);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: transparent;
+}
+.trk-row.tracked .trk-check { background: var(--amber); border-color: var(--amber); color: #1a1205; }
+.trk-name { font-size: 13px; color: var(--ink); }
+.trk-remaining {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  color: var(--ink-dim); text-align: right;
+}
 .hist-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .ledger-controls { margin-bottom: 4px; }
 .ledger-summary {
@@ -5476,6 +5532,7 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="tools-tabs">
         <button class="tools-tab active" data-tools-tab="vehicle">Vehicle Tagger</button>
         <button class="tools-tab" data-tools-tab="parttype">Resin · FDM</button>
+        <button class="tools-tab" data-tools-tab="tracker">Print Tracker</button>
         <button class="tools-tab" data-tools-tab="edit">Edit Orders</button>
       </div>
 
@@ -5525,6 +5582,32 @@ body.mode-mobile .mobile-only { display: block; }
           <div class="sla-progress-text" id="pt-progress-text">— parts</div>
         </div>
         <div class="sla-list" id="pt-list">
+          <div class="empty"><div class="empty-mark">…</div><div class="empty-sub">Loading…</div></div>
+        </div>
+      </div>
+
+      <!-- Print Tracker tab -->
+      <div class="tools-tab-panel hidden" data-tools-panel="tracker">
+        <div class="page-header" style="margin-top:14px;">
+          <div>
+            <div class="page-sub">Pick the FDM parts you want to watch, and see how long until just those are all printed — at your recent pace on them.</div>
+          </div>
+        </div>
+
+        <div id="tracker-summary" class="tracker-summary">
+          <div class="ls-item"><span class="ls-label">Parts tracked</span><span class="ls-value" id="trk-count">0</span></div>
+          <div class="ls-item"><span class="ls-label">Units remaining</span><span class="ls-value" id="trk-remaining">0</span></div>
+          <div class="ls-item"><span class="ls-label">Daily pace (these parts)</span><span class="ls-value" id="trk-rate">—</span></div>
+          <div class="ls-item"><span class="ls-label">All printed in</span><span class="ls-value" id="trk-eta">—</span></div>
+          <div class="ls-item"><span class="ls-label">Done by</span><span class="ls-value" id="trk-date">—</span></div>
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap;">
+          <input type="text" id="tracker-search" class="search" placeholder="Search FDM parts to add…" autocomplete="off" style="flex:1 1 260px;">
+          <button class="filter-chip" id="tracker-clear">Clear all</button>
+        </div>
+
+        <div class="sla-list" id="tracker-list" style="margin-top:12px;">
           <div class="empty"><div class="empty-mark">…</div><div class="empty-sub">Loading…</div></div>
         </div>
       </div>
@@ -5859,6 +5942,7 @@ const state = {
   library: {},         // sku -> { name, parts: [{name,yield,type}], notes }
   inventory: {},       // partName -> integer count on hand
   countedParts: {},    // partName -> true (parts that have been counted at least once)
+  trackedParts: {},    // partName -> true (parts the user is tracking in the Print Tracker tool)
   partLocations: {},   // partName -> 'gun_wall' | 'back_room' | 'shipping_side' (shared across SKUs)
   partsNeeded: [],     // [{id, partName, type:'resin'|'fdm', addedAt, addedBy, resolvedAt|null}]
   priority: { resin: [], fdm: [] },  // separate lists per printer type
@@ -6184,6 +6268,7 @@ function save() {
     library: state.library,
     inventory: state.inventory,
     countedParts: state.countedParts,
+    trackedParts: state.trackedParts,
     partLocations: state.partLocations,
     partsNeeded: state.partsNeeded,
     priority: state.priority,
@@ -6615,6 +6700,7 @@ function load() {
     state.library = blob.library || {};
     state.inventory = blob.inventory || {};
     state.countedParts = blob.countedParts || {};
+    state.trackedParts = blob.trackedParts || {};
     state.partLocations = blob.partLocations || {};
     state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
     state.assignments = blob.assignments || {};
@@ -7406,11 +7492,17 @@ function renderQueue(type) {
   // ============================================================
   const fdmNeeds = filtered.filter(r => r._isNeed);
   const fdmOrders = filtered.filter(r => !r._isNeed);
+  // Group FDM rows by part AND day, so each card is one part's demand for a
+  // single order-day. Lets the user clear the backlog day by day instead of
+  // collapsing every day into one all-time card per part.
   const fdmByPart = new Map();
   for (const r of fdmOrders) {
-    const key = r.part;
+    const day = String(r.date).slice(0, 10);
+    const key = `${r.part}||${day}`;
     if (!fdmByPart.has(key)) {
       fdmByPart.set(key, {
+        part: r.part,
+        day,
         rows: [],
         totalRemaining: 0,
         totalOriginal: 0,
@@ -7436,11 +7528,12 @@ function renderQueue(type) {
   // render/Done logic below works uniformly. Groups get a synthetic key
   // (`__group__partName`).
   const fdmGrouped = [];
-  for (const [partName, g] of fdmByPart.entries()) {
+  for (const [, g] of fdmByPart.entries()) {
+    const partName = g.part;
     const oldest = g.oldestRow;
     const groupHasVehicle = g.rows.some(r => r._orderIsVehicle);
     fdmGrouped.push({
-      key: `__group__${partName}`,
+      key: `__group__${partName}__${g.day}`,
       orderId: oldest.orderId,
       part: partName,
       sku: oldest.sku,
@@ -7560,7 +7653,7 @@ function renderQueue(type) {
         <div class="qcell qcell-sku">${escapeHtml(skuText)}</div>
         <div class="qcell qcell-part">${escapeHtml(r.part)}</div>
         <div class="qcell qcell-qty">${qtyHtml}</div>
-        <div class="qcell qcell-action"><button class="btn-done">Done</button></div>
+        <div class="qcell qcell-action">${r._isNeed ? '' : `<button class="btn-recount" title="Flag this part for recount — moves it to Uncounted to be re-verified. Does NOT change the stock number.">⟳ Recount</button>`}<button class="btn-done">Done</button></div>
       </div>`;
   });
   html += '</div>';
@@ -7578,6 +7671,37 @@ function renderQueue(type) {
 
   container.querySelectorAll('.queue-row[data-key]').forEach(row => {
     const btn = row.querySelector('.btn-done');
+    // Recount: flag the part as needing re-verification. Moves it to the
+    // Uncounted category (so it shows in the count walk-through and drops out
+    // of the queue until re-counted) but keeps the current stock number — it's
+    // a double-check, not a reset.
+    const recountBtn = row.querySelector('.btn-recount');
+    if (recountBtn) {
+      recountBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const part = clicked.part;
+        if (!part) return;
+        if (state.countedParts && state.countedParts[part]) delete state.countedParts[part];
+        // Audit note in the inventory ledger (zero delta — stock unchanged).
+        // logInventoryChange skips no-ops, so push directly.
+        if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
+        const cur = Number(state.inventory[part] || 0);
+        state.inventoryHistory.push({
+          at: new Date().toISOString(),
+          partName: part,
+          delta: 0,
+          before: cur,
+          after: cur,
+          reason: 'recount-flag',
+          who: (typeof _fbUser !== 'undefined' && _fbUser && _fbUser.email) ? displayName(_fbUser.email) : '',
+        });
+        save();
+        renderQueue();
+        renderInventory();
+        renderSidebarCounts();
+        toast(`${part} flagged for recount — moved to Uncounted (stock kept: ${cur})`);
+      });
+    }
     btn.addEventListener('click', () => {
       const key = row.dataset.key;
       const clicked = visibleByKey.get(key);
@@ -9569,6 +9693,7 @@ function renderInventoryHistory() {
   const REASON_LABEL = {
     'print': 'Printed (Done)',
     'csv-ship': 'Shipped (CSV)',
+  'recount-flag': 'Flagged for recount',
     'walkthrough': 'Walk-through',
     'manual-stock': 'Stock update',
     'inventory-edit': '+/- edit',
@@ -10068,6 +10193,7 @@ let _ptFilterMode = 'all'; // 'all' | 'resin' | 'fdm'
       renderDupSkuWarning();
       if (target === 'vehicle') renderSlaSorter();
       else if (target === 'parttype') renderPartTypeTagger();
+      else if (target === 'tracker') renderPrintTracker();
       else if (target === 'edit') renderEditOrders();
     });
   });
@@ -10080,6 +10206,138 @@ let _ptFilterMode = 'all'; // 'all' | 'resin' | 'fdm'
     _ptFilterMode = chip.dataset.ptFilter;
     renderPartTypeTagger();
   });
+})();
+
+// ===== Print Tracker (Tools) ==========================================
+// User-selected set of FDM parts + an ETA for clearing ONLY those, at their
+// recent pace on those specific parts. Not the whole-queue time-to-clear.
+let _trackerSearch = '';
+function renderPrintTracker() {
+  const view = document.getElementById('view-sla-sorter');
+  if (view && view.classList.contains('hidden')) return;
+  const panel = document.querySelector('[data-tools-panel="tracker"]');
+  if (panel && panel.classList.contains('hidden')) return;
+  if (!state.trackedParts) state.trackedParts = {};
+
+  // Remaining FDM demand per part (sum across the day-split cards).
+  const remainingByPart = {};
+  try {
+    const built = buildQueue('fdm');
+    for (const r of (built.visible || [])) {
+      if (r._isNeed) continue;
+      remainingByPart[r.part] = (remainingByPart[r.part] || 0) + (Number(r._remaining) || 0);
+    }
+  } catch {}
+
+  // FDM part names from the library, for the selectable list.
+  const fdmSet = new Set();
+  for (const sku of Object.keys(state.library)) {
+    const lib = state.library[sku];
+    if (!lib || !Array.isArray(lib.parts)) continue;
+    for (const p of lib.parts) {
+      if (p && typeof p !== 'string' && p.type === 'fdm' && p.name) fdmSet.add(p.name);
+    }
+  }
+
+  const tracked = state.trackedParts;
+  const trackedCount = Object.keys(tracked).filter(p => tracked[p]).length;
+  let backlog = 0;
+  for (const part of Object.keys(tracked)) if (tracked[part]) backlog += remainingByPart[part] || 0;
+
+  // Daily pace for the tracked parts, from their own print history (30d window).
+  const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+  const windowStart = new Date(today0); windowStart.setDate(windowStart.getDate() - 29);
+  let printed = 0, earliest = null;
+  for (const c of (state.completedOrders || [])) {
+    if (c.kind !== 'print' || c.synthetic) continue;
+    if (!tracked[c.partName]) continue;
+    const ptype = c.printType || (fdmSet.has(c.partName) ? 'fdm' : 'resin');
+    if (ptype !== 'fdm') continue;
+    const at = new Date(c.at); if (isNaN(at.getTime())) continue;
+    if (at >= windowStart) {
+      printed += (typeof c.qtyToDemand === 'number') ? c.qtyToDemand : (Number(c.qty) || 0);
+      if (!earliest || at < earliest) earliest = at;
+    }
+  }
+  let days = 30;
+  if (earliest) {
+    const e0 = new Date(earliest); e0.setHours(0, 0, 0, 0);
+    days = Math.min(30, Math.max(1, Math.floor((today0 - e0) / 86400000) + 1));
+  }
+  const rate = printed / days;
+
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('trk-count', trackedCount.toLocaleString());
+  set('trk-remaining', backlog.toLocaleString());
+  set('trk-rate', rate > 0 ? `${rate.toFixed(1)}/day` : '—');
+  if (trackedCount === 0) { set('trk-eta', '—'); set('trk-date', 'Pick some parts'); }
+  else if (backlog === 0) { set('trk-eta', 'Done ✓'); set('trk-date', 'Nothing left'); }
+  else if (rate <= 0) { set('trk-eta', 'Need history'); set('trk-date', 'No recent prints of these'); }
+  else {
+    const d = Math.ceil(backlog / rate);
+    set('trk-eta', d === 1 ? '1 day' : `${d} days`);
+    const done = new Date(today0.getTime() + d * 86400000);
+    set('trk-date', done.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d > 300 ? 'numeric' : undefined }));
+  }
+
+  // Selectable list: FDM parts with demand, plus anything already tracked.
+  const list = document.getElementById('tracker-list');
+  if (!list) return;
+  const q = _trackerSearch.trim().toLowerCase();
+  const candidateSet = new Set();
+  for (const p of Object.keys(remainingByPart)) candidateSet.add(p);
+  for (const p of fdmSet) candidateSet.add(p);
+  for (const p of Object.keys(tracked)) if (tracked[p]) candidateSet.add(p);
+  let candidates = [...candidateSet];
+  if (q) candidates = candidates.filter(p => p.toLowerCase().includes(q));
+  candidates.sort((a, b) => {
+    const ta = tracked[a] ? 1 : 0, tb = tracked[b] ? 1 : 0;
+    if (ta !== tb) return tb - ta;
+    const ra = remainingByPart[a] || 0, rb = remainingByPart[b] || 0;
+    if (rb !== ra) return rb - ra;
+    return a.localeCompare(b);
+  });
+  const CAP = 300;
+  const shown = candidates.slice(0, CAP);
+  if (shown.length === 0) {
+    list.innerHTML = `<div class="empty-sub" style="padding:24px;text-align:center;">${q ? `No FDM parts match “${escapeHtml(q)}”.` : 'No FDM parts found.'}</div>`;
+    return;
+  }
+  let html = '';
+  for (const p of shown) {
+    const on = !!tracked[p];
+    const rem = remainingByPart[p] || 0;
+    html += `
+      <div class="trk-row ${on ? 'tracked' : ''}" data-trk-part="${escapeAttr(p)}">
+        <div class="trk-check">✓</div>
+        <div class="trk-name">${escapeHtml(p)}</div>
+        <div class="trk-remaining">${rem > 0 ? rem.toLocaleString() + ' left' : '—'}</div>
+      </div>`;
+  }
+  if (candidates.length > CAP) {
+    html += `<div class="empty-sub" style="padding:12px;text-align:center;">…and ${candidates.length - CAP} more. Search to narrow.</div>`;
+  }
+  list.innerHTML = html;
+}
+
+(function wireTracker() {
+  const list = document.getElementById('tracker-list');
+  if (list) {
+    list.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-trk-part]');
+      if (!row) return;
+      const part = row.dataset.trkPart;
+      if (!state.trackedParts) state.trackedParts = {};
+      if (state.trackedParts[part]) delete state.trackedParts[part];
+      else state.trackedParts[part] = true;
+      save();
+      renderPrintTracker();
+    });
+  }
+  const search = document.getElementById('tracker-search');
+  if (search) search.addEventListener('input', () => { _trackerSearch = search.value; renderPrintTracker(); });
+  const clear = document.getElementById('tracker-clear');
+  if (clear) clear.addEventListener('click', () => { state.trackedParts = {}; save(); renderPrintTracker(); });
 })();
 
 // Build a list of every distinct part across the library, the SKU usage count,
@@ -10934,6 +11192,7 @@ function renderHistory() {
 const INV_REASON_LABEL = {
   'print': 'Printed (Done)',
   'csv-ship': 'Shipped (CSV)',
+  'recount-flag': 'Flagged for recount',
   'walkthrough': 'Walk-through',
   'manual-stock': 'Stock update',
   'inventory-edit': '+/- edit',
@@ -11507,6 +11766,7 @@ function buildBackupBlob() {
     library: state.library,
     inventory: state.inventory,
     countedParts: state.countedParts,
+    trackedParts: state.trackedParts,
     partLocations: state.partLocations,
     partsNeeded: state.partsNeeded,
     priority: state.priority,
@@ -12818,6 +13078,7 @@ function applyRestoreBlob(blob, opts) {
   state.library = blob.library || {};
   state.inventory = blob.inventory || {};
   state.countedParts = blob.countedParts || {};
+  state.trackedParts = blob.trackedParts || {};
   // partLocations: if the incoming blob doesn't have the field at all (e.g.
   // an older backup or a save from a stale device that predates the feature),
   // KEEP whatever we already have rather than wiping. If the blob explicitly
