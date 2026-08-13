@@ -329,7 +329,7 @@ body {
 }
 .queue-row {
   display: grid;
-  grid-template-columns: 60px 110px 90px 1fr 1fr 1.5fr 70px 150px;
+  grid-template-columns: 60px 110px 90px 1fr 1fr 1.5fr 70px 100px;
   gap: 0;
   padding: 0;
   border-bottom: 1px solid var(--line);
@@ -384,7 +384,23 @@ body {
   color: var(--ink-faint);
   font-size: 12px;
   justify-content: center;
+  flex-direction: column;
+  gap: 7px;
 }
+.btn-recount {
+  width: 28px; height: 28px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; line-height: 1;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: all 0.12s;
+}
+.btn-recount:hover { opacity: 1; background: var(--amber); border-color: var(--amber); color: #1a1205; }
+.qcell-action { justify-content: center; }
 .qcell-date {
   font-family: 'JetBrains Mono', monospace;
   font-size: 14px;
@@ -436,22 +452,6 @@ body {
 }
 
 .qcell-action { justify-content: center; display: flex; align-items: center; gap: 6px; }
-.btn-recount {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 8px 9px;
-  border-radius: 3px;
-  border: 1px solid var(--line-bright);
-  background: transparent;
-  color: var(--ink-dim);
-  cursor: pointer;
-  transition: all 0.12s;
-  white-space: nowrap;
-}
-.btn-recount:hover { background: var(--amber); border-color: var(--amber); color: #1a1205; }
 .btn-done {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
@@ -1152,6 +1152,69 @@ body {
 }
 
 /* Top 10 compact mode for sidebar */
+.started-block {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.started-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.started-mark { color: var(--accent); }
+.started-total {
+  margin-left: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--ink-faint);
+  text-transform: none;
+}
+.started-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.started-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.started-row:last-child { border-bottom: none; }
+.started-row .st-part {
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.started-row .st-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.started-row .st-qty { color: var(--accent); font-weight: 700; }
+.started-empty {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-faint);
+  padding: 6px 0;
+}
 .top10-block.top10-sidebar {
   margin-bottom: 0;
 }
@@ -1438,9 +1501,13 @@ body {
     font-size: 10px;
     color: var(--ink-faint);
     align-self: start;
-    text-align: right;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
     padding-top: 2px;
   }
+  .btn-recount { width: 34px; height: 34px; opacity: 0.7; }
   .qcell-part {
     grid-area: part;
     font-size: 18px;
@@ -1495,9 +1562,6 @@ body {
     grid-area: done;
     align-self: stretch;
     display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 8px;
     align-items: center;
   }
   .btn-done {
@@ -5247,6 +5311,17 @@ body.mode-mobile .mobile-only { display: block; }
             <div class="productivity-sub" id="prod-eta-sub">At current pace</div>
           </div>
 
+          <div class="started-block">
+            <div class="started-head">
+              <span class="started-mark">▸</span>
+              <span>Started today</span>
+              <span class="started-total" id="started-total"></span>
+            </div>
+            <div class="started-list" id="started-list">
+              <div class="started-empty">Nothing started yet today.</div>
+            </div>
+          </div>
+
           <div class="top10-block top10-sidebar">
             <div class="top10-head">
               <div class="top10-title">
@@ -5462,6 +5537,7 @@ body.mode-mobile .mobile-only { display: block; }
         <button class="filter-chip" data-inv-loc="gun_wall">Gun Wall</button>
         <button class="filter-chip" data-inv-loc="back_room">Back Room</button>
         <button class="filter-chip" data-inv-loc="shipping_side">Shipping Side</button>
+        <button class="filter-chip" data-inv-loc="recount">Recount</button>
         <button class="filter-chip" data-inv-loc="unset">Unset</button>
       </div>
 
@@ -5831,6 +5907,10 @@ body.mode-mobile .mobile-only { display: block; }
         <div class="wt-loc-name">Shipping Side</div>
         <div class="wt-loc-count" id="wt-count-shipping_side">—</div>
       </button>
+      <button class="wt-loc-card" data-loc="recount">
+        <div class="wt-loc-name">Recount</div>
+        <div class="wt-loc-count" id="wt-count-recount">—</div>
+      </button>
       <button class="wt-loc-card" data-loc="all">
         <div class="wt-loc-name">All locations</div>
         <div class="wt-loc-count" id="wt-count-all">—</div>
@@ -5900,6 +5980,7 @@ body.mode-mobile .mobile-only { display: block; }
       <button class="locate-btn" data-loc="gun_wall">Gun Wall</button>
       <button class="locate-btn" data-loc="back_room">Back Room</button>
       <button class="locate-btn" data-loc="shipping_side">Shipping Side</button>
+      <button class="locate-btn" data-loc="recount">Recount</button>
       <button class="locate-btn locate-btn-clear" data-loc="">Clear / Unset</button>
     </div>
 
@@ -5930,12 +6011,13 @@ const MACHINE_LABELS = {
   saturn3h: 'Saturn 3 H',
   mega: 'Mega',
 };
-const LOCATIONS = ['', 'gun_wall', 'back_room', 'shipping_side'];
+const LOCATIONS = ['', 'gun_wall', 'back_room', 'shipping_side', 'recount'];
 const LOCATION_LABELS = {
   '':              'Unset',
   gun_wall:        'Gun Wall',
   back_room:       'Back Room',
   shipping_side:   'Shipping Side',
+  recount:         'Recount',
 };
 const state = {
   orders: [],          // {id, date, sku, qty, customer, item}
@@ -5944,6 +6026,7 @@ const state = {
   countedParts: {},    // partName -> true (parts that have been counted at least once)
   trackedParts: {},    // partName -> true (parts the user is tracking in the Print Tracker tool)
   partLocations: {},   // partName -> 'gun_wall' | 'back_room' | 'shipping_side' (shared across SKUs)
+  recountPrevLoc: {},  // partName -> location it was in before being flagged for recount (to restore after)
   partsNeeded: [],     // [{id, partName, type:'resin'|'fdm', addedAt, addedBy, resolvedAt|null}]
   priority: { resin: [], fdm: [] },  // separate lists per printer type
   assignments: {},     // rowKey -> machine name (only for resin queue)
@@ -6270,6 +6353,7 @@ function save() {
     countedParts: state.countedParts,
     trackedParts: state.trackedParts,
     partLocations: state.partLocations,
+    recountPrevLoc: state.recountPrevLoc,
     partsNeeded: state.partsNeeded,
     priority: state.priority,
     assignments: state.assignments,
@@ -6702,6 +6786,7 @@ function load() {
     state.countedParts = blob.countedParts || {};
     state.trackedParts = blob.trackedParts || {};
     state.partLocations = blob.partLocations || {};
+    state.recountPrevLoc = blob.recountPrevLoc || {};
     state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
     state.assignments = blob.assignments || {};
     state.completedOrders = Array.isArray(blob.completedOrders) ? blob.completedOrders : [];
@@ -6793,6 +6878,23 @@ function setPartLocation(partName, location) {
   } else {
     delete state.partLocations[partName];
   }
+}
+
+// Mark a part as counted (verified). Single choke point so that whenever a
+// part's count is confirmed — by printing, a manual entry, or the walk-through
+// — it also LEAVES the Recount pile: we restore the location it was in before
+// it was flagged (or clear it if it had none). recountPrevLoc is stamped by the
+// FDM Recount button when it moves a part into the 'recount' location.
+function markCounted(partName) {
+  if (!partName) return;
+  if (!state.countedParts) state.countedParts = {};
+  state.countedParts[partName] = true;
+  if (state.partLocations && state.partLocations[partName] === 'recount') {
+    const prev = state.recountPrevLoc && state.recountPrevLoc[partName];
+    if (prev && LOCATIONS.includes(prev)) state.partLocations[partName] = prev;
+    else delete state.partLocations[partName];
+  }
+  if (state.recountPrevLoc) delete state.recountPrevLoc[partName];
 }
 
 // Get type ('resin' or 'fdm') for a specific part in a sku
@@ -7437,7 +7539,7 @@ function renderQueue(type) {
 
   renderSidebarCounts();
   renderTop10(type);
-  if (type === 'fdm') renderProductivity();
+  if (type === 'fdm') { renderProductivity(); renderStartedToday(); }
 
   // Resin → kanban board. FDM → list.
   if (type === 'resin') {
@@ -7646,14 +7748,14 @@ function renderQueue(type) {
     }
     html += `
       <div class="queue-row ${rowClass}${needRowClass}" data-key="${escapeAttr(r.key)}">
-        <div class="qcell qcell-num">${i+1}</div>
+        <div class="qcell qcell-num"><span class="qnum">${i+1}</span>${r._isNeed ? '' : `<button class="btn-recount" title="Flag for recount — moves this part to the Recount pile to be re-verified. Does NOT change the stock number.">⟳</button>`}</div>
         <div class="qcell qcell-date">${dateStr}</div>
         <div class="qcell qcell-age ${agedClass}"><span class="badge">${age}d</span></div>
         ${ordersCell}
         <div class="qcell qcell-sku">${escapeHtml(skuText)}</div>
         <div class="qcell qcell-part">${escapeHtml(r.part)}</div>
         <div class="qcell qcell-qty">${qtyHtml}</div>
-        <div class="qcell qcell-action">${r._isNeed ? '' : `<button class="btn-recount" title="Flag this part for recount — moves it to Uncounted to be re-verified. Does NOT change the stock number.">⟳ Recount</button>`}<button class="btn-done">Done</button></div>
+        <div class="qcell qcell-action"><button class="btn-done">Done</button></div>
       </div>`;
   });
   html += '</div>';
@@ -7688,6 +7790,13 @@ function renderQueue(type) {
           text: `Move "${part}" to Uncounted so it gets re-verified. Its current stock (${cur}) is kept — nothing is zeroed. It'll drop out of the queue until you recount it.`,
           onConfirm: () => {
             if (state.countedParts && state.countedParts[part]) delete state.countedParts[part];
+            // Remember where it lived so it can return there after it's recounted.
+            if (!state.recountPrevLoc) state.recountPrevLoc = {};
+            const prevLoc = partLocation(part);
+            if (prevLoc !== 'recount') state.recountPrevLoc[part] = prevLoc;
+            // Move it into its own "Recount" location so it's separated from
+            // Gun Wall / Back Room and easy to walk as a dedicated pile.
+            setPartLocation(part, 'recount');
             // Audit note in the inventory ledger (zero delta — stock unchanged).
             // logInventoryChange skips no-ops, so push directly.
             if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
@@ -8671,7 +8780,7 @@ function printPlate(clicked, qtyOverride) {
     const newStock = Number(state.inventory[part] || 0) + qty;
     state.inventory[part] = newStock;
     logInventoryChange(part, priorStock, newStock, 'print');  // full audit trail
-    state.countedParts[part] = true; // printing implies we know the count
+    markCounted(part); // printing implies we know the count
     // Log this print to completedOrders history (for dashboard + history view)
     if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
     state.completedOrders.push({
@@ -9583,7 +9692,7 @@ function renderInventory() {
       const before = Number(state.inventory[part] || 0);
       if (n === 0) delete state.inventory[part];
       else state.inventory[part] = n;
-      state.countedParts[part] = true; // auto-mark counted on any numeric entry
+      markCounted(part); // auto-mark counted on any numeric entry
       logInventoryChange(part, before, n, 'inventory-edit');
       save();
       renderQueue();
@@ -9985,6 +10094,61 @@ function renderProductivity() {
       }
     }
   }
+}
+
+// Side list on the FDM queue: what you've hit Done on TODAY (part, qty, time),
+// newest first — a running memo so you don't re-start a print you already did.
+// Reuses the completedOrders 'print' log; no separate "start" action needed.
+function renderStartedToday() {
+  const list = document.getElementById('started-list');
+  if (!list) return;
+  const view = document.getElementById('view-queue-fdm');
+  if (view && view.classList.contains('hidden')) return;
+
+  // FDM part names, to keep this list to FDM prints (the page you're on).
+  const fdmSet = new Set();
+  for (const sku of Object.keys(state.library)) {
+    const lib = state.library[sku];
+    if (!lib || !Array.isArray(lib.parts)) continue;
+    for (const p of lib.parts) {
+      if (p && typeof p !== 'string' && p.type === 'fdm' && p.name) fdmSet.add(p.name);
+    }
+  }
+
+  const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+  const rows = [];
+  let totalUnits = 0;
+  for (const c of (state.completedOrders || [])) {
+    if (c.kind !== 'print' || c.synthetic) continue;
+    const at = new Date(c.at);
+    if (isNaN(at.getTime()) || at < today0) continue;
+    const ptype = c.printType || (fdmSet.has(c.partName) ? 'fdm' : 'resin');
+    if (ptype !== 'fdm') continue;
+    rows.push(c);
+    totalUnits += Number(c.qty) || 0;
+  }
+  rows.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+  const totalEl = document.getElementById('started-total');
+  if (totalEl) totalEl.textContent = rows.length ? `${totalUnits} pcs · ${rows.length} print${rows.length === 1 ? '' : 's'}` : '';
+
+  if (rows.length === 0) {
+    list.innerHTML = `<div class="started-empty">Nothing started yet today.</div>`;
+    return;
+  }
+  const CAP = 60;
+  let html = '';
+  for (const c of rows.slice(0, CAP)) {
+    const at = new Date(c.at);
+    const t = at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(' ', '').toLowerCase();
+    html += `
+      <div class="started-row">
+        <div class="st-part" title="${escapeAttr(c.partName || '')}">${escapeHtml(c.partName || '')}</div>
+        <div class="st-meta"><span class="st-qty">×${Number(c.qty) || 0}</span> · ${t}</div>
+      </div>`;
+  }
+  if (rows.length > CAP) html += `<div class="started-empty">…and ${rows.length - CAP} more.</div>`;
+  list.innerHTML = html;
 }
 
 function renderTop10(type) {
@@ -11785,6 +11949,7 @@ function buildBackupBlob() {
     countedParts: state.countedParts,
     trackedParts: state.trackedParts,
     partLocations: state.partLocations,
+    recountPrevLoc: state.recountPrevLoc,
     partsNeeded: state.partsNeeded,
     priority: state.priority,
     assignments: state.assignments,
@@ -12164,7 +12329,7 @@ document.getElementById('btn-resort-inventory').addEventListener('click', () => 
       if (after === before) continue;
       if (after === 0) delete state.inventory[name];
       else state.inventory[name] = after;
-      state.countedParts[name] = true;
+      markCounted(name);
       logInventoryChange(name, before, after, 'sku-adjust');
       changes.push({ name, before, after, delta: after - before });
     }
@@ -12200,7 +12365,7 @@ const WT = {
 
     // Compute per-location uncounted-part counts and show on picker cards
     const counts = this.uncountedCountsByLocation();
-    for (const loc of ['gun_wall', 'back_room', 'shipping_side', 'all']) {
+    for (const loc of ['gun_wall', 'back_room', 'shipping_side', 'recount', 'all']) {
       const el = document.getElementById(`wt-count-${loc}`);
       if (!el) continue;
       const n = counts[loc] || 0;
@@ -12227,7 +12392,7 @@ const WT = {
     }
     for (const p of Object.keys(state.inventory)) partsSet.add(p);
     for (const p of Object.keys(state.countedParts || {})) partsSet.add(p);
-    const counts = { gun_wall: 0, back_room: 0, shipping_side: 0, all: 0 };
+    const counts = { gun_wall: 0, back_room: 0, shipping_side: 0, recount: 0, all: 0 };
     for (const p of partsSet) {
       if (state.countedParts && state.countedParts[p]) continue; // only uncounted
       counts.all++;
@@ -12382,7 +12547,7 @@ const WT = {
     const before = Number(state.inventory[part] || 0);
     if (n === 0) delete state.inventory[part];
     else state.inventory[part] = n;
-    state.countedParts[part] = true;
+    markCounted(part);
     logInventoryChange(part, before, n, 'walkthrough');
     save();
     this.next();
@@ -12418,7 +12583,7 @@ const WT = {
     this.currentLoc = null;
     // Refresh counts
     const counts = this.uncountedCountsByLocation();
-    for (const loc of ['gun_wall', 'back_room', 'shipping_side', 'all']) {
+    for (const loc of ['gun_wall', 'back_room', 'shipping_side', 'recount', 'all']) {
       const el = document.getElementById(`wt-count-${loc}`);
       if (!el) continue;
       const n = counts[loc] || 0;
@@ -12653,7 +12818,7 @@ const MS = {
     const before = Number(state.inventory[partName] || 0);
     if (n === 0) delete state.inventory[partName];
     else state.inventory[partName] = n;
-    state.countedParts[partName] = true;
+    markCounted(partName);
     logInventoryChange(partName, before, n, 'manual-stock');
     save();
     renderQueue();
@@ -13105,6 +13270,9 @@ function applyRestoreBlob(blob, opts) {
     state.partLocations = blob.partLocations || {};
   }
   // else: leave state.partLocations alone — protects against accidental wipes
+  if (Object.prototype.hasOwnProperty.call(blob, 'recountPrevLoc')) {
+    state.recountPrevLoc = blob.recountPrevLoc || {};
+  }
   state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
   state.assignments = blob.assignments || {};
   if (Array.isArray(blob.priority)) {
