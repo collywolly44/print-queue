@@ -6027,6 +6027,8 @@ const state = {
   trackedParts: {},    // partName -> true (parts the user is tracking in the Print Tracker tool)
   partLocations: {},   // partName -> 'gun_wall' | 'back_room' | 'shipping_side' (shared across SKUs)
   recountPrevLoc: {},  // partName -> location it was in before being flagged for recount (to restore after)
+  _ordersTs: 0, _ordersSig: '',   // change-stamp + signature for orders (per-collection sync)
+  _libraryTs: 0, _librarySig: '', // change-stamp + signature for library (per-collection sync)
   partsNeeded: [],     // [{id, partName, type:'resin'|'fdm', addedAt, addedBy, resolvedAt|null}]
   priority: { resin: [], fdm: [] },  // separate lists per printer type
   assignments: {},     // rowKey -> machine name (only for resin queue)
@@ -6345,7 +6347,31 @@ function logInventoryChange(partName, before, after, reason) {
   }
 }
 
+// Fast non-crypto hash (cyrb53) for cheap content signatures.
+function cheapHash(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
 function save() {
+  // Per-collection change stamps for orders & library. These bump ONLY when the
+  // collection's content actually changes — so a device editing something else
+  // (which stamps the whole-blob lastSync to "now") can NOT drag its stale
+  // orders/library over a newer copy. The merge decides these two fields by
+  // their own timestamp, not the blob timestamp.
+  const _nowMs = Date.now();
+  const _oSig = cheapHash(JSON.stringify(state.orders || []));
+  if (_oSig !== state._ordersSig) { state._ordersSig = _oSig; state._ordersTs = _nowMs; }
+  const _lSig = cheapHash(JSON.stringify(state.library || {}));
+  if (_lSig !== state._librarySig) { state._librarySig = _lSig; state._libraryTs = _nowMs; }
+
   const blob = {
     orders: state.orders,
     library: state.library,
@@ -6365,6 +6391,8 @@ function save() {
     overdueStandard: state.overdueStandard,
     overdueVehicle: state.overdueVehicle,
     orderEdits: state.orderEdits,
+    _ordersTs: state._ordersTs, _ordersSig: state._ordersSig,
+    _libraryTs: state._libraryTs, _librarySig: state._librarySig,
     lastSync: new Date().toISOString(),
   };
 
@@ -6467,6 +6495,29 @@ function _captureSyncBase(src) {
     // partsNeeded entry) are detectable as changes vs this ancestor.
     orderEdits: JSON.parse(JSON.stringify(s.orderEdits || [])),
     partsNeeded: JSON.parse(JSON.stringify(s.partsNeeded || [])),
+    countedParts: Object.assign({}, s.countedParts || {}),
+  };
+}
+// Merge a boolean flag map (countedParts) by delta vs the common ancestor, so a
+// stale device can't hide/show parts by reverting the whole map. Flags this
+// device set stay set; flags it cleared get cleared; anything it didn't touch
+// keeps the cloud value.
+function _mergeFlags(cloudF, localF, baseF) {
+  const out = Object.assign({}, cloudF || {});
+  const base = baseF || {}, local = localF || {};
+  for (const k of Object.keys(local)) if (local[k] && !base[k]) out[k] = true;  // set by this device
+  for (const k of Object.keys(base)) if (base[k] && !local[k]) delete out[k];    // cleared by this device
+  return out;
+}
+// Decide orders/library by their OWN change-stamp (not the blob timestamp), so a
+// device that edited something else can't push its stale copy over a newer one.
+function _pickByFieldTs(cloud, local, field, tsKey, sigKey) {
+  const ct = cloud[tsKey] || 0, lt = local[tsKey] || 0;
+  const useCloud = ct > lt;
+  return {
+    value: useCloud ? cloud[field] : local[field],
+    ts: Math.max(ct, lt),
+    sig: useCloud ? (cloud[sigKey] || '') : (local[sigKey] || ''),
   };
 }
 // Merge inventory: start from cloud, then re-apply only the parts THIS device
@@ -6548,6 +6599,14 @@ function _invHistEqual(a, b) {
   for (const e of b) if (!sa.has(_invHistKey(e))) return false;
   return true;
 }
+function _flagsEqual(a, b) {
+  a = a || {}; b = b || {};
+  const ak = Object.keys(a).filter(k => a[k]);
+  const bk = Object.keys(b).filter(k => b[k]);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) if (!b[k]) return false;
+  return true;
+}
 // Order-INSENSITIVE content equality for the merged collections. Used to decide
 // whether a push's merged result actually differs from what we already have. A
 // merge reorders keys/entries (cloud first, then ours), so a stringified compare
@@ -6619,6 +6678,11 @@ function scheduleCloudPush(blob) {
           merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
           merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, []);   // [] base = pure union, no deletes
           merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, []);
+          merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, {}); // {} base = union of set flags
+          const _o = _pickByFieldTs(cloud, localBlob, 'orders', '_ordersTs', '_ordersSig');
+          merged.orders = _o.value; merged._ordersTs = _o.ts; merged._ordersSig = _o.sig;
+          const _l = _pickByFieldTs(cloud, localBlob, 'library', '_libraryTs', '_librarySig');
+          merged.library = _l.value; merged._libraryTs = _l.ts; merged._librarySig = _l.sig;
           merged.lastSync = new Date().toISOString();
           merged._writeToken = _localWriteToken;
           return transformKeys(merged, fbEncodeKey);
@@ -6652,10 +6716,17 @@ function scheduleCloudPush(blob) {
           // collections below are merged independently and are always safe.
           const merged = cloudNewer ? Object.assign({}, cloud) : Object.assign({}, localBlob);
           merged.inventory       = _mergeInventory(cloud.inventory, localBlob.inventory, base.inventory);
+          merged.countedParts    = _mergeFlags(cloud.countedParts, localBlob.countedParts, base.countedParts);
           merged.orderEdits      = _mergeById(cloud.orderEdits, localBlob.orderEdits, base.orderEdits);
           merged.partsNeeded     = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base.partsNeeded);
           merged.completedOrders = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
           merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
+          // Orders & library decided by their own change-stamp, independent of
+          // the blob timestamp — stale-device edits can't revert them.
+          const _o = _pickByFieldTs(cloud, localBlob, 'orders', '_ordersTs', '_ordersSig');
+          merged.orders = _o.value; merged._ordersTs = _o.ts; merged._ordersSig = _o.sig;
+          const _l = _pickByFieldTs(cloud, localBlob, 'library', '_libraryTs', '_librarySig');
+          merged.library = _l.value; merged._libraryTs = _l.ts; merged._librarySig = _l.sig;
           // Stamp fresh so this fully-merged copy is recognized as the latest.
           merged.lastSync = new Date().toISOString();
           merged._writeToken = _localWriteToken;
@@ -6683,6 +6754,9 @@ function scheduleCloudPush(blob) {
           } catch {}
           const changed =
             basedOnCloud ||   // the merge pulled in cloud's newer bulk fields — refresh local
+            (mergedBlob._ordersSig !== localBlob._ordersSig) ||
+            (mergedBlob._librarySig !== localBlob._librarySig) ||
+            !_flagsEqual(mergedBlob.countedParts, localBlob.countedParts) ||
             !_invEqual(mergedBlob.inventory, localBlob.inventory) ||
             !_byIdEqual(mergedBlob.orderEdits, localBlob.orderEdits) ||
             !_byIdEqual(mergedBlob.partsNeeded, localBlob.partsNeeded) ||
@@ -6827,6 +6901,8 @@ function load() {
     state.trackedParts = blob.trackedParts || {};
     state.partLocations = blob.partLocations || {};
     state.recountPrevLoc = blob.recountPrevLoc || {};
+    state._ordersTs = blob._ordersTs || 0; state._ordersSig = blob._ordersSig || cheapHash(JSON.stringify(state.orders || []));
+    state._libraryTs = blob._libraryTs || 0; state._librarySig = blob._librarySig || cheapHash(JSON.stringify(state.library || {}));
     state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
     state.assignments = blob.assignments || {};
     state.completedOrders = Array.isArray(blob.completedOrders) ? blob.completedOrders : [];
@@ -11990,6 +12066,8 @@ function buildBackupBlob() {
     trackedParts: state.trackedParts,
     partLocations: state.partLocations,
     recountPrevLoc: state.recountPrevLoc,
+    _ordersTs: state._ordersTs, _ordersSig: state._ordersSig,
+    _libraryTs: state._libraryTs, _librarySig: state._librarySig,
     partsNeeded: state.partsNeeded,
     priority: state.priority,
     assignments: state.assignments,
@@ -13312,6 +13390,12 @@ function applyRestoreBlob(blob, opts) {
   // else: leave state.partLocations alone — protects against accidental wipes
   if (Object.prototype.hasOwnProperty.call(blob, 'recountPrevLoc')) {
     state.recountPrevLoc = blob.recountPrevLoc || {};
+  }
+  if (Object.prototype.hasOwnProperty.call(blob, '_ordersTs')) {
+    state._ordersTs = blob._ordersTs || 0; state._ordersSig = blob._ordersSig || '';
+  }
+  if (Object.prototype.hasOwnProperty.call(blob, '_libraryTs')) {
+    state._libraryTs = blob._libraryTs || 0; state._librarySig = blob._librarySig || '';
   }
   state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
   state.assignments = blob.assignments || {};
