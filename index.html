@@ -6593,15 +6593,46 @@ function scheduleCloudPush(blob) {
       _recentWriteTokens.push(_localWriteToken);
       if (_recentWriteTokens.length > 40) _recentWriteTokens.shift();
 
-      if (!window._fb.runTransaction || !_syncBase) {
-        // No transaction support, or no common ancestor established yet (very
-        // first push before the initial pull finished) — fall back to a plain
-        // whole-blob write, which is the original behavior.
+      if (!window._fb.runTransaction) {
+        // No transaction support at all — last-resort plain write.
         const sanitized = transformKeys(localBlob, fbEncodeKey);
         sanitized._writeToken = _localWriteToken;
         await window._fb.set(cloudRef(), sanitized);
+      } else if (!_syncBase) {
+        // No common ancestor yet (e.g. the app booted OFFLINE, so the initial
+        // pull never ran and never captured a base). Do a GUARDED write instead
+        // of a blind overwrite: keep the newer side's bulk fields by timestamp,
+        // and UNION the append-only logs so no device's history is lost. Without
+        // a base we can't compute safe per-part inventory deltas, so we take the
+        // newer side's inventory wholesale rather than risk double-counting.
+        const res = await window._fb.runTransaction(cloudRef(), (encCurrent) => {
+          if (encCurrent === null || encCurrent === undefined) {
+            const s = transformKeys(localBlob, fbEncodeKey);
+            s._writeToken = _localWriteToken;
+            return s;
+          }
+          const cloud = transformKeys(encCurrent, fbDecodeKey);
+          const cloudTime = cloud.lastSync ? new Date(cloud.lastSync).getTime() : 0;
+          const localTime = localBlob.lastSync ? new Date(localBlob.lastSync).getTime() : 0;
+          const merged = cloudTime > localTime ? Object.assign({}, cloud) : Object.assign({}, localBlob);
+          merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
+          merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
+          merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, []);   // [] base = pure union, no deletes
+          merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, []);
+          merged.lastSync = new Date().toISOString();
+          merged._writeToken = _localWriteToken;
+          return transformKeys(merged, fbEncodeKey);
+        }, { applyLocally: false });
+        if (res && res.committed && res.snapshot && res.snapshot.exists()) {
+          const mergedBlob = transformKeys(res.snapshot.val(), fbDecodeKey);
+          delete mergedBlob._writeToken;
+          _suspendCloudWrites = true;
+          applyRestoreBlob(mergedBlob, { fromCloud: true });  // sets local + captures base
+          _suspendCloudWrites = false;
+        }
       } else {
         const base = _syncBase;
+        let basedOnCloud = false;
         const res = await window._fb.runTransaction(cloudRef(), (encCurrent) => {
           if (encCurrent === null || encCurrent === undefined) {
             // Cloud empty — seed it with our full local blob.
@@ -6610,15 +6641,23 @@ function scheduleCloudPush(blob) {
             return s;
           }
           const cloud = transformKeys(encCurrent, fbDecodeKey);
-          // Start from our local blob (last-writer-wins for everything), then
-          // override the three collections with a proper merge against cloud.
-          const merged = Object.assign({}, localBlob);
+          const cloudTime = cloud.lastSync ? new Date(cloud.lastSync).getTime() : 0;
+          const localTime = localBlob.lastSync ? new Date(localBlob.lastSync).getTime() : 0;
+          const cloudNewer = cloudTime > localTime;
+          basedOnCloud = cloudNewer;
+          // For the last-writer-wins fields (orders, library, priority, etc.)
+          // keep whichever side is NEWER by lastSync. This is the key fix: a
+          // device that's been asleep and is behind can NO LONGER overwrite the
+          // cloud's newer orders/library with its stale copy. The five
+          // collections below are merged independently and are always safe.
+          const merged = cloudNewer ? Object.assign({}, cloud) : Object.assign({}, localBlob);
           merged.inventory       = _mergeInventory(cloud.inventory, localBlob.inventory, base.inventory);
           merged.orderEdits      = _mergeById(cloud.orderEdits, localBlob.orderEdits, base.orderEdits);
           merged.partsNeeded     = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base.partsNeeded);
           merged.completedOrders = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
           merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
-          merged.lastSync = localBlob.lastSync;
+          // Stamp fresh so this fully-merged copy is recognized as the latest.
+          merged.lastSync = new Date().toISOString();
           merged._writeToken = _localWriteToken;
           return transformKeys(merged, fbEncodeKey);
         }, { applyLocally: false });
@@ -6643,6 +6682,7 @@ function scheduleCloudPush(blob) {
                 nowBlob.lastSync !== localBlob.lastSync) superseded = true;
           } catch {}
           const changed =
+            basedOnCloud ||   // the merge pulled in cloud's newer bulk fields — refresh local
             !_invEqual(mergedBlob.inventory, localBlob.inventory) ||
             !_byIdEqual(mergedBlob.orderEdits, localBlob.orderEdits) ||
             !_byIdEqual(mergedBlob.partsNeeded, localBlob.partsNeeded) ||
@@ -13806,6 +13846,45 @@ async function pullFromCloudOnce() {
     toast('Cloud read failed — working locally', 'error');
   }
 }
+
+// Re-pull the cloud when the app returns to the foreground. On iOS the page is
+// frozen (not reloaded) when backgrounded, so the boot pull never re-runs and a
+// reopened device would otherwise operate on — and could push — stale in-memory
+// state. This refreshes it to the latest cloud whenever it's genuinely behind.
+let _resyncing = false;
+async function resyncFromCloud() {
+  if (!_fbReady || !_fbUser || _resyncing || _cloudPushPending || _suspendCloudWrites) return;
+  _resyncing = true;
+  try {
+    const snap = await window._fb.get(cloudRef());
+    if (snap && snap.exists()) {
+      const cloudBlob = transformKeys(snap.val(), fbDecodeKey);
+      const token = cloudBlob._writeToken;
+      delete cloudBlob._writeToken;
+      const cloudTime = cloudBlob.lastSync ? new Date(cloudBlob.lastSync).getTime() : 0;
+      const localRaw = localStorage.getItem(STORAGE_KEY);
+      const localBlob = localRaw ? JSON.parse(localRaw) : null;
+      const localTime = localBlob && localBlob.lastSync ? new Date(localBlob.lastSync).getTime() : 0;
+      // Only pull if the cloud is genuinely newer AND this isn't our own echo
+      // AND we have no un-pushed local edits waiting (those get merged by the
+      // push instead — never clobber them).
+      if (cloudTime > localTime && !_recentWriteTokens.includes(token) && !_cloudPushPending) {
+        _suspendCloudWrites = true;
+        applyRestoreBlob(cloudBlob, { fromCloud: true });
+        _suspendCloudWrites = false;
+        if (window._syncDebug) console.log('[sync] foreground resync pulled newer cloud');
+      }
+    }
+  } catch (e) {
+    if (window._syncDebug) console.log('[sync] resync failed', e);
+  } finally {
+    _resyncing = false;
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') resyncFromCloud();
+});
+window.addEventListener('focus', resyncFromCloud);
 
 // Listen for connection state (Firebase has a special /.info/connected node)
 // AND subscribe to live workspace changes so other devices' edits flow in.
