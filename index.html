@@ -1218,6 +1218,64 @@ body {
 .top10-block.top10-sidebar {
   margin-bottom: 0;
 }
+/* Full-width queue when the sidebar has been moved to the Stats page */
+.queue-layout.queue-layout-solo { display: block; }
+.queue-layout.queue-layout-solo .queue-main { min-width: 0; }
+/* SKU multi-filter (FDM queue) */
+.sku-filter { margin-bottom: 12px; }
+.sku-filter-wrap { position: relative; max-width: 480px; }
+.sku-filter-dd {
+  position: absolute; z-index: 30; left: 0; right: 0; top: 100%;
+  margin-top: 4px; max-height: 280px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line-bright);
+  border-radius: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.sku-filter-dd-item {
+  padding: 9px 12px; cursor: pointer; font-size: 12px; color: var(--ink);
+  border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 10px;
+}
+.sku-filter-dd-item:last-child { border-bottom: none; }
+.sku-filter-dd-item:hover, .sku-filter-dd-item.active { background: var(--panel-2); }
+.sku-filter-dd-sku { font-family: 'JetBrains Mono', monospace; color: var(--accent); }
+.sku-filter-dd-empty { padding: 12px; font-size: 12px; color: var(--ink-faint); text-align: center; }
+.sku-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.sku-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(212,168,75,0.14); border: 1px solid var(--amber);
+  color: var(--ink); border-radius: 4px; padding: 4px 8px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+}
+.sku-chip-x { cursor: pointer; color: var(--ink-dim); font-weight: 700; }
+.sku-chip-x:hover { color: var(--red, #e5533c); }
+.sku-chip-clear {
+  cursor: pointer; font-size: 11px; color: var(--ink-faint);
+  text-decoration: underline; align-self: center;
+}
+/* Stats page */
+.stats-page-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.stats-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px 18px;
+}
+.stats-card-head {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin-bottom: 12px;
+}
+.stats-card .stats.stats-vertical { position: static; }
+@media (max-width: 1100px) {
+  .stats-page-grid { grid-template-columns: 1fr; }
+}
 
 /* Prominent search bar on FDM queue */
 .search.search-prominent {
@@ -5145,6 +5203,9 @@ body.mode-mobile .mobile-only { display: block; }
         <span>FDM Queue</span>
         <span class="nav-item-num" id="nav-queue-fdm-count">0</span>
       </div>
+      <div class="nav-item" data-view="stats" data-mobile="hide">
+        <span>Stats</span>
+      </div>
       <div class="nav-item" data-view="library" data-mobile="hide">
         <span>Parts Library</span>
         <span class="nav-item-num" id="nav-library-count">0</span>
@@ -5165,7 +5226,7 @@ body.mode-mobile .mobile-only { display: block; }
         <span class="nav-item-num" id="nav-orders-count">0</span>
       </div>
       <div class="nav-item" data-view="import" data-mobile="show">
-        <span>Import / Settings</span>
+        <span>Settings</span>
       </div>
     </nav>
 
@@ -5208,10 +5269,9 @@ body.mode-mobile .mobile-only { display: block; }
         </div>
       </div>
 
-      <div class="queue-layout">
+      <div class="queue-layout queue-layout-solo">
         <div class="queue-main">
           <div class="toolbar">
-            <input type="text" class="search" data-queue-search placeholder="Filter by customer, SKU, or part…">
             <button class="filter-chip active" data-age-filter="all">All</button>
             <button class="filter-chip" data-age-filter="7">7+ days</button>
             <button class="filter-chip" data-age-filter="14">14+ days</button>
@@ -5234,27 +5294,6 @@ body.mode-mobile .mobile-only { display: block; }
 
           <div class="kanban-board" id="kanban-resin"></div>
         </div>
-
-        <aside class="queue-sidebar">
-          <div class="stats stats-vertical">
-            <div class="stat"><div class="stat-label">Parts to print</div><div class="stat-value" data-stat="parts">0</div></div>
-            <div class="stat"><div class="stat-label">Distinct parts</div><div class="stat-value muted" data-stat="rows">0</div></div>
-            <div class="stat"><div class="stat-label">Distinct orders</div><div class="stat-value" data-stat="orders">0</div></div>
-            <div class="stat"><div class="stat-label">Aged 7+ days</div><div class="stat-value alert" data-stat="aged">0</div></div>
-            <div class="stat"><div class="stat-label">Undefined SKUs</div><div class="stat-value warn" data-stat="undef">0</div></div>
-          </div>
-
-          <div class="top10-block top10-sidebar">
-            <div class="top10-head">
-              <div class="top10-title">
-                <span class="top10-mark">★</span>
-                <span>Top 10 by Demand</span>
-              </div>
-              <div class="top10-sub">After inventory</div>
-            </div>
-            <div data-top10-container></div>
-          </div>
-        </aside>
       </div>
     </section>
 
@@ -5269,7 +5308,7 @@ body.mode-mobile .mobile-only { display: block; }
         </div>
       </div>
 
-      <div class="queue-layout">
+      <div class="queue-layout queue-layout-solo">
         <div class="queue-main">
           <div class="toolbar">
             <input type="text" class="search search-prominent" data-queue-search placeholder="Search for a part to print (part name, SKU, or customer)…">
@@ -5278,61 +5317,83 @@ body.mode-mobile .mobile-only { display: block; }
             <button class="filter-chip" data-age-filter="14">14+ days</button>
           </div>
 
+          <div class="sku-filter" data-sku-filter="fdm">
+            <div class="sku-filter-wrap">
+              <input type="text" id="fdm-sku-input" class="search" placeholder="Filter by SKU — type to add one or more…" autocomplete="off">
+              <div class="sku-filter-dd" id="fdm-sku-dd" hidden></div>
+            </div>
+            <div class="sku-filter-chips" id="fdm-sku-chips"></div>
+          </div>
+
           <div data-queue-container></div>
         </div>
+      </div>
+    </section>
 
-        <aside class="queue-sidebar">
+    <!-- =========== STATS VIEW =========== -->
+    <section id="view-stats" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Stats</h1>
+          <div class="page-sub">Print pace, queue health, and demand — resin and FDM.</div>
+        </div>
+      </div>
+
+      <div class="stats-page-grid">
+        <div class="stats-card">
+          <div class="stats-card-head">◈ Print productivity (FDM)</div>
+          <div class="productivity-row">
+            <div class="productivity-label">Printed today</div>
+            <div class="productivity-value" id="st-prod-today">0</div>
+          </div>
+          <div class="productivity-row">
+            <div class="productivity-label">Daily average</div>
+            <div class="productivity-value muted" id="st-prod-avg">0</div>
+          </div>
+          <div class="productivity-sub" id="st-prod-sub">All FDM parts · last 7 days</div>
+          <div class="productivity-row" style="border-top:1px solid var(--line-bright);">
+            <div class="productivity-label">Time to clear</div>
+            <div class="productivity-value" id="st-prod-eta">—</div>
+          </div>
+          <div class="productivity-sub" id="st-prod-eta-sub">At current pace</div>
+        </div>
+
+        <div class="stats-card">
+          <div class="stats-card-head">FDM queue</div>
           <div class="stats stats-vertical">
-            <div class="stat"><div class="stat-label">Parts to print</div><div class="stat-value" data-stat="parts">0</div></div>
-            <div class="stat"><div class="stat-label">Distinct parts</div><div class="stat-value muted" data-stat="rows">0</div></div>
-            <div class="stat"><div class="stat-label">Distinct orders</div><div class="stat-value" data-stat="orders">0</div></div>
-            <div class="stat"><div class="stat-label">Aged 7+ days</div><div class="stat-value alert" data-stat="aged">0</div></div>
-            <div class="stat"><div class="stat-label">Undefined SKUs</div><div class="stat-value warn" data-stat="undef">0</div></div>
+            <div class="stat"><div class="stat-label">Parts to print</div><div class="stat-value" data-st="fdm-parts">0</div></div>
+            <div class="stat"><div class="stat-label">Distinct parts</div><div class="stat-value muted" data-st="fdm-rows">0</div></div>
+            <div class="stat"><div class="stat-label">Distinct orders</div><div class="stat-value" data-st="fdm-orders">0</div></div>
+            <div class="stat"><div class="stat-label">Aged 7+ days</div><div class="stat-value alert" data-st="fdm-aged">0</div></div>
+            <div class="stat"><div class="stat-label">Undefined SKUs</div><div class="stat-value warn" data-st="fdm-undef">0</div></div>
           </div>
+        </div>
 
-          <div class="productivity-block">
-            <div class="productivity-head">
-              <span class="productivity-mark">◈</span>
-              <span>Print productivity</span>
-            </div>
-            <div class="productivity-row">
-              <div class="productivity-label">Printed today</div>
-              <div class="productivity-value" id="prod-today">0</div>
-            </div>
-            <div class="productivity-row">
-              <div class="productivity-label">Daily average</div>
-              <div class="productivity-value muted" id="prod-avg">0</div>
-            </div>
-            <div class="productivity-sub" id="prod-sub">Toward pending demand · last 30 days</div>
-            <div class="productivity-row" style="border-top:1px solid var(--line-bright);">
-              <div class="productivity-label">Time to clear</div>
-              <div class="productivity-value" id="prod-eta">—</div>
-            </div>
-            <div class="productivity-sub" id="prod-eta-sub">At current pace</div>
+        <div class="stats-card">
+          <div class="stats-card-head">Resin queue</div>
+          <div class="stats stats-vertical">
+            <div class="stat"><div class="stat-label">Parts to print</div><div class="stat-value" data-st="resin-parts">0</div></div>
+            <div class="stat"><div class="stat-label">Distinct parts</div><div class="stat-value muted" data-st="resin-rows">0</div></div>
+            <div class="stat"><div class="stat-label">Distinct orders</div><div class="stat-value" data-st="resin-orders">0</div></div>
+            <div class="stat"><div class="stat-label">Aged 7+ days</div><div class="stat-value alert" data-st="resin-aged">0</div></div>
+            <div class="stat"><div class="stat-label">Undefined SKUs</div><div class="stat-value warn" data-st="resin-undef">0</div></div>
           </div>
+        </div>
+      </div>
 
-          <div class="started-block">
-            <div class="started-head">
-              <span class="started-mark">▸</span>
-              <span>Started today</span>
-              <span class="started-total" id="started-total"></span>
-            </div>
-            <div class="started-list" id="started-list">
-              <div class="started-empty">Nothing started yet today.</div>
-            </div>
-          </div>
-
-          <div class="top10-block top10-sidebar">
-            <div class="top10-head">
-              <div class="top10-title">
-                <span class="top10-mark">★</span>
-                <span>Top 10 by Demand</span>
-              </div>
-              <div class="top10-sub">After inventory</div>
-            </div>
-            <div data-top10-container></div>
-          </div>
-        </aside>
+      <div class="stats-page-grid">
+        <div class="stats-card">
+          <div class="stats-card-head">★ Top 10 FDM by demand</div>
+          <div id="st-top10-fdm"></div>
+        </div>
+        <div class="stats-card">
+          <div class="stats-card-head">★ Top 10 resin by demand</div>
+          <div id="st-top10-resin"></div>
+        </div>
+        <div class="stats-card">
+          <div class="stats-card-head">⇧ Top 10 shipped products</div>
+          <div id="st-top10-shipped"></div>
+        </div>
       </div>
     </section>
 
@@ -5447,30 +5508,12 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="page-header">
         <div>
           <h1 class="page-title">Inventory</h1>
-          <div class="page-sub">Sorted by oldest open order · type a number to mark a part counted</div>
+          <div class="page-sub">Type a number to mark a part counted · full change history is on the History page</div>
         </div>
         <div class="page-actions">
           <button class="btn btn-primary" id="btn-walkthrough" title="Big-button counting mode for walking through inventory">Uncounted Parts</button>
           <button class="btn btn-ghost" id="btn-resort-inventory" title="Re-sort by priority (uncounted first, oldest order first)">Re-sort by priority</button>
           <button class="btn btn-ghost" id="btn-export-inventory">Export CSV</button>
-        </div>
-      </div>
-
-      <div class="inv-history-block" id="inv-history-block">
-        <div class="inv-history-header">
-          <div class="inv-history-title">
-            <span class="inv-history-title-text">Manual inventory changes</span>
-            <span class="inv-history-count" id="inv-history-count">0</span>
-          </div>
-          <button class="btn btn-ghost btn-sm" id="inv-history-toggle">Show</button>
-        </div>
-        <div class="inv-history-body hidden" id="inv-history-body">
-          <div class="inv-history-hint">
-            Recent edits from Walk-Through, Stock update, +/-, Delete, and direct edits. Automatic changes (shipping, plate prints) aren't tracked here.
-          </div>
-          <div id="inv-history-container" style="background:var(--panel);border:1px solid var(--line);border-radius:4px;overflow:hidden;">
-            <div class="empty-sub" style="padding:30px;text-align:center;">No changes yet.</div>
-          </div>
         </div>
       </div>
 
@@ -5525,8 +5568,8 @@ body.mode-mobile .mobile-only { display: block; }
 
       <div class="toolbar">
         <input type="text" class="search" id="inventory-search" placeholder="Filter by part name…">
-        <button class="filter-chip active" data-inv-filter="uncounted">Uncounted first</button>
-        <button class="filter-chip" data-inv-filter="all">All</button>
+        <button class="filter-chip" data-inv-filter="uncounted">Uncounted first</button>
+        <button class="filter-chip active" data-inv-filter="all">All</button>
         <button class="filter-chip" data-inv-filter="low">Below demand</button>
         <button class="filter-chip" data-inv-filter="stocked">In stock</button>
       </div>
@@ -5564,29 +5607,16 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="page-header">
         <div>
           <h1 class="page-title">History</h1>
-          <div class="page-sub">Completed prints and the full inventory ledger. Newest first.</div>
+          <div class="page-sub">Every change to inventory — prints, shipments, edits, adjustments, recounts. Newest first.</div>
         </div>
       </div>
-      <div class="hist-tabs">
-        <button class="hist-tab active" data-hist-tab="completed">Completed</button>
-        <button class="hist-tab" data-hist-tab="ledger">Inventory ledger</button>
+      <div class="ledger-controls">
+        <input type="text" id="ledger-search" class="search" placeholder="Search a part name to see every change to its count…" autocomplete="off">
       </div>
-      <div data-hist-panel="completed">
-        <div class="dash-panel" style="padding:0;overflow:hidden;">
-          <div class="completed-table" id="completed-table">
-            <div class="empty-sub" style="padding:30px;text-align:center;">No completed items yet — hit Done on a queue card to start tracking.</div>
-          </div>
-        </div>
-      </div>
-      <div data-hist-panel="ledger" class="hidden">
-        <div class="ledger-controls">
-          <input type="text" id="ledger-search" class="search" placeholder="Search a part name to see every change to its count…" autocomplete="off">
-        </div>
-        <div id="ledger-summary" class="ledger-summary hidden"></div>
-        <div class="dash-panel" style="padding:0;overflow:hidden;margin-top:10px;">
-          <div id="ledger-container">
-            <div class="empty-sub" style="padding:30px;text-align:center;">Loading…</div>
-          </div>
+      <div id="ledger-summary" class="ledger-summary hidden"></div>
+      <div class="dash-panel" style="padding:0;overflow:hidden;margin-top:10px;">
+        <div id="ledger-container">
+          <div class="empty-sub" style="padding:30px;text-align:center;">Loading…</div>
         </div>
       </div>
     </section>
@@ -5608,7 +5638,6 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="tools-tabs">
         <button class="tools-tab active" data-tools-tab="vehicle">Vehicle Tagger</button>
         <button class="tools-tab" data-tools-tab="parttype">Resin · FDM</button>
-        <button class="tools-tab" data-tools-tab="tracker">Print Tracker</button>
         <button class="tools-tab" data-tools-tab="edit">Edit Orders</button>
       </div>
 
@@ -5663,31 +5692,6 @@ body.mode-mobile .mobile-only { display: block; }
       </div>
 
       <!-- Print Tracker tab -->
-      <div class="tools-tab-panel hidden" data-tools-panel="tracker">
-        <div class="page-header" style="margin-top:14px;">
-          <div>
-            <div class="page-sub">Pick the FDM parts you want to watch, and see how long until just those are all printed — at your recent pace on them.</div>
-          </div>
-        </div>
-
-        <div id="tracker-summary" class="tracker-summary">
-          <div class="ls-item"><span class="ls-label">Parts tracked</span><span class="ls-value" id="trk-count">0</span></div>
-          <div class="ls-item"><span class="ls-label">Units remaining</span><span class="ls-value" id="trk-remaining">0</span></div>
-          <div class="ls-item"><span class="ls-label">Daily pace (these parts)</span><span class="ls-value" id="trk-rate">—</span></div>
-          <div class="ls-item"><span class="ls-label">All printed in</span><span class="ls-value" id="trk-eta">—</span></div>
-          <div class="ls-item"><span class="ls-label">Done by</span><span class="ls-value" id="trk-date">—</span></div>
-        </div>
-
-        <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap;">
-          <input type="text" id="tracker-search" class="search" placeholder="Search FDM parts to add…" autocomplete="off" style="flex:1 1 260px;">
-          <button class="filter-chip" id="tracker-clear">Clear all</button>
-        </div>
-
-        <div class="sla-list" id="tracker-list" style="margin-top:12px;">
-          <div class="empty"><div class="empty-mark">…</div><div class="empty-sub">Loading…</div></div>
-        </div>
-      </div>
-
       <!-- Edit Orders tab -->
       <div class="tools-tab-panel hidden" data-tools-panel="edit">
         <div class="page-header" style="margin-top:14px;">
@@ -5723,15 +5727,35 @@ body.mode-mobile .mobile-only { display: block; }
     <section id="view-import" class="hidden">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Import &amp; Settings</h1>
-          <div class="page-sub">Load new orders · manage data</div>
+          <h1 class="page-title">Settings</h1>
+          <div class="page-sub">Load orders · thresholds · data management</div>
         </div>
       </div>
 
-      <div class="section-title">Current data</div>
-      <div id="import-status-card" style="background:var(--panel);border:1px solid var(--line-bright);border-left:4px solid var(--green);border-radius:4px;padding:16px 18px;margin-bottom:18px;">
-        <div id="import-status-content" style="font-size:13px;color:var(--ink);line-height:1.6;">
-          Loading…
+      <div class="section-title">Load CSV</div>
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px 18px;margin-bottom:14px;font-size:13px;color:var(--ink-dim);">
+        Upload each CSV as a complete snapshot of pending orders. Any order that was present before but isn't in the new CSV is treated as shipped — its parts are automatically subtracted from inventory. New orders get added to the queues.
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <button class="filter-chip active" data-import-mode="replace">Sync (detect ships, update inventory)</button>
+        <button class="filter-chip" data-import-mode="replace-no-inv">Sync without inventory change</button>
+      </div>
+      <div id="import-mode-hint" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.04em;margin-bottom:14px;line-height:1.5;"></div>
+
+      <div class="import-zone" id="import-zone">
+        <div class="import-icon">[ + ]</div>
+        <div class="import-title">Drop CSV here</div>
+        <div class="import-sub">or click to browse · expects columns: Order Date, Item Name, Quantity, Item SKU, Recipient</div>
+        <button class="btn btn-primary">Choose file</button>
+        <input type="file" class="file-input" id="csv-input" accept=".csv,.tsv,.txt">
+      </div>
+
+      <div class="section-title">Inventory changes from last import</div>
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px 18px;margin-bottom:18px;">
+        <input type="text" id="lastimp-search" class="search" placeholder="Search a part that changed in the last CSV upload…" autocomplete="off" style="margin-bottom:12px;">
+        <div id="lastimp-changes">
+          <div class="empty-sub" style="padding:16px;text-align:center;">No import recorded yet.</div>
         </div>
       </div>
 
@@ -5764,42 +5788,6 @@ body.mode-mobile .mobile-only { display: block; }
         </div>
       </div>
 
-      <div class="section-title">Top 10 shipped products</div>
-      <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:18px 22px;margin-bottom:18px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;">
-          <div style="font-size:12px;color:var(--ink-dim);line-height:1.5;">From real shipping data — orders that disappeared between CSV imports.</div>
-          <div class="dash-range" id="import-shipped-range">
-            <button class="filter-chip" data-imp-range="7">7d</button>
-            <button class="filter-chip active" data-imp-range="14">14d</button>
-            <button class="filter-chip" data-imp-range="30">30d</button>
-            <button class="filter-chip" data-imp-range="all">All</button>
-          </div>
-        </div>
-        <div id="import-top-shipped" class="dash-top10">
-          <div class="empty-sub" style="padding:20px;text-align:center;">Loading…</div>
-        </div>
-      </div>
-
-      <div class="section-title">Load CSV</div>
-
-      <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px 18px;margin-bottom:14px;font-size:13px;color:var(--ink-dim);">
-        Upload each CSV as a complete snapshot of pending orders. Any order that was present before but isn't in the new CSV is treated as shipped — its parts are automatically subtracted from inventory. New orders get added to the queues.
-      </div>
-
-      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-        <button class="filter-chip active" data-import-mode="replace">Sync (detect ships, update inventory)</button>
-        <button class="filter-chip" data-import-mode="replace-no-inv">Sync without inventory change</button>
-      </div>
-      <div id="import-mode-hint" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.04em;margin-bottom:14px;line-height:1.5;"></div>
-
-      <div class="import-zone" id="import-zone">
-        <div class="import-icon">[ + ]</div>
-        <div class="import-title">Drop CSV here</div>
-        <div class="import-sub">or click to browse · expects columns: Order Date, Item Name, Quantity, Item SKU, Recipient</div>
-        <button class="btn btn-primary">Choose file</button>
-        <input type="file" class="file-input" id="csv-input" accept=".csv,.tsv,.txt">
-      </div>
-
       <div class="section-title">Data Management</div>
       <div class="danger-card" style="margin-bottom:16px;">
         <div class="danger-title" style="color: var(--ink); margin-bottom:8px;">Backup</div>
@@ -5814,10 +5802,17 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="danger-card" style="margin-bottom:16px;border-color:rgba(240,168,48,0.3);">
         <div class="danger-title" style="color:var(--amber);margin-bottom:8px;">Auto-save history</div>
         <div class="danger-text">
-          The app keeps automatic snapshots of your data (up to 2, every 20 minutes) as you work. If you ever accidentally delete or break something, restore from a recent snapshot here. Snapshots are kept in this browser only — download a backup for off-device safety.
+          The app keeps up to 5 automatic snapshots as you work — roughly 20 minutes, 2 hours, 8 hours, 24 hours, and 72 hours back. Older ones are discarded automatically. If you ever break something, restore from a recent snapshot here. Snapshots live in this browser only — download a backup for off-device safety.
         </div>
         <button class="btn" id="btn-show-snapshots">View snapshots</button>
         <div id="snapshot-list" hidden style="margin-top:14px;"></div>
+      </div>
+
+      <div class="section-title">Current order data</div>
+      <div id="import-status-card" style="background:var(--panel);border:1px solid var(--line-bright);border-left:4px solid var(--green);border-radius:4px;padding:16px 18px;margin-bottom:18px;">
+        <div id="import-status-content" style="font-size:13px;color:var(--ink);line-height:1.6;">
+          Loading…
+        </div>
       </div>
     </section>
 
@@ -5998,7 +5993,9 @@ body.mode-mobile .mobile-only { display: block; }
 // ============================================================
 const STORAGE_KEY = 'print_queue_workshop_v1';
 const SNAPSHOT_KEY = 'print_queue_workshop_snapshots_v1';
-const MAX_SNAPSHOTS = 2;
+const MAX_SNAPSHOTS = 5;
+// Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
+const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
 // Snapshot frequency: take a new snapshot at most every 20 minutes during normal
 // editing. Destructive changes always trigger a snapshot regardless of timing.
 const SNAPSHOT_MIN_INTERVAL_MS = 20 * 60 * 1000;
@@ -6035,11 +6032,13 @@ const state = {
   view: 'queue-resin',
   queueSearch: { resin: '', fdm: '' },
   ageFilter:   { resin: 'all', fdm: 'all' },
+  skuFilter:   { resin: [], fdm: [] },   // active SKU chips per queue (multi-select)
   librarySearch: '',
   statusFilter: 'all',
+  _libraryShown: 20,   // Parts Library pagination: how many SKUs are currently rendered
   ordersSearch: '',
   inventorySearch: '',
-  invFilter: 'uncounted',
+  invFilter: 'all',
   invLocFilter: 'all',     // 'all' | 'gun_wall' | 'back_room' | 'shipping_side' | 'unset'
   appMode: null,           // 'desktop' | 'mobile' (auto-detected by screen size, override via button)
   invOrderSnapshot: null,  // [partName, ...] frozen sort order for the Inventory page
@@ -6794,6 +6793,29 @@ function scheduleCloudPush(blob) {
   }, 600);
 }
 
+// Keep at most one snapshot per age tier (SNAPSHOT_TIERS_MS). For each target
+// age we pick the surviving snapshot whose age is closest to that target, with
+// no snapshot used for two tiers. Result is <=5 snapshots spread across ~20min
+// to ~72h; everything else is dropped so storage can't overflow.
+function thinSnapshots(snaps) {
+  const now = Date.now();
+  const maxAge = SNAPSHOT_TIERS_MS[SNAPSHOT_TIERS_MS.length - 1] + 12 * 3600 * 1000; // 72h + 12h slack
+  const pool = (snaps || []).filter(s => s && typeof s.at === 'number' && (now - s.at) <= maxAge);
+  const chosen = [];
+  const used = new Set();
+  for (const target of SNAPSHOT_TIERS_MS) {
+    let best = null, bestDiff = Infinity;
+    for (const s of pool) {
+      if (used.has(s)) continue;
+      const diff = Math.abs((now - s.at) - target);
+      if (diff < bestDiff) { bestDiff = diff; best = s; }
+    }
+    if (best) { chosen.push(best); used.add(best); }
+  }
+  chosen.sort((a, b) => b.at - a.at); // newest first
+  return chosen.slice(0, MAX_SNAPSHOTS);
+}
+
 // Rolling auto-save snapshots. Lets the user recover from accidental data loss
 // (button mashes, mis-edits, etc.) without manually downloading backups.
 // Strategy:
@@ -6823,29 +6845,26 @@ function recordSnapshot(blob) {
     }
 
     snaps.unshift(newSnap);
-    snaps.length = Math.min(snaps.length, MAX_SNAPSHOTS);
+    // Thin into age tiers (~20m, 2h, 8h, 24h, 72h) — keeps one snapshot closest
+    // to each target age, so we retain a spread of restore points over 3 days
+    // in only 5 slots. Anything not closest to a tier is discarded → no overflow.
+    let kept = thinSnapshots(snaps);
 
-    // Try to save; if quota is exceeded, progressively drop oldest snapshots
-    // and retry until it fits (or until we've only kept the newest one).
-    let attempt = 0;
-    const maxAttempts = MAX_SNAPSHOTS;
-    while (attempt < maxAttempts) {
+    // Try to save; if quota is exceeded, drop the oldest tier and retry.
+    while (true) {
       try {
-        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snaps));
+        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(kept));
         return; // success
       } catch (err) {
-        // Quota exceeded (or other storage error) — drop oldest snapshot and try again
         const isQuota = err && (err.name === 'QuotaExceededError'
           || err.code === 22
           || /quota/i.test(String(err.message || '')));
         if (!isQuota) throw err;
-        if (snaps.length <= 1) {
-          // Can't shrink any further — give up silently. Main save still works.
+        if (kept.length <= 1) {
           console.warn('Snapshot quota exceeded; could not fit even one snapshot. Skipping.');
           return;
         }
-        snaps.pop(); // drop the oldest
-        attempt++;
+        kept.pop(); // drop the oldest tier and retry
       }
     }
   } catch (e) {
@@ -7095,6 +7114,42 @@ function updateLastSync(iso) {
   document.getElementById('last-sync').textContent = fmt;
 }
 
+// Searchable list of inventory changes from the most recent CSV import.
+function renderLastImportChanges() {
+  const cont = document.getElementById('lastimp-changes');
+  if (!cont) return;
+  const li = state.lastImport;
+  const changes = (li && Array.isArray(li.inventoryChanges)) ? li.inventoryChanges : [];
+  if (!li || changes.length === 0) {
+    cont.innerHTML = `<div class="empty-sub" style="padding:16px;text-align:center;">${
+      li && li.skipInvChange
+        ? 'Last import did not change inventory (sync-without-inventory mode).'
+        : 'No inventory changes in the last import.'}</div>`;
+    return;
+  }
+  const q = (document.getElementById('lastimp-search')?.value || '').trim().toLowerCase();
+  let rows = changes.slice();
+  if (q) rows = rows.filter(c => (c.part || '').toLowerCase().includes(q));
+  rows.sort((a, b) => Math.abs(Number(b.delta) || 0) - Math.abs(Number(a.delta) || 0));
+  if (rows.length === 0) {
+    cont.innerHTML = `<div class="empty-sub" style="padding:16px;text-align:center;">No part matches “${escapeHtml(q)}”.</div>`;
+    return;
+  }
+  let html = `<div class="inv-hist-row header" style="grid-template-columns:1fr 70px 70px 70px;"><div>Part</div><div>Before</div><div>After</div><div style="text-align:right;">Change</div></div>`;
+  for (const c of rows) {
+    const d = Number(c.delta) || 0;
+    html += `<div class="inv-hist-row" style="grid-template-columns:1fr 70px 70px 70px;">
+      <div class="inv-hist-part">${escapeHtml(c.part || '')}</div>
+      <div>${c.before}</div><div>${c.after}</div>
+      <div class="inv-hist-delta ${d > 0 ? 'positive' : (d < 0 ? 'negative' : '')}" style="text-align:right;">${d > 0 ? '+' : ''}${d}</div>
+    </div>`;
+  }
+  cont.innerHTML = html;
+}
+document.addEventListener('input', (e) => {
+  if (e.target && e.target.id === 'lastimp-search') renderLastImportChanges();
+});
+
 // Renders the "Last import" sidebar footer entry + the big "Current data"
 // card on the Import / Settings page. Call after any import or on load.
 function renderImportStatus() {
@@ -7174,6 +7229,7 @@ function renderImportStatus() {
       ${staleNote}`;
   }
   renderImportTopShipped();
+  renderLastImportChanges();
 }
 
 // Build the inventory-changes block that appears in the "Current data" card.
@@ -7226,12 +7282,10 @@ function renderImportInventoryChanges(li) {
 let _impShippedRangeDays = 14; // 7, 14, 30, or 'all'
 
 function renderImportTopShipped() {
-  const container = document.getElementById('import-top-shipped');
+  const container = document.getElementById('st-top10-shipped');
   if (!container) return;
   const now = new Date();
-  const cutoff = _impShippedRangeDays === 'all'
-    ? new Date(0)
-    : new Date(now.getTime() - _impShippedRangeDays * 86400000);
+  const cutoff = new Date(0); // all-time on the Stats page
 
   // Aggregate shippedHistory by product name within the range
   const shippedTotals = {};
@@ -7267,6 +7321,7 @@ document.addEventListener('click', (e) => {
   const r = chip.dataset.impRange;
   _impShippedRangeDays = r === 'all' ? 'all' : parseInt(r, 10);
   renderImportTopShipped();
+  renderLastImportChanges();
 });
 
 // ============================================================
@@ -7601,11 +7656,19 @@ function renderQueue(type) {
   // Search + age filter (scoped to this queue)
   const q = (state.queueSearch[type] || '').toLowerCase().trim();
   const af = state.ageFilter[type] || 'all';
+  const skuSel = (state.skuFilter && state.skuFilter[type]) ? state.skuFilter[type] : [];
+  const skuSet = skuSel.length ? new Set(skuSel) : null;
   const todayMsFilter = today.getTime();
   let filtered = all.filter(r => {
     if (q) {
       const blob = `${r.customer} ${r.sku} ${r.part} ${r.item}`.toLowerCase();
       if (!blob.includes(q)) return false;
+    }
+    if (skuSet) {
+      // Keep a row if ANY of its SKUs is selected. Grouped rows carry _skus
+      // (a part can span several SKUs); plain rows use their own sku.
+      const rowSkus = Array.isArray(r._skus) ? r._skus : (r.sku ? [r.sku] : []);
+      if (!rowSkus.some(sk => skuSet.has(sk))) return false;
     }
     if (af !== 'all') {
       const age = (todayMsFilter - new Date(r.date).getTime()) / 86400000;
@@ -7615,47 +7678,7 @@ function renderQueue(type) {
     return true;
   });
 
-  // Stats
-  // Units, not rows — matches the nav count and the FDM Time-to-clear backlog.
-  section.querySelector('[data-stat="parts"]').textContent = queueUnitCount(built).toLocaleString();
-  // Distinct parts = the number of cards actually rendered, since both queues
-  // group by part name (one card per unique part). This is the number the user
-  // can count on screen — NOT all.length, which is order line items and matches
-  // nothing visible.
-  const rowsEl = section.querySelector('[data-stat="rows"]');
-  if (rowsEl) {
-    const distinctParts = new Set();
-    for (const r of all) {
-      if (r._isNeed) continue;
-      if (r.part) distinctParts.add(r.part);
-    }
-    rowsEl.textContent = distinctParts.size.toLocaleString();
-  }
-  const distinctOrders = new Set(all.map(r => r.orderId)).size;
-  section.querySelector('[data-stat="orders"]').textContent = distinctOrders;
-  const todayMs = today.getTime();
-  const aged = all.filter(r => {
-    const d = new Date(r.date).getTime();
-    return (todayMs - d) / 86400000 >= 7;
-  }).length;
-  section.querySelector('[data-stat="aged"]').textContent = aged;
-  // Undef SKUs: count SKUs in orders whose library has no parts of this type
-  const undef = new Set();
-  for (const o of state.orders) {
-    const lib = state.library[o.sku];
-    const hasOfType = (lib?.parts || []).some(p => {
-      const t = (typeof p === 'string') ? 'resin' : (p.type === 'fdm' ? 'fdm' : 'resin');
-      return t === type;
-    });
-    const hasAny = partNames(lib).length > 0;
-    if (!hasAny) undef.add(o.sku);
-    // Note: we don't flag SKUs that have parts but none of THIS type; that's intentional
-  }
-  section.querySelector('[data-stat="undef"]').textContent = undef.size;
-
   renderSidebarCounts();
-  renderTop10(type);
-  if (type === 'fdm') { renderProductivity(); renderStartedToday(); }
 
   // Resin → kanban board. FDM → list.
   if (type === 'resin') {
@@ -7664,6 +7687,7 @@ function renderQueue(type) {
   }
 
   const container = section.querySelector('[data-queue-container]');
+  if (typeof renderFdmSkuChips === 'function') renderFdmSkuChips();
   if (filtered.length === 0) {
     const fullyCovered = built.allRows.length > 0 && all.length === 0;
     const typeLabel = 'FDM';
@@ -7766,6 +7790,7 @@ function renderQueue(type) {
       _customerCount: g.customers.size,
       _orderCount: g.rows.length,
       _skuCount: g.skus.size,
+      _skus: Array.from(g.skus),
       _underlyingRows: g.rows,
       _orderIsVehicle: groupHasVehicle,
     });
@@ -9040,7 +9065,10 @@ function renderLibrary() {
   const LOCATION_OPTIONS_TEMPLATE = LOCATIONS.filter(l => l !== '')
     .map(l => `<option value="${l}">${LOCATION_LABELS[l]}</option>`)
     .join('');
-  filtered.forEach(r => {
+  const LIB_PAGE = 20;
+  if (!state._libraryShown || state._libraryShown < LIB_PAGE) state._libraryShown = LIB_PAGE;
+  const shownRows = filtered.slice(0, state._libraryShown);
+  shownRows.forEach(r => {
     const statusLabel = r.status === 'needs' ? 'Needs Parts'
       : r.status === 'defined' ? 'Defined' : 'Unused';
     let partsHtml = '';
@@ -9124,6 +9152,9 @@ function renderLibrary() {
         </div>
       </div>`;
   });
+  if (filtered.length > shownRows.length) {
+    html += `<div style="margin-top:16px;text-align:center;"><button class="btn" id="btn-lib-load-more">Load more (${shownRows.length} of ${filtered.length})</button></div>`;
+  }
   html += '<div style="margin-top:16px;"><button class="btn" id="btn-add-sku">+ Add SKU manually</button></div>';
   container.innerHTML = html;
 
@@ -9443,9 +9474,14 @@ function wireLibraryCards(container) {
       };
 
       nameInput.addEventListener('input', () => {
+        // Only update the autocomplete suggestions while typing. Do NOT commit
+        // here — committing calls scheduleSave and can re-render the library
+        // mid-keystroke, which was stealing focus from the name field.
         renderAutocomplete(nameInput.value);
-        commit();
       });
+      // Commit when the user finishes with the field (blur or Enter). Picking an
+      // autocomplete entry commits separately via applyCatalogEntry.
+      nameInput.addEventListener('change', commit);
       yieldInput.addEventListener('input', commit);
       if (qtyInput) qtyInput.addEventListener('input', commit);
       if (printerInput) printerInput.addEventListener('change', commit);
@@ -10314,6 +10350,89 @@ function renderTop10(type) {
 
 
 // ============================================================
+// STATS PAGE
+// ============================================================
+function _statsTop10Html(built) {
+  const totals = {};
+  for (const r of built.visible) { if (r._isNeed) continue; totals[r.part] = (totals[r.part] || 0) + (Number(r._remaining) || 0); }
+  const ranked = Object.entries(totals).filter(([_, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  if (ranked.length === 0) return `<div class="top10-empty">No outstanding demand · queue is fully covered or empty</div>`;
+  const max = ranked[0][1];
+  let html = '<div class="top10-grid">';
+  ranked.forEach(([part, qty], i) => {
+    const dim = i >= 3 ? 'dim' : '';
+    const pct = Math.max(6, Math.round((qty / max) * 100));
+    html += `<div class="top10-row"><div class="top10-rank ${dim}">${String(i + 1).padStart(2, '0')}</div><div><div class="top10-name" title="${escapeAttr(part)}">${escapeHtml(part)}</div><div class="top10-bar"><div class="top10-bar-fill" style="width:${pct}%"></div></div></div><div class="top10-qty">×${qty}</div></div>`;
+  });
+  return html + '</div>';
+}
+
+function renderStats() {
+  const view = document.getElementById('view-stats');
+  if (view && view.classList.contains('hidden')) return;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+  const setSt = (key, val) => { const el = document.querySelector(`[data-st="${key}"]`); if (el) el.textContent = val; };
+
+  // Per-queue stats + top 10 by demand
+  for (const type of ['resin', 'fdm']) {
+    const built = buildQueue(type);
+    const all = built.visible;
+    setSt(`${type}-parts`, queueUnitCount(built).toLocaleString());
+    const distinctParts = new Set();
+    for (const r of all) { if (!r._isNeed && r.part) distinctParts.add(r.part); }
+    setSt(`${type}-rows`, distinctParts.size.toLocaleString());
+    setSt(`${type}-orders`, new Set(all.map(r => r.orderId)).size);
+    setSt(`${type}-aged`, all.filter(r => (todayMs - new Date(r.date).getTime()) / 86400000 >= 7).length);
+    const undef = new Set();
+    for (const o of state.orders) { const lib = state.library[o.sku]; if (partNames(lib).length === 0) undef.add(o.sku); }
+    setSt(`${type}-undef`, undef.size);
+    const cont = document.getElementById(`st-top10-${type}`);
+    if (cont) cont.innerHTML = _statsTop10Html(built);
+  }
+
+  // FDM print productivity — ALL FDM parts, last 7 days.
+  const fdmParts = new Set();
+  for (const sku of Object.keys(state.library)) {
+    const lib = state.library[sku];
+    if (!lib || !Array.isArray(lib.parts)) continue;
+    for (const p of lib.parts) if (p && typeof p !== 'string' && p.type === 'fdm' && p.name) fdmParts.add(p.name);
+  }
+  const win = new Date(today.getTime() - 6 * 86400000);  // 7-day window incl. today
+  let printedToday = 0, printed7 = 0, earliest = null;
+  for (const c of (state.completedOrders || [])) {
+    if (c.kind !== 'print' || c.synthetic) continue;
+    const ptype = c.printType || (fdmParts.has(c.partName) ? 'fdm' : 'resin');
+    if (ptype !== 'fdm') continue;
+    const at = new Date(c.at); if (isNaN(at.getTime())) continue;
+    const qty = (typeof c.qtyToDemand === 'number') ? c.qtyToDemand : (Number(c.qty) || 0);
+    if (at >= today) printedToday += qty;
+    if (at >= win) { printed7 += qty; if (!earliest || at < earliest) earliest = at; }
+  }
+  let days = 7;
+  if (earliest) { const e = new Date(earliest); e.setHours(0, 0, 0, 0); days = Math.min(7, Math.max(1, Math.floor((todayMs - e.getTime()) / 86400000) + 1)); }
+  const dailyAvg = printed7 / days;
+  const setId = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setId('st-prod-today', printedToday.toLocaleString());
+  setId('st-prod-avg', dailyAvg >= 10 ? Math.round(dailyAvg) : dailyAvg.toFixed(1));
+  setId('st-prod-sub', `All FDM parts · ${days === 1 ? 'today only' : 'last ' + days + ' days'}`);
+  let backlog = 0;
+  try { backlog = queueUnitCount(buildQueue('fdm')); } catch {}
+  if (backlog === 0) { setId('st-prod-eta', 'Clear ✓'); setId('st-prod-eta-sub', 'Nothing pending'); }
+  else if (dailyAvg <= 0) { setId('st-prod-eta', '—'); setId('st-prod-eta-sub', `${backlog.toLocaleString()} units · need recent prints to estimate`); }
+  else {
+    const d = Math.ceil(backlog / dailyAvg);
+    setId('st-prod-eta', d === 1 ? '1 day' : `${d} days`);
+    const done = new Date(todayMs + d * 86400000);
+    setId('st-prod-eta-sub', `${backlog.toLocaleString()} units · clears ~${done.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d > 300 ? 'numeric' : undefined })}`);
+  }
+
+  // Top 10 shipped (moved here from the old Import page)
+  renderImportTopShipped();
+  renderLastImportChanges();
+}
+
+// ============================================================
 // DASHBOARD
 // ============================================================
 let _dashRangeDays = 14;
@@ -10490,7 +10609,6 @@ let _ptFilterMode = 'all'; // 'all' | 'resin' | 'fdm'
       renderDupSkuWarning();
       if (target === 'vehicle') renderSlaSorter();
       else if (target === 'parttype') renderPartTypeTagger();
-      else if (target === 'tracker') renderPrintTracker();
       else if (target === 'edit') renderEditOrders();
     });
   });
@@ -11442,45 +11560,6 @@ function openSkuPickerForCustomOrder(onPick) {
 function renderHistory() {
   const view = document.getElementById('view-history');
   if (view && view.classList.contains('hidden')) return;
-  const tbl = document.getElementById('completed-table');
-  if (!tbl) return;
-  const list = (state.completedOrders || []).slice().sort((a, b) =>
-    new Date(b.at) - new Date(a.at)
-  );
-  if (list.length === 0) {
-    tbl.innerHTML = `<div class="empty-sub" style="padding:30px;text-align:center;">No completed items yet — hit Done on a queue card to start tracking.</div>`;
-    return;
-  }
-  const cap = 500;
-  const visible = list.slice(0, cap);
-  let html = `
-    <div class="completed-row completed-head">
-      <div class="completed-cell">Date</div>
-      <div class="completed-cell">Part</div>
-      <div class="completed-cell">SKU</div>
-      <div class="completed-cell">Qty</div>
-      <div class="completed-cell">Customer</div>
-      <div class="completed-cell">Type</div>
-    </div>`;
-  for (const c of visible) {
-    const at = new Date(c.at);
-    const dateStr = `${at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · ${at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-    const kindLabel = c.kind === 'need' ? 'NEED' : 'PRINT';
-    const kindClass = c.kind === 'need' ? 'need' : '';
-    html += `
-      <div class="completed-row">
-        <div class="completed-cell completed-mono">${escapeHtml(dateStr)}</div>
-        <div class="completed-cell completed-part">${escapeHtml(c.partName || '')}</div>
-        <div class="completed-cell completed-mono">${escapeHtml(c.sku || '')}</div>
-        <div class="completed-cell completed-qty">×${c.qty || 1}</div>
-        <div class="completed-cell">${escapeHtml(c.customer || '')}</div>
-        <div class="completed-cell"><span class="completed-kind ${kindClass}">${kindLabel}</span></div>
-      </div>`;
-  }
-  if (list.length > cap) {
-    html += `<div class="empty-sub" style="padding:14px;text-align:center;">…and ${list.length - cap} older entries.</div>`;
-  }
-  tbl.innerHTML = html;
   renderHistoryLedger();
 }
 
@@ -12114,7 +12193,7 @@ function switchView(name) {
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.view === name);
   });
-  ['history','queue-resin','queue-fdm','library','sla-sorter','paint','inventory','orders','import'].forEach(v => {
+  ['history','queue-resin','queue-fdm','stats','library','sla-sorter','paint','inventory','orders','import'].forEach(v => {
     const el = document.getElementById(`view-${v}`);
     if (el) el.classList.toggle('hidden', v !== name);
   });
@@ -12132,6 +12211,7 @@ function switchView(name) {
     }
     else if (name === 'orders') renderOrders();
     else if (name === 'history') renderHistory();
+    else if (name === 'stats') renderStats();
     else if (name === 'sla-sorter') {
       // Render whichever Tools tab is currently active
       const activeTab = document.querySelector('.tools-tab.active');
@@ -12140,7 +12220,6 @@ function switchView(name) {
       if (typeof renderDupSkuWarning === 'function') renderDupSkuWarning();
       if (target === 'parttype') renderPartTypeTagger();
       else if (target === 'edit') renderEditOrders();
-      else if (target === 'tracker') renderPrintTracker();
       else renderSlaSorter();
     }
     else if (name === 'paint') renderPaintMobile();
@@ -12230,6 +12309,100 @@ document.querySelectorAll('[data-action="export-queue"]').forEach(btn => {
   });
 });
 
+// ===== FDM SKU multi-filter =====
+function _skuNameMap() {
+  const map = {};
+  for (const sku of Object.keys(state.library)) {
+    const lib = state.library[sku];
+    map[sku] = (lib && lib.name) || '';
+  }
+  for (const o of state.orders) {
+    if (o.sku && !map[o.sku]) map[o.sku] = o.item || '';
+  }
+  return map;
+}
+function renderFdmSkuChips() {
+  const wrap = document.getElementById('fdm-sku-chips');
+  if (!wrap) return;
+  const sel = (state.skuFilter && state.skuFilter.fdm) ? state.skuFilter.fdm : [];
+  if (sel.length === 0) { wrap.innerHTML = ''; return; }
+  const names = _skuNameMap();
+  let html = '';
+  for (const sku of sel) {
+    const nm = names[sku] ? ` · ${escapeHtml((names[sku] || '').slice(0, 28))}` : '';
+    html += `<span class="sku-chip" data-sku="${escapeAttr(sku)}">${escapeHtml(sku)}${nm}<span class="sku-chip-x" data-sku-remove="${escapeAttr(sku)}">✕</span></span>`;
+  }
+  if (sel.length > 1) html += `<span class="sku-chip-clear" id="fdm-sku-clear">clear all</span>`;
+  wrap.innerHTML = html;
+}
+function renderFdmSkuDropdown(query) {
+  const dd = document.getElementById('fdm-sku-dd');
+  if (!dd) return;
+  const q = (query || '').trim().toLowerCase();
+  const sel = new Set((state.skuFilter && state.skuFilter.fdm) ? state.skuFilter.fdm : []);
+  const names = _skuNameMap();
+  // Only SKUs that actually have FDM demand right now, so the list is relevant.
+  let fdmSkus = new Set();
+  try {
+    const built = buildQueue('fdm');
+    for (const r of built.visible) {
+      if (r._isNeed) continue;
+      const rs = Array.isArray(r._skus) ? r._skus : (r.sku ? [r.sku] : []);
+      rs.forEach(s => fdmSkus.add(s));
+    }
+  } catch { fdmSkus = new Set(Object.keys(names)); }
+  let matches = [...fdmSkus].filter(sku => {
+    if (sel.has(sku)) return false;
+    if (!q) return true;
+    return sku.toLowerCase().includes(q) || (names[sku] || '').toLowerCase().includes(q);
+  }).sort();
+  if (matches.length === 0) {
+    dd.innerHTML = `<div class="sku-filter-dd-empty">${q ? 'No matching SKU with FDM demand.' : 'No SKUs with FDM demand.'}</div>`;
+    dd.hidden = false;
+    return;
+  }
+  dd.innerHTML = matches.slice(0, 40).map(sku =>
+    `<div class="sku-filter-dd-item" data-sku-add="${escapeAttr(sku)}"><span class="sku-filter-dd-sku">${escapeHtml(sku)}</span><span>${escapeHtml((names[sku] || '').slice(0, 34))}</span></div>`
+  ).join('');
+  dd.hidden = false;
+}
+(function wireFdmSkuFilter() {
+  const input = document.getElementById('fdm-sku-input');
+  const dd = document.getElementById('fdm-sku-dd');
+  if (!input || !dd) return;
+  const addSku = (sku) => {
+    if (!state.skuFilter) state.skuFilter = { resin: [], fdm: [] };
+    if (!state.skuFilter.fdm.includes(sku)) state.skuFilter.fdm.push(sku);
+    input.value = '';
+    dd.hidden = true;
+    renderFdmSkuChips();
+    renderQueue('fdm');
+  };
+  input.addEventListener('focus', () => renderFdmSkuDropdown(input.value));
+  input.addEventListener('input', () => renderFdmSkuDropdown(input.value));
+  input.addEventListener('blur', () => setTimeout(() => { dd.hidden = true; }, 180));
+  dd.addEventListener('mousedown', (e) => {
+    const item = e.target.closest('[data-sku-add]');
+    if (!item) return;
+    e.preventDefault();
+    addSku(item.dataset.skuAdd);
+  });
+  document.getElementById('fdm-sku-chips')?.addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-sku-remove]');
+    if (rm) {
+      state.skuFilter.fdm = state.skuFilter.fdm.filter(s => s !== rm.dataset.skuRemove);
+      renderFdmSkuChips();
+      renderQueue('fdm');
+      return;
+    }
+    if (e.target.id === 'fdm-sku-clear') {
+      state.skuFilter.fdm = [];
+      renderFdmSkuChips();
+      renderQueue('fdm');
+    }
+  });
+})();
+
 // Per-queue search and age filters (delegated by section)
 document.querySelectorAll('[data-queue-search]').forEach(input => {
   input.addEventListener('input', e => {
@@ -12253,8 +12426,15 @@ document.querySelectorAll('[data-age-filter]').forEach(b => {
 });
 
 // Library search & filters
+document.addEventListener('click', (e) => {
+  if (e.target && e.target.id === 'btn-lib-load-more') {
+    state._libraryShown = (state._libraryShown || 20) + 20;
+    renderLibrary();
+  }
+});
 document.getElementById('library-search').addEventListener('input', e => {
   state.librarySearch = e.target.value;
+  state._libraryShown = 20;
   renderLibrary();
 });
 document.querySelectorAll('[data-status-filter]').forEach(b => {
@@ -12262,6 +12442,7 @@ document.querySelectorAll('[data-status-filter]').forEach(b => {
     document.querySelectorAll('[data-status-filter]').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     state.statusFilter = b.dataset.statusFilter;
+    state._libraryShown = 20;
     renderLibrary();
   });
 });
