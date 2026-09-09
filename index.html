@@ -6025,6 +6025,7 @@ const state = {
   partLocations: {},   // partName -> 'gun_wall' | 'back_room' | 'shipping_side' (shared across SKUs)
   recountPrevLoc: {},  // partName -> location it was in before being flagged for recount (to restore after)
   _ordersTs: 0, _ordersSig: '',   // change-stamp + signature for orders (per-collection sync)
+  _inventoryTs: 0, _inventorySig: '', // change-stamp + signature for inventory (per-collection sync)
   _libraryTs: 0, _librarySig: '', // change-stamp + signature for library (per-collection sync)
   partsNeeded: [],     // [{id, partName, type:'resin'|'fdm', addedAt, addedBy, resolvedAt|null}]
   priority: { resin: [], fdm: [] },  // separate lists per printer type
@@ -6370,6 +6371,8 @@ function save() {
   if (_oSig !== state._ordersSig) { state._ordersSig = _oSig; state._ordersTs = _nowMs; }
   const _lSig = cheapHash(JSON.stringify(state.library || {}));
   if (_lSig !== state._librarySig) { state._librarySig = _lSig; state._libraryTs = _nowMs; }
+  const _iSig = cheapHash(JSON.stringify(state.inventory || {}));
+  if (_iSig !== state._inventorySig) { state._inventorySig = _iSig; state._inventoryTs = _nowMs; }
 
   const blob = {
     orders: state.orders,
@@ -6392,6 +6395,7 @@ function save() {
     orderEdits: state.orderEdits,
     _ordersTs: state._ordersTs, _ordersSig: state._ordersSig,
     _libraryTs: state._libraryTs, _librarySig: state._librarySig,
+    _inventoryTs: state._inventoryTs, _inventorySig: state._inventorySig,
     lastSync: new Date().toISOString(),
   };
 
@@ -6827,10 +6831,19 @@ function recordSnapshot(blob) {
   try {
     const snaps = loadSnapshots();
     const now = Date.now();
+    // Lean snapshot: drop the big append-only log arrays. They can be tens of
+    // thousands of entries and were making 5 full snapshots blow the storage
+    // quota — which triggered the quota-recovery wipe, leaving only one. A
+    // rollback restores orders/library/inventory/counts; the logs are history
+    // and are kept from the live state at restore time, not rolled back.
+    const leanData = Object.assign({}, blob);
+    delete leanData.completedOrders;
+    delete leanData.inventoryHistory;
+    delete leanData.shippedHistory;
     const newSnap = {
       at: now,
       label: snapshotLabel(blob),
-      data: blob,
+      data: leanData,
     };
 
     if (snaps.length > 0) {
@@ -6922,6 +6935,7 @@ function load() {
     state.recountPrevLoc = blob.recountPrevLoc || {};
     state._ordersTs = blob._ordersTs || 0; state._ordersSig = blob._ordersSig || cheapHash(JSON.stringify(state.orders || []));
     state._libraryTs = blob._libraryTs || 0; state._librarySig = blob._librarySig || cheapHash(JSON.stringify(state.library || {}));
+    state._inventoryTs = blob._inventoryTs || 0; state._inventorySig = blob._inventorySig || cheapHash(JSON.stringify(state.inventory || {}));
     state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
     state.assignments = blob.assignments || {};
     state.completedOrders = Array.isArray(blob.completedOrders) ? blob.completedOrders : [];
@@ -12147,6 +12161,7 @@ function buildBackupBlob() {
     recountPrevLoc: state.recountPrevLoc,
     _ordersTs: state._ordersTs, _ordersSig: state._ordersSig,
     _libraryTs: state._libraryTs, _librarySig: state._librarySig,
+    _inventoryTs: state._inventoryTs, _inventorySig: state._inventorySig,
     partsNeeded: state.partsNeeded,
     priority: state.priority,
     assignments: state.assignments,
@@ -13578,6 +13593,9 @@ function applyRestoreBlob(blob, opts) {
   if (Object.prototype.hasOwnProperty.call(blob, '_libraryTs')) {
     state._libraryTs = blob._libraryTs || 0; state._librarySig = blob._librarySig || '';
   }
+  if (Object.prototype.hasOwnProperty.call(blob, '_inventoryTs')) {
+    state._inventoryTs = blob._inventoryTs || 0; state._inventorySig = blob._inventorySig || '';
+  }
   state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
   state.assignments = blob.assignments || {};
   if (Array.isArray(blob.priority)) {
@@ -13721,7 +13739,14 @@ function renderSnapshotList() {
         title: 'Restore this snapshot?',
         text: `This will replace all current data with the snapshot from ${formatSnapshotTime(snap.at)} (${snap.label}). Your CURRENT data will be saved as a new snapshot so you can switch back.`,
         onConfirm: () => {
-          applyRestoreBlob(snap.data);
+          // Snapshots are lean (no history arrays). Keep the live logs so a
+          // rollback of orders/library/inventory doesn't erase history.
+          const merged = Object.assign({}, snap.data, {
+            completedOrders: state.completedOrders,
+            inventoryHistory: state.inventoryHistory,
+            shippedHistory: state.shippedHistory,
+          });
+          applyRestoreBlob(merged);
           toast(`Restored to ${formatSnapshotTime(snap.at)}`);
           renderSnapshotList();
         },
@@ -14030,6 +14055,50 @@ function transformKeys(value, fn) {
 
 // Pull cloud data on first sign-in. If cloud is empty, push local data up
 // (one-time seed). Otherwise replace local with cloud.
+// Boot-time reconcile: merge local and cloud into one blob that loses NOTHING.
+// Bulk fields follow the newer side by lastSync; orders/library/inventory each
+// follow their OWN change-timestamp (so an unrelated edit can't drag a stale
+// copy over a newer one); the append-only logs and id-keyed collections are
+// unioned. Runs as a transaction so concurrent boots serialize safely.
+async function bootReconcile(localBlob, cloudBlobIgnored) {
+  _localWriteToken = Date.now() + ':' + Math.random();
+  _recentWriteTokens.push(_localWriteToken); if (_recentWriteTokens.length > 40) _recentWriteTokens.shift();
+  const res = await window._fb.runTransaction(cloudRef(), (enc) => {
+    if (enc === null || enc === undefined) {
+      const s = transformKeys(localBlob, fbEncodeKey); s._writeToken = _localWriteToken; return s;
+    }
+    const cloud = transformKeys(enc, fbDecodeKey);
+    const cloudTime = cloud.lastSync ? new Date(cloud.lastSync).getTime() : 0;
+    const localTime = localBlob.lastSync ? new Date(localBlob.lastSync).getTime() : 0;
+    // Bulk/low-stakes fields: newer side wins.
+    const merged = cloudTime > localTime ? Object.assign({}, cloud) : Object.assign({}, localBlob);
+    // Append-only logs + id-keyed collections: union, never drop either side.
+    merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
+    merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
+    merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, []);
+    merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, []);
+    merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, {});
+    // Orders / library / inventory: each decided by its OWN change-stamp.
+    const _o = _pickByFieldTs(cloud, localBlob, 'orders', '_ordersTs', '_ordersSig');
+    merged.orders = _o.value; merged._ordersTs = _o.ts; merged._ordersSig = _o.sig;
+    const _l = _pickByFieldTs(cloud, localBlob, 'library', '_libraryTs', '_librarySig');
+    merged.library = _l.value; merged._libraryTs = _l.ts; merged._librarySig = _l.sig;
+    const _i = _pickByFieldTs(cloud, localBlob, 'inventory', '_inventoryTs', '_inventorySig');
+    merged.inventory = _i.value; merged._inventoryTs = _i.ts; merged._inventorySig = _i.sig;
+    merged.lastSync = new Date().toISOString();
+    merged._writeToken = _localWriteToken;
+    return transformKeys(merged, fbEncodeKey);
+  }, { applyLocally: false });
+  if (res && res.committed && res.snapshot && res.snapshot.exists()) {
+    const mergedBlob = transformKeys(res.snapshot.val(), fbDecodeKey);
+    delete mergedBlob._writeToken;
+    _suspendCloudWrites = true;
+    applyRestoreBlob(mergedBlob, { fromCloud: true });  // persists locally + captures base
+    _suspendCloudWrites = false;
+  }
+  setUnsyncedFlag(false);
+}
+
 async function pullFromCloudOnce() {
   if (_initialPullDone) return;
   // Conflict resolution on boot. We have three signals:
@@ -14071,34 +14140,18 @@ async function pullFromCloudOnce() {
         toast('First sync — uploaded local data to cloud');
       }
       cloudStatus("connected", displayName(_fbUser.email));
-    } else if (localBlob && localTime > cloudTime) {
-      // Local is genuinely newer — safe to push up. This covers the
-      // "edited then refreshed on slow internet" case: local has the latest
-      // edit and a newer timestamp, so it wins.
-      const sanitized = transformKeys(localBlob, fbEncodeKey);
-      _localWriteToken = Date.now() + ':' + Math.random();
-      _recentWriteTokens.push(_localWriteToken); if (_recentWriteTokens.length > 40) _recentWriteTokens.shift();
-      sanitized._writeToken = _localWriteToken;
-      await window._fb.set(cloudRef(), sanitized);
-      setUnsyncedFlag(false);
-      cloudStatus("connected", displayName(_fbUser.email));
-      if (localUnsynced) toast('Pushed your latest local edits to cloud');
+      _captureSyncBase();
     } else {
-      // Cloud is newer than (or same as) local. Another device has newer
-      // work — pull it down. This is the critical fix: a stale device with
-      // an unsynced flag will NO LONGER overwrite newer cloud data.
-      if (localUnsynced && localTime > 0 && cloudTime > localTime) {
-        // We're about to discard a local unsynced edit because the cloud is
-        // newer. Warn the user so it's not silent.
-        const mins = Math.round((cloudTime - localTime) / 60000);
-        toast(`Loaded newer data from another device (${mins > 60 ? Math.round(mins/60)+'h' : mins+'m'} ahead). Your unsynced local change was replaced.`, 'error');
-      } else {
-        toast('Synced from cloud');
-      }
-      applyRestoreBlob(cloudBlob, { fromCloud: true });
-      // fromCloud:true means applyRestoreBlob persists locally without
-      // re-pushing — no redundant echo, cloud's timestamp is preserved.
+      // Cloud already has data. NEVER blind-overwrite it — always reconcile by
+      // MERGING local and cloud. This is the fix for "another device opened the
+      // app and erased my work": a device that's merely newer-stamped can no
+      // longer push its stale collections over newer cloud data, because every
+      // collection is merged on its own terms (newest-by-own-timestamp for
+      // orders/library/inventory, union for the append-only logs and edits).
+      await bootReconcile(localBlob || {}, cloudBlob);
       cloudStatus("connected", displayName(_fbUser.email));
+      if (localUnsynced) toast('Synced — merged your local edits with the cloud');
+      else toast('Synced from cloud');
     }
     _initialPullDone = true;
     // After the boot pull, local state matches the cloud (we either pulled it
