@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 26;
+const APP_BUILD = 27;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6610,18 +6610,28 @@ function _pickFieldVer(cloud, local, base, field, verKey, sigKey) {
     return { value: cloud[field], ver: Math.max(cloudVer, localVer), sig: cloudSig };
   }
   const baseSig = base ? (base[sigKey] || '') : null;
+  // A local claim is only trustworthy if this device was UP TO DATE with the
+  // cloud for this field when it made its change — i.e. its ancestor matches
+  // what the cloud has now, OR its own version is at least the cloud's.
+  // Without this, a device that sat unopened (stale ancestor + stale local)
+  // would "win" and push its OLD data over newer cloud work. That was the
+  // "opened on another device and it resynced old data" bug.
+  const localIsCurrent = (localVer >= cloudVer) || (baseSig !== null && baseSig === cloudSig);
   if (baseSig !== null) {
     const localChanged = localSig !== baseSig;
     const cloudChanged = cloudSig !== baseSig;
-    if (localChanged && !cloudChanged) return { value: local[field], ver: cloudVer + 1, sig: localSig };
+    if (localChanged && !cloudChanged && localIsCurrent) {
+      return { value: local[field], ver: cloudVer + 1, sig: localSig };
+    }
     if (cloudChanged && !localChanged) return { value: cloud[field], ver: cloudVer, sig: cloudSig };
+    // Both changed, or local is behind: fall through to version comparison,
+    // which cannot let a behind device win.
   }
-  // No ancestor (first-ever sync) or both changed (concurrent): decide by
+  // No ancestor (first-ever sync), both changed, or local behind: decide by
   // version. On a tie, prefer CLOUD — never let a fresh/stale local (which can
   // legitimately be empty) win a tie and wipe the shared value.
   if (localVer > cloudVer) return { value: local[field], ver: localVer, sig: localSig };
-  if (cloudVer > localVer) return { value: cloud[field], ver: cloudVer, sig: cloudSig };
-  return { value: cloud[field], ver: cloudVer, sig: cloudSig }; // tie → keep cloud
+  return { value: cloud[field], ver: cloudVer, sig: cloudSig }; // cloud wins ties and when ahead
 }
 // Merge inventory: start from cloud, then re-apply only the parts THIS device
 // changed or removed relative to the common ancestor. Parts another device
@@ -14229,28 +14239,34 @@ function _mergeWorkspace(cloud, localBlob, base) {
   // marker can't be erased by an older one's write.
   const cloudBuild = Number(cloud._appBuild) || 0;
   const cloudVer = cloud._ver || 0, localVer = localBlob._ver || 0;
+  // Is this device up to date with the cloud? If the cloud has moved on since
+  // this device last synced, its "deletions" (keys/ids present in its ancestor
+  // but missing locally) are NOT trustworthy — they'd wipe newer entries this
+  // device simply hasn't seen. In that case we merge additively only.
+  const localIsCurrent = localVer >= cloudVer;
+  const mergeBase = localIsCurrent ? base : null;
   const merged = cloudVer > localVer ? Object.assign({}, cloud) : Object.assign({}, localBlob);
-  merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, base ? base.countedParts : {});
-  merged.assignments      = _mergeStrMap(cloud.assignments, localBlob.assignments, base ? base.assignments : {});
-  merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, base ? base.orderEdits : []);
-  merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base ? base.partsNeeded : []);
+  merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, mergeBase ? mergeBase.countedParts : {});
+  merged.assignments      = _mergeStrMap(cloud.assignments, localBlob.assignments, mergeBase ? mergeBase.assignments : {});
+  merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, mergeBase ? mergeBase.orderEdits : []);
+  merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, mergeBase ? mergeBase.partsNeeded : []);
   merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
   merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
   // Previously UNPROTECTED (bulk last-writer-wins) — these were reverting when a
   // device reopened: paintParts backs the resin Paint row, priority backs the
   // Part Needed lists. Now merged like everything else.
-  merged.paintParts       = _mergeObjMap(cloud.paintParts, localBlob.paintParts, base ? base.paintParts : {});
-  merged.priority         = _mergePriority(cloud.priority, localBlob.priority, base ? base.priority : null);
-  merged.partLocations    = _mergeStrMap(cloud.partLocations, localBlob.partLocations, base ? base.partLocations : {});
-  merged.recountPrevLoc   = _mergeStrMap(cloud.recountPrevLoc, localBlob.recountPrevLoc, base ? base.recountPrevLoc : {});
-  merged.trackedParts     = _mergeFlags(cloud.trackedParts, localBlob.trackedParts, base ? base.trackedParts : {});
+  merged.paintParts       = _mergeObjMap(cloud.paintParts, localBlob.paintParts, mergeBase ? mergeBase.paintParts : {});
+  merged.priority         = _mergePriority(cloud.priority, localBlob.priority, mergeBase ? mergeBase.priority : null);
+  merged.partLocations    = _mergeStrMap(cloud.partLocations, localBlob.partLocations, mergeBase ? mergeBase.partLocations : {});
+  merged.recountPrevLoc   = _mergeStrMap(cloud.recountPrevLoc, localBlob.recountPrevLoc, mergeBase ? mergeBase.recountPrevLoc : {});
+  merged.trackedParts     = _mergeFlags(cloud.trackedParts, localBlob.trackedParts, mergeBase ? mergeBase.trackedParts : {});
   // shippedHistory is append-only — union so no device's shipping record is lost.
   merged.shippedHistory   = _mergeShipped(cloud.shippedHistory, localBlob.shippedHistory);
-  const _o = _pickFieldVer(cloud, localBlob, base, 'orders', '_ordersVer', '_ordersSig');
+  const _o = _pickFieldVer(cloud, localBlob, mergeBase, 'orders', '_ordersVer', '_ordersSig');
   merged.orders = _o.value; merged._ordersVer = _o.ver; merged._ordersSig = _o.sig;
-  const _l = _pickFieldVer(cloud, localBlob, base, 'library', '_libraryVer', '_librarySig');
+  const _l = _pickFieldVer(cloud, localBlob, mergeBase, 'library', '_libraryVer', '_librarySig');
   merged.library = _l.value; merged._libraryVer = _l.ver; merged._librarySig = _l.sig;
-  if (base) {
+  if (base && localIsCurrent) {
     // Safe delta merge against the real ancestor.
     merged.inventory = _mergeInventory(cloud.inventory, localBlob.inventory, base.inventory);
     merged._inventoryVer = _pickFieldVer(cloud, localBlob, base, 'inventory', '_inventoryVer', '_inventorySig').ver;
