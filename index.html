@@ -5993,6 +5993,11 @@ body.mode-mobile .mobile-only { display: block; }
 // ============================================================
 const STORAGE_KEY = 'print_queue_workshop_v1';
 const SNAPSHOT_KEY = 'print_queue_workshop_snapshots_v1';
+const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor for clock-free merges across reloads
+// Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
+// A device running an OLD build is blocked from writing to the cloud (it could
+// overwrite newer data with old-format/old-logic writes) and is told to refresh.
+const APP_BUILD = 24;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6407,6 +6412,12 @@ function save() {
   // cross-device sync. So we isolate the local write, and on quota failure we
   // free space (drop snapshots, trim history) and retry once.
   const writeLocal = () => {
+    // Stamp a same-device save time so other WINDOWS on this device (which
+    // share this localStorage) can tell when to adopt this write. Safe to use
+    // a clock here — both windows are on ONE machine, so there's no skew.
+    blob._savedAt = Date.now();
+    _lastLocalSavedAt = blob._savedAt;
+    _localSeq++;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
   };
   try {
@@ -6463,6 +6474,45 @@ function save() {
 // gets written so user sees their edit; we'll catch up on reconnect).
 let _cloudPushTimer = null;
 let _cloudPushPending = false;
+let _lastLocalSavedAt = 0;   // most recent local save time this window knows about (cross-window coordination)
+let _localSeq = 0;           // monotonic counter, bumped on every local write — orders writes reliably even within the same millisecond
+let _staleBuild = false;     // true once we've seen a cloud payload written by a NEWER build than this one
+
+// If the cloud has been written by a newer build than this page is running, this
+// page's sync logic is outdated and MUST NOT write (it could overwrite newer
+// data). Freeze writes and force a refresh.
+function checkBuildGate(blob) {
+  const cloudBuild = Number(blob && blob._appBuild) || 0;
+  if (cloudBuild > APP_BUILD && !_staleBuild) {
+    _staleBuild = true;
+    try { clearTimeout(_cloudPushTimer); } catch {}
+    _cloudPushPending = false;
+    showStaleBuildOverlay();
+  }
+  return _staleBuild;
+}
+
+function showStaleBuildOverlay() {
+  if (document.getElementById('stale-build-overlay')) return;
+  const el = document.createElement('div');
+  el.id = 'stale-build-overlay';
+  el.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(8,8,10,0.94);display:flex;align-items:center;justify-content:center;padding:24px;';
+  el.innerHTML = `
+    <div style="max-width:440px;text-align:center;background:#15161a;border:1px solid #3a3d45;border-radius:8px;padding:28px 26px;">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:0.06em;color:#f0a830;margin-bottom:10px;">UPDATE REQUIRED</div>
+      <div style="font-size:14px;color:#c8ccd4;line-height:1.6;margin-bottom:20px;">
+        A newer version of the app is running on your other devices. This page is out of date, so saving has been
+        <strong>paused here</strong> to protect your data from being overwritten with old information.<br><br>
+        Refresh to load the latest version. Any change you made in the last few seconds on this page may not have been saved — check after refreshing.
+      </div>
+      <button id="stale-build-refresh" style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;padding:12px 22px;border-radius:4px;border:none;background:#f0a830;color:#1a1205;cursor:pointer;">Refresh now</button>
+    </div>`;
+  document.body.appendChild(el);
+  const btn = document.getElementById('stale-build-refresh');
+  if (btn) btn.addEventListener('click', () => location.reload(true));
+  // Auto-refresh shortly after, in case the device is unattended.
+  setTimeout(() => { try { location.reload(true); } catch {} }, 15000);
+}
 let _pendingSince = 0;   // when the current pending push first started (to detect a stuck push)
 const UNSYNCED_KEY = 'print_queue_unsynced_v1';
 
@@ -6492,7 +6542,10 @@ function hasUnsyncedFlag() {
 // first pass. `_syncBase` is the common ancestor: the state this device last
 // agreed with the cloud, used so we can tell what THIS device changed (and
 // what it deleted) versus what another device changed.
-let _syncBase = null;  // { inventory:{}, orderEdits:[], partsNeeded:[] } — null until first sync
+let _syncBase = null;  // { inventory:{}, orderEdits:[], partsNeeded:[], ... } — the common ancestor
+// Recover the persisted ancestor immediately, so bootReconcile can delta-merge
+// against it instead of guessing (which was zeroing inventory on device-open).
+try { const _sb = localStorage.getItem(SYNCBASE_KEY); if (_sb) _syncBase = JSON.parse(_sb); } catch {}
 function _captureSyncBase(src) {
   const s = src || state;
   _syncBase = {
@@ -6502,12 +6555,16 @@ function _captureSyncBase(src) {
     orderEdits: JSON.parse(JSON.stringify(s.orderEdits || [])),
     partsNeeded: JSON.parse(JSON.stringify(s.partsNeeded || [])),
     countedParts: Object.assign({}, s.countedParts || {}),
+    assignments: Object.assign({}, s.assignments || {}),
     // Per-field content signatures as of this sync, so a merge can tell which
     // side actually CHANGED a field (vs the shared ancestor) — clock-free.
     _ordersSig: s._ordersSig || '',
     _librarySig: s._librarySig || '',
     _inventorySig: s._inventorySig || '',
   };
+  // Persist the ancestor so a reopened device/window recovers it on boot and
+  // can delta-merge correctly (instead of guessing and possibly zeroing data).
+  try { localStorage.setItem(SYNCBASE_KEY, JSON.stringify(_syncBase)); } catch {}
 }
 // Merge a boolean flag map (countedParts) by delta vs the common ancestor, so a
 // stale device can't hide/show parts by reverting the whole map. Flags this
@@ -6518,6 +6575,18 @@ function _mergeFlags(cloudF, localF, baseF) {
   const base = baseF || {}, local = localF || {};
   for (const k of Object.keys(local)) if (local[k] && !base[k]) out[k] = true;  // set by this device
   for (const k of Object.keys(base)) if (base[k] && !local[k]) delete out[k];    // cleared by this device
+  return out;
+}
+// Merge a string-value map (assignments: card key -> machine) by delta vs the
+// common ancestor, so a device that DRAGGED a card to a printer doesn't get
+// reverted to unassigned when another device/window syncs. This device's
+// placements (set/changed/removed vs ancestor) win for the keys it touched;
+// keys it didn't touch keep the cloud value.
+function _mergeStrMap(cloudM, localM, baseM) {
+  const out = Object.assign({}, cloudM || {});
+  const base = baseM || {}, local = localM || {};
+  for (const k of Object.keys(local)) if (local[k] !== base[k]) out[k] = local[k]; // placed/moved by this device
+  for (const k of Object.keys(base)) if (!(k in local)) delete out[k];             // unassigned by this device
   return out;
 }
 // Decide a per-collection field (orders/library/inventory) with NO wall clock.
@@ -6542,10 +6611,12 @@ function _pickFieldVer(cloud, local, base, field, verKey, sigKey) {
     if (localChanged && !cloudChanged) return { value: local[field], ver: cloudVer + 1, sig: localSig };
     if (cloudChanged && !localChanged) return { value: cloud[field], ver: cloudVer, sig: cloudSig };
   }
-  // No ancestor (boot) or both changed (concurrent): decide by version.
+  // No ancestor (first-ever sync) or both changed (concurrent): decide by
+  // version. On a tie, prefer CLOUD — never let a fresh/stale local (which can
+  // legitimately be empty) win a tie and wipe the shared value.
   if (localVer > cloudVer) return { value: local[field], ver: localVer, sig: localSig };
   if (cloudVer > localVer) return { value: cloud[field], ver: cloudVer, sig: cloudSig };
-  return { value: local[field], ver: cloudVer + 1, sig: localSig }; // tie → last writer, bump
+  return { value: cloud[field], ver: cloudVer, sig: cloudSig }; // tie → keep cloud
 }
 // Merge inventory: start from cloud, then re-apply only the parts THIS device
 // changed or removed relative to the common ancestor. Parts another device
@@ -6664,6 +6735,9 @@ function _completedEqual(a, b) {
 
 function scheduleCloudPush(blob) {
   if (!_fbReady || !_fbUser || _suspendCloudWrites) return;
+  // VERSION GATE: an outdated build must never write. Its older sync logic
+  // could overwrite newer data. Freeze writes and make the user refresh.
+  if (_staleBuild) { showStaleBuildOverlay(); return; }
   if (!_cloudPushPending) _pendingSince = Date.now();
   _cloudPushPending = true;
   setUnsyncedFlag(true);
@@ -6674,6 +6748,7 @@ function scheduleCloudPush(blob) {
       // Read the very latest local state at write time (in case more edits happened)
       const raw = localStorage.getItem(STORAGE_KEY);
       const localBlob = raw ? JSON.parse(raw) : blob;
+      const pushSeq = _localSeq;   // snapshot of local write-sequence at push time
       _localWriteToken = Date.now() + ':' + Math.random();
       // Remember recent tokens (not just the latest) so a superseded push's
       // echo is still recognized as ours and ignored by the listener.
@@ -6681,10 +6756,22 @@ function scheduleCloudPush(blob) {
       if (_recentWriteTokens.length > 40) _recentWriteTokens.shift();
 
       if (!window._fb.runTransaction) {
-        // No transaction support at all — last-resort plain write.
-        const sanitized = transformKeys(localBlob, fbEncodeKey);
-        sanitized._writeToken = _localWriteToken;
-        await window._fb.set(cloudRef(), sanitized);
+        // No transaction support — do a READ-THEN-MERGE write instead of a
+        // blind overwrite. Not atomic, but it can never wholesale-clobber the
+        // cloud: we merge against whatever is actually there right now.
+        const snap = await window._fb.get(cloudRef());
+        let payload;
+        if (snap && snap.exists()) {
+          const cloud = transformKeys(snap.val(), fbDecodeKey);
+          const merged = _mergeWorkspace(cloud, localBlob, _syncBase || null);
+          merged.lastSync = new Date().toISOString();
+          merged._writeToken = _localWriteToken;
+          payload = transformKeys(merged, fbEncodeKey);
+        } else {
+          payload = transformKeys(localBlob, fbEncodeKey);
+          payload._writeToken = _localWriteToken;
+        }
+        await window._fb.set(cloudRef(), payload);
       } else if (!_syncBase) {
         // No common ancestor yet (e.g. the app booted OFFLINE, so the initial
         // pull never ran and never captured a base). Do a GUARDED write instead
@@ -6699,20 +6786,7 @@ function scheduleCloudPush(blob) {
             return s;
           }
           const cloud = transformKeys(encCurrent, fbDecodeKey);
-          const cloudVer = cloud._ver || 0, localVer = localBlob._ver || 0;
-          const merged = cloudVer > localVer ? Object.assign({}, cloud) : Object.assign({}, localBlob);
-          merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
-          merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
-          merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, []);   // [] base = pure union, no deletes
-          merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, []);
-          merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, {}); // {} base = union of set flags
-          const _o = _pickFieldVer(cloud, localBlob, null, 'orders', '_ordersVer', '_ordersSig');
-          merged.orders = _o.value; merged._ordersVer = _o.ver; merged._ordersSig = _o.sig;
-          const _l = _pickFieldVer(cloud, localBlob, null, 'library', '_libraryVer', '_librarySig');
-          merged.library = _l.value; merged._libraryVer = _l.ver; merged._librarySig = _l.sig;
-          const _i = _pickFieldVer(cloud, localBlob, null, 'inventory', '_inventoryVer', '_inventorySig');
-          merged.inventory = _i.value; merged._inventoryVer = _i.ver; merged._inventorySig = _i.sig;
-          merged._ver = Math.max(cloudVer, localVer) + 1;
+          const merged = _mergeWorkspace(cloud, localBlob, _syncBase || null);
           merged.lastSync = new Date().toISOString();
           merged._writeToken = _localWriteToken;
           return transformKeys(merged, fbEncodeKey);
@@ -6736,31 +6810,8 @@ function scheduleCloudPush(blob) {
           }
           const cloud = transformKeys(encCurrent, fbDecodeKey);
           const cloudVer = cloud._ver || 0, localVer = localBlob._ver || 0;
-          const cloudNewer = cloudVer > localVer;
-          basedOnCloud = cloudNewer;
-          // Bulk / low-stakes fields: keep whichever side has the higher cloud-
-          // owned version. Version-based (not clock-based), so device clock skew
-          // can never pick the wrong side. The collections below are merged
-          // independently and are always safe.
-          const merged = cloudNewer ? Object.assign({}, cloud) : Object.assign({}, localBlob);
-          merged.inventory       = _mergeInventory(cloud.inventory, localBlob.inventory, base.inventory);
-          merged.countedParts    = _mergeFlags(cloud.countedParts, localBlob.countedParts, base.countedParts);
-          merged.orderEdits      = _mergeById(cloud.orderEdits, localBlob.orderEdits, base.orderEdits);
-          merged.partsNeeded     = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base.partsNeeded);
-          merged.completedOrders = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
-          merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
-          // Orders, library, inventory-version each decided by monotonic version
-          // + the common ancestor — clock-free; a device that edited something
-          // else can't revert them.
-          const _o = _pickFieldVer(cloud, localBlob, base, 'orders', '_ordersVer', '_ordersSig');
-          merged.orders = _o.value; merged._ordersVer = _o.ver; merged._ordersSig = _o.sig;
-          const _l = _pickFieldVer(cloud, localBlob, base, 'library', '_libraryVer', '_librarySig');
-          merged.library = _l.value; merged._libraryVer = _l.ver; merged._librarySig = _l.sig;
-          // inventory VALUE is delta-merged above; keep its version counter moving
-          // so the boot reconcile (which has no base) can order it correctly.
-          const _iv = _pickFieldVer(cloud, localBlob, base, 'inventory', '_inventoryVer', '_inventorySig');
-          merged._inventoryVer = _iv.ver; merged._inventorySig = cheapHash(JSON.stringify(merged.inventory || {}));
-          merged._ver = Math.max(cloudVer, localVer) + 1;
+          basedOnCloud = cloudVer > localVer;
+          const merged = _mergeWorkspace(cloud, localBlob, base);
           // Keep lastSync for DISPLAY only (not used for any winner decision).
           merged.lastSync = new Date().toISOString();
           merged._writeToken = _localWriteToken;
@@ -6774,23 +6825,19 @@ function scheduleCloudPush(blob) {
         if (res && res.committed && res.snapshot && res.snapshot.exists()) {
           const mergedBlob = transformKeys(res.snapshot.val(), fbDecodeKey);
           delete mergedBlob._writeToken;
-          // If local advanced since this push fired (rapid successive Done
-          // clicks), this committed result is already stale — re-applying it
-          // would briefly revert the newer work, causing parts to flash back.
-          // Skip; the queued newer push will sync the latest. Still advance the
-          // ancestor so the next push's deltas are computed correctly.
-          let superseded = false;
-          try {
-            const nowRaw = localStorage.getItem(STORAGE_KEY);
-            const nowBlob = nowRaw ? JSON.parse(nowRaw) : null;
-            if (nowBlob && nowBlob.lastSync && localBlob.lastSync &&
-                nowBlob.lastSync !== localBlob.lastSync) superseded = true;
-          } catch {}
+          // If a local write happened AFTER this push started (rapid Done
+          // clicks, another edit), the committed result is already stale — do
+          // NOT re-apply it or parts would flash back. A monotonic counter is
+          // used, so even writes within the same millisecond are ordered
+          // correctly (millisecond timestamps could tie and let a stale apply
+          // slip through — that was the "Done items come back" bug).
+          const superseded = (_localSeq !== pushSeq);
           const changed =
             basedOnCloud ||   // the merge pulled in cloud's newer bulk fields — refresh local
             (mergedBlob._ordersSig !== localBlob._ordersSig) ||
             (mergedBlob._librarySig !== localBlob._librarySig) ||
             !_flagsEqual(mergedBlob.countedParts, localBlob.countedParts) ||
+            JSON.stringify(mergedBlob.assignments || {}) !== JSON.stringify(localBlob.assignments || {}) ||
             !_invEqual(mergedBlob.inventory, localBlob.inventory) ||
             !_byIdEqual(mergedBlob.orderEdits, localBlob.orderEdits) ||
             !_byIdEqual(mergedBlob.partsNeeded, localBlob.partsNeeded) ||
@@ -10007,6 +10054,8 @@ function renderInventoryHistory() {
   const REASON_LABEL = {
     'print': 'Printed (Done)',
     'csv-ship': 'Shipped (CSV)',
+    'csv-ship-short': 'Shipped (CSV) · stock ran out',
+  'csv-ship-short': 'Shipped (CSV) · stock ran out',
   'recount-flag': 'Flagged for recount',
     'walkthrough': 'Walk-through',
     'manual-stock': 'Stock update',
@@ -11614,6 +11663,7 @@ function renderHistory() {
 const INV_REASON_LABEL = {
   'print': 'Printed (Done)',
   'csv-ship': 'Shipped (CSV)',
+  'csv-ship-short': 'Shipped (CSV) · stock ran out',
   'recount-flag': 'Flagged for recount',
   'walkthrough': 'Walk-through',
   'manual-stock': 'Stock update',
@@ -11962,6 +12012,7 @@ function importCSV(text) {
   let added = 0;
   let shippedCount = 0;
   const shippedSubtractions = {}; // part -> total qty subtracted
+  const shippedShortfalls = {};   // part -> qty that couldn't be subtracted (stock hit 0)
   // Snapshot starting inventory for parts that change during this import, so
   // we can show before/after numbers on the Import page after we're done.
   const inventoryBefore = {};
@@ -12041,6 +12092,11 @@ function importCSV(text) {
       // this import. Multiple shipped orders might subtract from the same part.
       if (!(part in inventoryBefore)) inventoryBefore[part] = have;
       const next = Math.max(0, have - sub);
+      // If demand exceeded stock we CLAMP at 0 — record the shortfall so the
+      // ledger can explain why (sum of deltas won't equal the raw subtraction).
+      if (have - sub < 0) {
+        shippedShortfalls[part] = (shippedShortfalls[part] || 0) + (sub - have);
+      }
       if (next <= 0) delete state.inventory[part];
       else state.inventory[part] = next;
       shippedSubtractions[part] = (shippedSubtractions[part] || 0) + sub;
@@ -12051,6 +12107,15 @@ function importCSV(text) {
   for (const part of Object.keys(shippedSubtractions)) {
     const before = (part in inventoryBefore) ? inventoryBefore[part] : 0;
     const after = Number(state.inventory[part] || 0);
+    const short = shippedShortfalls[part] || 0;
+    if (short > 0) {
+      // Stock ran out: we shipped more than we had on record. Log it so the
+      // ledger's running total reconciles with the actual count instead of
+      // silently drifting.
+      logInventoryChange(part, before, after, 'csv-ship-short');
+      console.warn(`Inventory shortfall on import: ${part} short by ${short}`);
+      continue;
+    }
     if (before !== after) logInventoryChange(part, before, after, 'csv-ship');
   }
   // Cap shipped history at 5000 entries to prevent unbounded growth
@@ -13664,15 +13729,20 @@ function applyRestoreBlob(blob, opts) {
   }
   migrateLibrary();
   if (fromCloud) {
-    // Applying data that CAME from the cloud — do NOT call save() (which would
-    // re-stamp the timestamp and push a redundant echo back up, potentially
-    // stomping a concurrent edit from another device). Just persist to
-    // localStorage preserving the cloud's own lastSync, and clear the
-    // unsynced flag since we're now in sync with cloud.
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
-    } catch (e) {
-      console.warn('Local persist of cloud data failed (quota?):', e);
+    // Applying data that CAME from the cloud (or another window) — do NOT call
+    // save() (which would re-push a redundant echo). Persist to localStorage
+    // preserving versions, unless noPersist (the data already came FROM this
+    // device's localStorage, i.e. another window wrote it).
+    if (!(opts && opts.noPersist)) {
+      try {
+        blob._savedAt = Date.now();
+        _lastLocalSavedAt = blob._savedAt;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
+      } catch (e) {
+        console.warn('Local persist of cloud data failed (quota?):', e);
+      }
+    } else {
+      _lastLocalSavedAt = blob._savedAt || _lastLocalSavedAt;
     }
     setUnsyncedFlag(false);
     try { invalidateBuildQueueCache(); } catch {}
@@ -14090,6 +14160,51 @@ function transformKeys(value, fn) {
 
 // Pull cloud data on first sign-in. If cloud is empty, push local data up
 // (one-time seed). Otherwise replace local with cloud.
+// The ONE merge used by every cloud write (push, fallback, boot). Combines the
+// freshest cloud with this device's local blob, using the persisted common
+// ancestor (base) when available. Never loses data:
+//   - inventory: delta-merge vs ancestor (with a base) so concurrent +/- sum;
+//     with NO base (first-ever sync) fall back to a version pick — but NEVER a
+//     naive delta (that would double), and ties keep cloud.
+//   - countedParts / assignments: map delta vs ancestor (union when no base).
+//   - orderEdits / partsNeeded: id-merge (union when no base — never deletes).
+//   - completedOrders / inventoryHistory: append-only union.
+//   - orders / library: version + ancestor decides (clock-free).
+//   - bulk/low-stakes: higher cloud-owned version wins.
+// Caller sets _writeToken and lastSync afterward.
+function _mergeWorkspace(cloud, localBlob, base) {
+  // VERSION GATE: never let this build write a payload that would downgrade the
+  // cloud's recorded build. Carry the highest build forward so a newer client's
+  // marker can't be erased by an older one's write.
+  const cloudBuild = Number(cloud._appBuild) || 0;
+  const cloudVer = cloud._ver || 0, localVer = localBlob._ver || 0;
+  const merged = cloudVer > localVer ? Object.assign({}, cloud) : Object.assign({}, localBlob);
+  merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, base ? base.countedParts : {});
+  merged.assignments      = _mergeStrMap(cloud.assignments, localBlob.assignments, base ? base.assignments : {});
+  merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, base ? base.orderEdits : []);
+  merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base ? base.partsNeeded : []);
+  merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
+  merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
+  const _o = _pickFieldVer(cloud, localBlob, base, 'orders', '_ordersVer', '_ordersSig');
+  merged.orders = _o.value; merged._ordersVer = _o.ver; merged._ordersSig = _o.sig;
+  const _l = _pickFieldVer(cloud, localBlob, base, 'library', '_libraryVer', '_librarySig');
+  merged.library = _l.value; merged._libraryVer = _l.ver; merged._librarySig = _l.sig;
+  if (base) {
+    // Safe delta merge against the real ancestor.
+    merged.inventory = _mergeInventory(cloud.inventory, localBlob.inventory, base.inventory);
+    merged._inventoryVer = _pickFieldVer(cloud, localBlob, base, 'inventory', '_inventoryVer', '_inventorySig').ver;
+  } else {
+    // No ancestor: pick wholesale by version (ties keep cloud). NEVER delta
+    // here — a null/empty base would double every count.
+    const _i = _pickFieldVer(cloud, localBlob, null, 'inventory', '_inventoryVer', '_inventorySig');
+    merged.inventory = _i.value; merged._inventoryVer = _i.ver;
+  }
+  merged._inventorySig = cheapHash(JSON.stringify(merged.inventory || {}));
+  merged._ver = Math.max(cloudVer, localVer) + 1;
+  merged._appBuild = Math.max(cloudBuild, APP_BUILD);
+  return merged;
+}
+
 // Boot-time reconcile: merge local and cloud into one blob that loses NOTHING.
 // Bulk fields follow the newer side by lastSync; orders/library/inventory each
 // follow their OWN change-timestamp (so an unrelated edit can't drag a stale
@@ -14103,24 +14218,9 @@ async function bootReconcile(localBlob, cloudBlobIgnored) {
       const s = transformKeys(localBlob, fbEncodeKey); s._writeToken = _localWriteToken; return s;
     }
     const cloud = transformKeys(enc, fbDecodeKey);
-    const cloudVer = cloud._ver || 0, localVer = localBlob._ver || 0;
-    // Bulk/low-stakes fields: higher cloud-owned version wins (clock-free).
-    const merged = cloudVer > localVer ? Object.assign({}, cloud) : Object.assign({}, localBlob);
-    // Append-only logs + id-keyed collections: union, never drop either side.
-    merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
-    merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
-    merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, []);
-    merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, []);
-    merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, {});
-    // Orders / library / inventory: decided by monotonic version (no ancestor
-    // at boot, so version ordering is what protects them).
-    const _o = _pickFieldVer(cloud, localBlob, null, 'orders', '_ordersVer', '_ordersSig');
-    merged.orders = _o.value; merged._ordersVer = _o.ver; merged._ordersSig = _o.sig;
-    const _l = _pickFieldVer(cloud, localBlob, null, 'library', '_libraryVer', '_librarySig');
-    merged.library = _l.value; merged._libraryVer = _l.ver; merged._librarySig = _l.sig;
-    const _i = _pickFieldVer(cloud, localBlob, null, 'inventory', '_inventoryVer', '_inventorySig');
-    merged.inventory = _i.value; merged._inventoryVer = _i.ver; merged._inventorySig = _i.sig;
-    merged._ver = Math.max(cloudVer, localVer) + 1;
+    // Use the persisted common ancestor so inventory delta-merges correctly and
+    // a reopened device can NEVER zero out cloud data it simply hadn't seen.
+    const merged = _mergeWorkspace(cloud, localBlob, _syncBase);
     merged.lastSync = new Date().toISOString();
     merged._writeToken = _localWriteToken;
     return transformKeys(merged, fbEncodeKey);
@@ -14153,6 +14253,18 @@ async function pullFromCloudOnce() {
     const cloudExists = snap.exists();
     const cloudRaw = cloudExists ? snap.val() : null;
     const cloudBlob = cloudRaw ? transformKeys(cloudRaw, fbDecodeKey) : null;
+    // BUILD GATE (before any write): if the cloud was written by a newer build,
+    // this page's sync logic is outdated. Adopt the cloud data read-only so the
+    // user sees correct info, then freeze writes and force a refresh.
+    if (cloudBlob && checkBuildGate(cloudBlob)) {
+      _suspendCloudWrites = true;
+      const roBlob = Object.assign({}, cloudBlob); delete roBlob._writeToken;
+      applyRestoreBlob(roBlob, { fromCloud: true });
+      _suspendCloudWrites = false;
+      cloudStatus('offline', 'Outdated version — refresh required');
+      _initialPullDone = true;
+      return;
+    }
     const cloudTime = cloudBlob && cloudBlob.lastSync ? new Date(cloudBlob.lastSync).getTime() : 0;
 
     const localRaw = localStorage.getItem(STORAGE_KEY);
@@ -14165,13 +14277,32 @@ async function pullFromCloudOnce() {
     //   - Cloud newer than or equal to local → pull cloud down (another device
     //     did newer work; do NOT clobber it even if we have an unsynced flag)
     if (!cloudExists) {
-      // First-ever connection: cloud is empty. Push current local data up.
+      // Cloud looked empty on our read. Use a TRANSACTION anyway — another
+      // device may have written between our read and this write, and a blind
+      // set() would erase it. Seed only if it's still genuinely empty.
       if (localBlob && (Object.keys(localBlob.library || {}).length > 0 || (localBlob.orders || []).length > 0)) {
-        const sanitized = transformKeys(localBlob, fbEncodeKey);
         _localWriteToken = Date.now() + ':' + Math.random();
         _recentWriteTokens.push(_localWriteToken); if (_recentWriteTokens.length > 40) _recentWriteTokens.shift();
-        sanitized._writeToken = _localWriteToken;
-        await window._fb.set(cloudRef(), sanitized);
+        const res = await window._fb.runTransaction(cloudRef(), (enc) => {
+          if (enc === null || enc === undefined) {
+            const s = transformKeys(localBlob, fbEncodeKey);
+            s._writeToken = _localWriteToken;
+            return s;
+          }
+          // Someone wrote first — merge instead of overwriting.
+          const cloud = transformKeys(enc, fbDecodeKey);
+          const merged = _mergeWorkspace(cloud, localBlob, _syncBase || null);
+          merged.lastSync = new Date().toISOString();
+          merged._writeToken = _localWriteToken;
+          return transformKeys(merged, fbEncodeKey);
+        }, { applyLocally: false });
+        if (res && res.committed && res.snapshot && res.snapshot.exists()) {
+          const mergedBlob = transformKeys(res.snapshot.val(), fbDecodeKey);
+          delete mergedBlob._writeToken;
+          _suspendCloudWrites = true;
+          applyRestoreBlob(mergedBlob, { fromCloud: true });
+          _suspendCloudWrites = false;
+        }
         setUnsyncedFlag(false);
         toast('First sync — uploaded local data to cloud');
       }
@@ -14213,6 +14344,7 @@ async function resyncFromCloud() {
     const snap = await window._fb.get(cloudRef());
     if (snap && snap.exists()) {
       const cloudBlob = transformKeys(snap.val(), fbDecodeKey);
+      if (checkBuildGate(cloudBlob)) return;
       const token = cloudBlob._writeToken;
       delete cloudBlob._writeToken;
       const cloudVer = cloudBlob._ver || 0;
@@ -14243,6 +14375,29 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') resyncFromCloud();
 });
 window.addEventListener('focus', resyncFromCloud);
+
+// Cross-WINDOW sync (two windows/tabs of the app open on the SAME device).
+// They share one localStorage; a `storage` event fires in the OTHER window
+// whenever this one writes. Adopt the newer copy so both windows stay
+// consistent without waiting for a cloud round-trip. Ordered by _savedAt
+// (a same-device clock — no skew between windows on one machine).
+window.addEventListener('storage', (e) => {
+  if (e.key !== STORAGE_KEY || !e.newValue) return;
+  let blob;
+  try { blob = JSON.parse(e.newValue); } catch { return; }
+  const at = blob._savedAt || 0;
+  if (at <= _lastLocalSavedAt) return;   // not newer than what this window has
+  _lastLocalSavedAt = at;
+  _suspendCloudWrites = true;
+  try {
+    // noPersist: localStorage already holds this blob (the other window wrote
+    // it) — just adopt it into this window's state and re-render. No re-push.
+    applyRestoreBlob(blob, { fromCloud: true, noPersist: true });
+  } catch (err) {
+    console.warn('Cross-window sync apply failed:', err);
+  }
+  _suspendCloudWrites = false;
+});
 
 // Listen for connection state (Firebase has a special /.info/connected node)
 // AND subscribe to live workspace changes so other devices' edits flow in.
@@ -14292,6 +14447,10 @@ function watchCloudConnection() {
       const blob = transformKeys(raw, fbDecodeKey);
       // Strip the internal token before applying
       delete blob._writeToken;
+      // Build gate: if this update came from a NEWER build, our sync logic is
+      // outdated — freeze writes and force a refresh rather than risk a stale
+      // overwrite.
+      if (checkBuildGate(blob)) return;
       // Version guard: ignore an incoming update whose cloud-owned version is
       // LOWER than what we already have (a rare out-of-order delivery). Clock-
       // free — no wall-clock comparison, so device skew can't matter.
