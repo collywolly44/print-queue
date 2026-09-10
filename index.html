@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 25;
+const APP_BUILD = 26;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -13752,12 +13752,19 @@ function applyRestoreBlob(blob, opts) {
     } else {
       _lastLocalSavedAt = blob._savedAt || _lastLocalSavedAt;
     }
-    setUnsyncedFlag(false);
+    // keepUnsynced: this is a READ-ONLY view of cloud data (stale-build gate).
+    // Preserve the unsynced flag and the existing ancestor so un-pushed local
+    // work survives and can still be merged after the page reloads.
+    if (!(opts && opts.keepUnsynced)) {
+      setUnsyncedFlag(false);
+    }
     try { invalidateBuildQueueCache(); } catch {}
     _sidebarQueueCounts.resin = null;
     _sidebarQueueCounts.fdm = null;
-    // We now match the cloud — this is the new common ancestor for merges.
-    _captureSyncBase();
+    if (!(opts && opts.keepUnsynced)) {
+      // We now match the cloud — this is the new common ancestor for merges.
+      _captureSyncBase();
+    }
   } else {
     save();
   }
@@ -14308,12 +14315,21 @@ async function pullFromCloudOnce() {
     const cloudRaw = cloudExists ? snap.val() : null;
     const cloudBlob = cloudRaw ? transformKeys(cloudRaw, fbDecodeKey) : null;
     // BUILD GATE (before any write): if the cloud was written by a newer build,
-    // this page's sync logic is outdated. Adopt the cloud data read-only so the
-    // user sees correct info, then freeze writes and force a refresh.
+    // this page's sync logic is outdated. Show the cloud data so the user isn't
+    // looking at stale info, but DO NOT touch localStorage, the unsynced flag,
+    // or the sync base — this device may hold un-pushed work, and destroying
+    // the local copy here would lose it permanently on refresh.
     if (cloudBlob && checkBuildGate(cloudBlob)) {
+      // Safety net: preserve this device's local copy under its own key BEFORE
+      // showing cloud data, so any un-pushed work is recoverable even if
+      // something later overwrites localStorage.
+      try {
+        const lr = localStorage.getItem(STORAGE_KEY);
+        if (lr) localStorage.setItem('print_queue_prerefresh_backup_v1', lr);
+      } catch {}
       _suspendCloudWrites = true;
       const roBlob = Object.assign({}, cloudBlob); delete roBlob._writeToken;
-      applyRestoreBlob(roBlob, { fromCloud: true });
+      applyRestoreBlob(roBlob, { fromCloud: true, noPersist: true, keepUnsynced: true });
       _suspendCloudWrites = false;
       cloudStatus('offline', 'Outdated version — refresh required');
       _initialPullDone = true;
@@ -14322,7 +14338,22 @@ async function pullFromCloudOnce() {
     const cloudTime = cloudBlob && cloudBlob.lastSync ? new Date(cloudBlob.lastSync).getTime() : 0;
 
     const localRaw = localStorage.getItem(STORAGE_KEY);
-    const localBlob = localRaw ? JSON.parse(localRaw) : null;
+    let localBlob = localRaw ? JSON.parse(localRaw) : null;
+    // RECOVERY: if a previous page-load was blocked by the stale-build gate, it
+    // stashed this device's local copy. Prefer whichever copy is further along
+    // so any work that hadn't pushed before the forced refresh is still merged
+    // into the cloud below instead of being silently dropped.
+    try {
+      const bk = localStorage.getItem('print_queue_prerefresh_backup_v1');
+      if (bk) {
+        const bkBlob = JSON.parse(bk);
+        if (bkBlob && (!localBlob || (bkBlob._ver || 0) >= (localBlob._ver || 0))) {
+          localBlob = bkBlob;
+          console.warn('Recovered pre-refresh local data for merge.');
+        }
+        localStorage.removeItem('print_queue_prerefresh_backup_v1');
+      }
+    } catch {}
     const localTime = localBlob && localBlob.lastSync ? new Date(localBlob.lastSync).getTime() : 0;
 
     // Decide direction:
