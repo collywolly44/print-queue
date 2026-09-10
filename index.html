@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 24;
+const APP_BUILD = 25;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6556,6 +6556,11 @@ function _captureSyncBase(src) {
     partsNeeded: JSON.parse(JSON.stringify(s.partsNeeded || [])),
     countedParts: Object.assign({}, s.countedParts || {}),
     assignments: Object.assign({}, s.assignments || {}),
+    paintParts: JSON.parse(JSON.stringify(s.paintParts || {})),
+    priority: JSON.parse(JSON.stringify(s.priority || { resin: [], fdm: [] })),
+    partLocations: Object.assign({}, s.partLocations || {}),
+    recountPrevLoc: Object.assign({}, s.recountPrevLoc || {}),
+    trackedParts: Object.assign({}, s.trackedParts || {}),
     // Per-field content signatures as of this sync, so a merge can tell which
     // side actually CHANGED a field (vs the shared ancestor) — clock-free.
     _ordersSig: s._ordersSig || '',
@@ -6838,6 +6843,9 @@ function scheduleCloudPush(blob) {
             (mergedBlob._librarySig !== localBlob._librarySig) ||
             !_flagsEqual(mergedBlob.countedParts, localBlob.countedParts) ||
             JSON.stringify(mergedBlob.assignments || {}) !== JSON.stringify(localBlob.assignments || {}) ||
+            JSON.stringify(mergedBlob.paintParts || {}) !== JSON.stringify(localBlob.paintParts || {}) ||
+            JSON.stringify(mergedBlob.priority || {}) !== JSON.stringify(localBlob.priority || {}) ||
+            JSON.stringify(mergedBlob.partLocations || {}) !== JSON.stringify(localBlob.partLocations || {}) ||
             !_invEqual(mergedBlob.inventory, localBlob.inventory) ||
             !_byIdEqual(mergedBlob.orderEdits, localBlob.orderEdits) ||
             !_byIdEqual(mergedBlob.partsNeeded, localBlob.partsNeeded) ||
@@ -14172,6 +14180,42 @@ function transformKeys(value, fn) {
 //   - orders / library: version + ancestor decides (clock-free).
 //   - bulk/low-stakes: higher cloud-owned version wins.
 // Caller sets _writeToken and lastSync afterward.
+function _shippedKey(e) {
+  return [e.at, e.sku, e.item, e.customer, e.qty].join('|');
+}
+function _mergeShipped(cloudS, localS) {
+  const seen = new Set(), out = [];
+  for (const e of (cloudS || [])) { const k = _shippedKey(e); if (!seen.has(k)) { seen.add(k); out.push(e); } }
+  for (const e of (localS || [])) { const k = _shippedKey(e); if (!seen.has(k)) { seen.add(k); out.push(e); } }
+  const CAP = 5000;
+  return out.length > CAP ? out.slice(out.length - CAP) : out;
+}
+// Merge an object-valued map (paintParts: partName -> {at,qty,...}) by delta vs
+// the common ancestor. Entries this device added/changed win; entries it
+// removed are removed; anything it didn't touch keeps the cloud version.
+function _mergeObjMap(cloudM, localM, baseM) {
+  const out = Object.assign({}, cloudM || {});
+  const base = baseM || {}, local = localM || {};
+  for (const k of Object.keys(local)) {
+    if (JSON.stringify(local[k]) !== JSON.stringify(base[k])) out[k] = local[k];
+  }
+  for (const k of Object.keys(base)) if (!(k in local)) delete out[k];
+  return out;
+}
+// Merge the priority lists ({resin:[{id,...}], fdm:[...]}) per queue, by id,
+// against the ancestor — so a reopened device can't revert the Part Needed
+// priority list to an old copy.
+function _mergePriority(cloudP, localP, baseP) {
+  const out = {};
+  for (const key of ['resin', 'fdm']) {
+    const c = (cloudP && Array.isArray(cloudP[key])) ? cloudP[key] : [];
+    const l = (localP && Array.isArray(localP[key])) ? localP[key] : [];
+    const b = (baseP && Array.isArray(baseP[key])) ? baseP[key] : [];
+    out[key] = _mergeById(c, l, b);
+  }
+  return out;
+}
+
 function _mergeWorkspace(cloud, localBlob, base) {
   // VERSION GATE: never let this build write a payload that would downgrade the
   // cloud's recorded build. Carry the highest build forward so a newer client's
@@ -14185,6 +14229,16 @@ function _mergeWorkspace(cloud, localBlob, base) {
   merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base ? base.partsNeeded : []);
   merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
   merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
+  // Previously UNPROTECTED (bulk last-writer-wins) — these were reverting when a
+  // device reopened: paintParts backs the resin Paint row, priority backs the
+  // Part Needed lists. Now merged like everything else.
+  merged.paintParts       = _mergeObjMap(cloud.paintParts, localBlob.paintParts, base ? base.paintParts : {});
+  merged.priority         = _mergePriority(cloud.priority, localBlob.priority, base ? base.priority : null);
+  merged.partLocations    = _mergeStrMap(cloud.partLocations, localBlob.partLocations, base ? base.partLocations : {});
+  merged.recountPrevLoc   = _mergeStrMap(cloud.recountPrevLoc, localBlob.recountPrevLoc, base ? base.recountPrevLoc : {});
+  merged.trackedParts     = _mergeFlags(cloud.trackedParts, localBlob.trackedParts, base ? base.trackedParts : {});
+  // shippedHistory is append-only — union so no device's shipping record is lost.
+  merged.shippedHistory   = _mergeShipped(cloud.shippedHistory, localBlob.shippedHistory);
   const _o = _pickFieldVer(cloud, localBlob, base, 'orders', '_ordersVer', '_ordersSig');
   merged.orders = _o.value; merged._ordersVer = _o.ver; merged._ordersSig = _o.sig;
   const _l = _pickFieldVer(cloud, localBlob, base, 'library', '_libraryVer', '_librarySig');
