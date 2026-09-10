@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 27;
+const APP_BUILD = 28;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6477,6 +6477,7 @@ let _cloudPushPending = false;
 let _lastLocalSavedAt = 0;   // most recent local save time this window knows about (cross-window coordination)
 let _localSeq = 0;           // monotonic counter, bumped on every local write — orders writes reliably even within the same millisecond
 let _staleBuild = false;     // true once we've seen a cloud payload written by a NEWER build than this one
+let _pushingUnsyncedWork = false;  // true while merging a device's genuinely unsynced edits (allows its base to be trusted)
 
 // If the cloud has been written by a newer build than this page is running, this
 // page's sync logic is outdated and MUST NOT write (it could overwrite newer
@@ -6757,7 +6758,18 @@ function scheduleCloudPush(blob) {
   _cloudPushPending = true;
   setUnsyncedFlag(true);
   clearTimeout(_cloudPushTimer);
-  _cloudPushTimer = setTimeout(async () => {
+  _cloudPushTimer = setTimeout(() => { _doCloudPush(blob); }, 250);
+}
+
+// Fire the push immediately, skipping the debounce (used on page hide/unload).
+function scheduleCloudPushNow(blob) {
+  clearTimeout(_cloudPushTimer);
+  _cloudPushTimer = null;
+  _doCloudPush(blob || null);
+}
+
+function _doCloudPush(blob) {
+  (async () => {
     if (!_fbReady || !_fbUser) return;
     try {
       // Read the very latest local state at write time (in case more edits happened)
@@ -6890,7 +6902,7 @@ function scheduleCloudPush(blob) {
         }
       }, 4000);
     }
-  }, 600);
+  })();
 }
 
 // Keep at most one snapshot per age tier (SNAPSHOT_TIERS_MS). For each target
@@ -14243,7 +14255,13 @@ function _mergeWorkspace(cloud, localBlob, base) {
   // this device last synced, its "deletions" (keys/ids present in its ancestor
   // but missing locally) are NOT trustworthy — they'd wipe newer entries this
   // device simply hasn't seen. In that case we merge additively only.
-  const localIsCurrent = localVer >= cloudVer;
+  //
+  // EXCEPTION: if this device has genuinely unsynced work (an edit that never
+  // confirmed a push — e.g. the page was refreshed mid-save), its ancestor IS
+  // valid for its own changes, so we honor the base. It still can't win a field
+  // the cloud changed (that's decided per-field in _pickFieldVer), but its
+  // edits are no longer silently dropped just because it's a version behind.
+  const localIsCurrent = (localVer >= cloudVer) || _pushingUnsyncedWork;
   const mergeBase = localIsCurrent ? base : null;
   const merged = cloudVer > localVer ? Object.assign({}, cloud) : Object.assign({}, localBlob);
   merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, mergeBase ? mergeBase.countedParts : {});
@@ -14288,6 +14306,9 @@ function _mergeWorkspace(cloud, localBlob, base) {
 // copy over a newer one); the append-only logs and id-keyed collections are
 // unioned. Runs as a transaction so concurrent boots serialize safely.
 async function bootReconcile(localBlob, cloudBlobIgnored) {
+  // If this device has unsynced work, trust its ancestor for its own edits so
+  // they get merged up rather than dropped (a refresh mid-push lands here).
+  _pushingUnsyncedWork = hasUnsyncedFlag();
   _localWriteToken = Date.now() + ':' + Math.random();
   _recentWriteTokens.push(_localWriteToken); if (_recentWriteTokens.length > 40) _recentWriteTokens.shift();
   const res = await window._fb.runTransaction(cloudRef(), (enc) => {
@@ -14309,6 +14330,7 @@ async function bootReconcile(localBlob, cloudBlobIgnored) {
     applyRestoreBlob(mergedBlob, { fromCloud: true });  // persists locally + captures base
     _suspendCloudWrites = false;
   }
+  _pushingUnsyncedWork = false;
   setUnsyncedFlag(false);
 }
 
@@ -14474,7 +14496,42 @@ async function resyncFromCloud() {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') resyncFromCloud();
+  else flushPendingWork();
 });
+window.addEventListener('pagehide', flushPendingWork);
+window.addEventListener('beforeunload', flushPendingWork);
+
+// Safety poll: the live listener can silently stop delivering (mobile Safari
+// drops websockets after backgrounding, flaky networks, etc.), which leaves a
+// device showing stale data indefinitely. Poll periodically as a backstop —
+// resyncFromCloud() only applies genuinely newer data and merges instead of
+// overwriting when there's un-pushed local work, so this is always safe.
+setInterval(() => {
+  if (document.visibilityState === 'visible') resyncFromCloud();
+}, 20000);
+
+// Called when the page is about to go away (refresh, close, backgrounding).
+// If a push is still waiting in the debounce window, the page could die before
+// it fires and that work would only exist in localStorage. We (a) mark it
+// unsynced so the NEXT boot knows to merge it up, and (b) fire the push
+// immediately so it usually lands before the page dies.
+function flushPendingWork() {
+  try {
+    if (_cloudPushPending || hasUnsyncedFlag()) {
+      setUnsyncedFlag(true);   // survives the reload; boot will merge it up
+      if (_cloudPushTimer) {
+        clearTimeout(_cloudPushTimer);
+        _cloudPushTimer = null;
+      }
+      // Best-effort immediate push. May not complete, but the unsynced flag +
+      // localStorage copy guarantee the boot merge recovers it either way.
+      if (_fbReady && _fbUser && !_suspendCloudWrites && !_staleBuild) {
+        _cloudPushPending = true;
+        scheduleCloudPushNow();
+      }
+    }
+  } catch {}
+}
 window.addEventListener('focus', resyncFromCloud);
 
 // Cross-WINDOW sync (two windows/tabs of the app open on the SAME device).
