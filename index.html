@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 30;
+const APP_BUILD = 31;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -14540,21 +14540,33 @@ async function resyncFromCloud() {
     _resyncing = false;
   }
 }
+// Force the realtime connection awake and pull immediately. Mobile Safari
+// suspends the websocket when the app is backgrounded and often does NOT resume
+// pushing updates when you return — so live changes from other devices stop
+// arriving. Calling goOnline + re-subscribing revives the feed instantly.
+function wakeCloud() {
+  if (!_fbReady || !_fbDb || !_fbUser) return;
+  try { window._fb.dbMod.goOnline(_fbDb); } catch {}
+  try { subscribeWorkspace(); } catch {}   // re-attach listener; fires current value at once
+  resyncFromCloud();                        // immediate one-shot pull as a belt-and-suspenders
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') resyncFromCloud();
+  if (document.visibilityState === 'visible') wakeCloud();
   else flushPendingWork();
 });
+window.addEventListener('focus', wakeCloud);
+window.addEventListener('pageshow', wakeCloud);   // fires when returning via bfcache (common on iOS)
 window.addEventListener('pagehide', flushPendingWork);
 window.addEventListener('beforeunload', flushPendingWork);
 
-// Safety poll: the live listener can silently stop delivering (mobile Safari
-// drops websockets after backgrounding, flaky networks, etc.), which leaves a
-// device showing stale data indefinitely. Poll periodically as a backstop —
-// resyncFromCloud() only applies genuinely newer data and merges instead of
-// overwriting when there's un-pushed local work, so this is always safe.
+// Safety poll: even when foregrounded, mobile Safari can silently stall the
+// socket. Poll every 5s while visible as a backstop. resyncFromCloud() only
+// applies genuinely newer data and merges when there's un-pushed local work,
+// so this is always safe and cheap (a single read that no-ops if unchanged).
 setInterval(() => {
   if (document.visibilityState === 'visible') resyncFromCloud();
-}, 20000);
+}, 5000);
 
 // Called when the page is about to go away (refresh, close, backgrounding).
 // If a push is still waiting in the debounce window, the page could die before
@@ -14622,6 +14634,13 @@ function watchCloudConnection() {
   });
 
   // Subscribe to the workspace node — fires every time any device writes.
+  subscribeWorkspace();
+}
+
+// (Re)attach the live workspace listener. Called on setup and whenever we wake
+// the connection (mobile Safari kills the socket on backgrounding and the old
+// listener can stay dead — re-subscribing forces an immediate fresh value).
+function subscribeWorkspace() {
   if (_watchUnsub) { try { _watchUnsub(); } catch {} _watchUnsub = null; }
   _watchUnsub = window._fb.onValue(cloudRef(), (snap) => {
     if (!snap.exists()) return;
