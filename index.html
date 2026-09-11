@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 28;
+const APP_BUILD = 29;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -14264,20 +14264,20 @@ function _mergeWorkspace(cloud, localBlob, base) {
   const localIsCurrent = (localVer >= cloudVer) || _pushingUnsyncedWork;
   const mergeBase = localIsCurrent ? base : null;
   const merged = cloudVer > localVer ? Object.assign({}, cloud) : Object.assign({}, localBlob);
-  merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, mergeBase ? mergeBase.countedParts : {});
-  merged.assignments      = _mergeStrMap(cloud.assignments, localBlob.assignments, mergeBase ? mergeBase.assignments : {});
-  merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, mergeBase ? mergeBase.orderEdits : []);
-  merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, mergeBase ? mergeBase.partsNeeded : []);
+  merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, base ? base.countedParts : {});
+  merged.assignments      = _mergeStrMap(cloud.assignments, localBlob.assignments, base ? base.assignments : {});
+  merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, base ? base.orderEdits : []);
+  merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base ? base.partsNeeded : []);
   merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
   merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
   // Previously UNPROTECTED (bulk last-writer-wins) — these were reverting when a
   // device reopened: paintParts backs the resin Paint row, priority backs the
   // Part Needed lists. Now merged like everything else.
-  merged.paintParts       = _mergeObjMap(cloud.paintParts, localBlob.paintParts, mergeBase ? mergeBase.paintParts : {});
-  merged.priority         = _mergePriority(cloud.priority, localBlob.priority, mergeBase ? mergeBase.priority : null);
-  merged.partLocations    = _mergeStrMap(cloud.partLocations, localBlob.partLocations, mergeBase ? mergeBase.partLocations : {});
-  merged.recountPrevLoc   = _mergeStrMap(cloud.recountPrevLoc, localBlob.recountPrevLoc, mergeBase ? mergeBase.recountPrevLoc : {});
-  merged.trackedParts     = _mergeFlags(cloud.trackedParts, localBlob.trackedParts, mergeBase ? mergeBase.trackedParts : {});
+  merged.paintParts       = _mergeObjMap(cloud.paintParts, localBlob.paintParts, base ? base.paintParts : {});
+  merged.priority         = _mergePriority(cloud.priority, localBlob.priority, base ? base.priority : null);
+  merged.partLocations    = _mergeStrMap(cloud.partLocations, localBlob.partLocations, base ? base.partLocations : {});
+  merged.recountPrevLoc   = _mergeStrMap(cloud.recountPrevLoc, localBlob.recountPrevLoc, base ? base.recountPrevLoc : {});
+  merged.trackedParts     = _mergeFlags(cloud.trackedParts, localBlob.trackedParts, base ? base.trackedParts : {});
   // shippedHistory is append-only — union so no device's shipping record is lost.
   merged.shippedHistory   = _mergeShipped(cloud.shippedHistory, localBlob.shippedHistory);
   const _o = _pickFieldVer(cloud, localBlob, mergeBase, 'orders', '_ordersVer', '_ordersSig');
