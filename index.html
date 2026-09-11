@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 29;
+const APP_BUILD = 30;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6353,6 +6353,33 @@ function logInventoryChange(partName, before, after, reason) {
   }
 }
 
+// Stamp a monotonic per-entry revision on id-keyed entries that changed since
+// the last save. Compares each entry's content hash to a shadow map; on change
+// (or first sight) it bumps a global counter into entry._rev. The merge keeps
+// the higher _rev, so resolving/moving an item beats any stale copy of it.
+let _revCounter = Date.now();
+const _revShadow = {};   // "collection:id" -> content hash (excluding _rev)
+function _bumpList(list, coll) {
+  if (!Array.isArray(list)) return;
+  for (const e of list) {
+    if (!e || e.id == null) continue;
+    const key = coll + ':' + e.id;
+    const { _rev, ...rest } = e;
+    const h = cheapHash(JSON.stringify(rest));
+    if (_revShadow[key] !== h) {
+      _revShadow[key] = h;
+      e._rev = ++_revCounter;   // changed (or first seen this session) → new revision
+    } else if (e._rev == null) {
+      e._rev = ++_revCounter;
+    }
+  }
+}
+function bumpEntryRevs() {
+  _bumpList(state.partsNeeded, 'pn');
+  if (state.priority) { _bumpList(state.priority.resin, 'pr'); _bumpList(state.priority.fdm, 'pf'); }
+  _bumpList(state.orderEdits, 'oe');
+}
+
 // Fast non-crypto hash (cyrb53) for cheap content signatures.
 function cheapHash(str) {
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
@@ -6379,6 +6406,11 @@ function save() {
   if (_lSig !== state._librarySig) { state._librarySig = _lSig; state._libraryTs = _nowMs; }
   const _iSig = cheapHash(JSON.stringify(state.inventory || {}));
   if (_iSig !== state._inventorySig) { state._inventorySig = _iSig; state._inventoryTs = _nowMs; }
+  // Stamp a per-entry revision on any id-keyed entry that changed since the last
+  // save (partsNeeded, priority.resin, priority.fdm, orderEdits). The merge uses
+  // _rev to decide winners, so a resolved/moved item can never be resurrected by
+  // a stale device holding an older revision.
+  bumpEntryRevs();
 
   const blob = {
     orders: state.orders,
@@ -6663,19 +6695,33 @@ function _mergeInventory(cloudInv, localInv, baseInv) {
 // genuine edits win for their ids, and ids this device deleted are removed.
 // Entries this device did NOT touch keep the cloud version — so another
 // device's in-place update (e.g. marking a needed part resolved) survives.
+// Merge id-keyed arrays (orderEdits, partsNeeded, priority) by PER-ENTRY
+// revision — the only reliable way to stop a stale device resurrecting an entry
+// it resolved/moved on another device. Every mutation bumps entry._rev
+// (see touchEntry / bumpRev). Rules:
+//   - id in both: keep the entry with the higher _rev (ties → cloud).
+//   - id only in cloud: keep it (another device added it; we just haven't seen it).
+//   - id only in local: keep it ONLY if it's genuinely new to us, i.e. it's not
+//     in the ancestor. If it WAS in the ancestor but is gone from cloud, another
+//     device deleted it → respect that (drop it). If it's not in the ancestor
+//     either, it's a local add → keep it.
 function _mergeById(cloudArr, localArr, baseArr) {
   const byId = new Map();
   for (const e of (cloudArr || [])) if (e && e.id != null) byId.set(e.id, e);
-  const baseById = new Map();
-  for (const e of (baseArr || [])) if (e && e.id != null) baseById.set(e.id, e);
-  const localById = new Map();
-  for (const e of (localArr || [])) if (e && e.id != null) localById.set(e.id, e);
-  // deletions by this device: present in ancestor, gone locally
-  for (const id of baseById.keys()) if (!localById.has(id)) byId.delete(id);
-  // adds / real edits by this device (only entries that changed vs ancestor)
-  for (const [id, e] of localById) {
-    const b = baseById.get(id);
-    if (!b || JSON.stringify(b) !== JSON.stringify(e)) byId.set(id, e);
+  const baseIds = new Set();
+  for (const e of (baseArr || [])) if (e && e.id != null) baseIds.add(e.id);
+  for (const e of (localArr || [])) {
+    if (!e || e.id == null) continue;
+    const cloudE = byId.get(e.id);
+    if (cloudE) {
+      // Present on both sides — higher revision wins; tie keeps cloud.
+      const lr = Number(e._rev) || 0, cr = Number(cloudE._rev) || 0;
+      if (lr > cr) byId.set(e.id, e);
+    } else {
+      // Not in cloud. Keep it only if it's a genuine local add (never synced),
+      // NOT something another device deleted after we last synced.
+      if (!baseIds.has(e.id)) byId.set(e.id, e);
+    }
   }
   return Array.from(byId.values());
 }
