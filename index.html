@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 35;
+const APP_BUILD = 36;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6931,15 +6931,18 @@ function _doCloudPush(blob) {
             { changed, superseded, pushedAt: localBlob.lastSync, committedInvKeys: Object.keys(mergedBlob.inventory||{}).length });
           if (changed && !superseded) {
             _suspendCloudWrites = true;
-            applyRestoreBlob(mergedBlob, { fromCloud: true });  // persists + resets base
+            applyRestoreBlob(mergedBlob, { fromCloud: true });  // update local + base
             _suspendCloudWrites = false;
-          } else if (!superseded) {
-            _captureSyncBase(mergedBlob);  // nothing merged in — advance ancestor to committed cloud
+          } else {
+            // ALWAYS advance the ancestor to the just-committed cloud value —
+            // even when superseded. The committed blob IS what's now in the
+            // cloud, so it's the correct new baseline; the NEXT push then
+            // computes its delta from here and captures only genuinely new
+            // local changes. (Freezing the base on superseded — build 33 — was
+            // collapsing rapid same-part deposits: base stuck at the old value
+            // made later deltas net to zero, so only the first deposit synced.)
+            _captureSyncBase(mergedBlob);
           }
-          // If superseded, leave the ancestor ALONE: this committed result is
-          // stale (a newer local edit exists), and the queued follow-up push
-          // will merge the latest and capture the correct baseline. Capturing
-          // from a stale result here was reverting the newer deposit.
         }
       }
 
