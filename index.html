@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 33;
+const APP_BUILD = 34;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -8177,8 +8177,10 @@ function renderQueue(type) {
         return;
       }
       confirmPrintPlate(clicked, (qty) => {
-        row.classList.add('removing');
-        setTimeout(() => printPlate(clicked, qty), 220);
+        // Deposit synchronously — the state change must NOT be delayed behind
+        // the fade animation (that timing gap was letting rapid Done clicks
+        // race and drop a deposit). printPlate re-renders, removing the row.
+        printPlate(clicked, qty);
       });
     });
   });
@@ -8566,9 +8568,11 @@ function renderKanban(filtered, allVisible) {
       // the underlying orders happens automatically on next renderQueue since
       // buildQueue re-runs the FIFO math from scratch.
       confirmPrintPlate(clicked, (qty) => {
+        // Deposit synchronously (see FDM handler) — no 220ms gap that lets
+        // rapid Done clicks race and drop a deposit.
         card.classList.add('removing');
         delete state.assignments[key];
-        setTimeout(() => printPlate(clicked, qty), 220);
+        printPlate(clicked, qty);
       });
     });
   });
@@ -9177,9 +9181,13 @@ function printPlate(clicked, qtyOverride) {
 // Open the print-plate confirmation modal with an adjustable qty.
 // Calls onConfirm(qty) when the user clicks confirm.
 function confirmPrintPlate(clicked, onConfirm) {
+  const modal = document.getElementById('plate-modal-bg');
+  // Guard: only one plate-confirm at a time. The modal is a single shared
+  // element; opening a second one while the first is up would overwrite its
+  // handlers and lose a deposit. Ignore extra Done clicks until this closes.
+  if (modal.classList.contains('show')) return;
   const lib = state.library[clicked.sku];
   const yld = partYield(lib, clicked.part);
-  const modal = document.getElementById('plate-modal-bg');
   const title = document.getElementById('plate-modal-title');
   const partLabel = document.getElementById('plate-modal-part');
   const yieldLabel = document.getElementById('plate-modal-yield');
