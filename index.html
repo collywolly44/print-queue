@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 34;
+const APP_BUILD = 35;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -9112,6 +9112,17 @@ function printPlate(clicked, qtyOverride) {
     const newStock = Number(state.inventory[part] || 0) + qty;
     state.inventory[part] = newStock;
     logInventoryChange(part, priorStock, newStock, 'print');  // full audit trail
+    if (window._syncDebug) {
+      console.log(`[done] ${part}: ${priorStock} +${qty} = ${newStock}`);
+      // Re-check the count after the async sync round-trip; if it dropped, a
+      // merge/apply reverted it — this pinpoints the culprit.
+      const expected = newStock;
+      setTimeout(() => {
+        const nowVal = Number(state.inventory[part] || 0);
+        if (nowVal < expected) console.warn(`[done] REVERTED ${part}: expected >=${expected}, now ${nowVal}`);
+        else console.log(`[done] OK ${part}: still ${nowVal}`);
+      }, 2500);
+    }
     markCounted(part); // printing implies we know the count
     // Log this print to completedOrders history (for dashboard + history view)
     if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
@@ -9180,12 +9191,22 @@ function printPlate(clicked, qtyOverride) {
 
 // Open the print-plate confirmation modal with an adjustable qty.
 // Calls onConfirm(qty) when the user clicks confirm.
+let _plateQueue = [];      // queued { clicked, onConfirm } — so rapid Done clicks ALL register
+let _plateModalOpen = false;
 function confirmPrintPlate(clicked, onConfirm) {
+  // Queue every request. The modal is a single shared element; without a queue,
+  // rapid Done clicks would clobber each other or be dropped. Each queued item
+  // opens its own confirm in turn, so every click gets counted.
+  _plateQueue.push({ clicked, onConfirm });
+  if (!_plateModalOpen) _openNextPlateConfirm();
+}
+
+function _openNextPlateConfirm() {
+  if (_plateModalOpen) return;
+  const item = _plateQueue.shift();
+  if (!item) return;
+  const { clicked, onConfirm } = item;
   const modal = document.getElementById('plate-modal-bg');
-  // Guard: only one plate-confirm at a time. The modal is a single shared
-  // element; opening a second one while the first is up would overwrite its
-  // handlers and lose a deposit. Ignore extra Done clicks until this closes.
-  if (modal.classList.contains('show')) return;
   const lib = state.library[clicked.sku];
   const yld = partYield(lib, clicked.part);
   const title = document.getElementById('plate-modal-title');
@@ -9202,6 +9223,7 @@ function confirmPrintPlate(clicked, onConfirm) {
   yieldLabel.textContent = `Plate yield: ${yld}`;
   input.value = yld;
   input.min = 0;
+  _plateModalOpen = true;
 
   const clampValue = () => {
     let n = parseInt(input.value, 10);
@@ -9213,6 +9235,9 @@ function confirmPrintPlate(clicked, onConfirm) {
   const close = () => {
     modal.classList.remove('show');
     minusBtn.onclick = plusBtn.onclick = confirmBtn.onclick = cancelBtn.onclick = null;
+    _plateModalOpen = false;
+    // Process the next queued Done, if any.
+    if (_plateQueue.length) setTimeout(_openNextPlateConfirm, 0);
   };
 
   minusBtn.onclick = () => { input.value = Math.max(0, (parseInt(input.value,10)||0) - 1); };
