@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 36;
+const APP_BUILD = 37;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6927,8 +6927,18 @@ function _doCloudPush(blob) {
             !_byIdEqual(mergedBlob.partsNeeded, localBlob.partsNeeded) ||
             !_completedEqual(mergedBlob.completedOrders, localBlob.completedOrders) ||
             !_invHistEqual(mergedBlob.inventoryHistory, localBlob.inventoryHistory);
-          if (window._syncDebug) console.log('[sync] push done',
-            { changed, superseded, pushedAt: localBlob.lastSync, committedInvKeys: Object.keys(mergedBlob.inventory||{}).length });
+          if (window._syncDebug) {
+            const diffs = {};
+            const bInv = (base && base.inventory) ? base.inventory : {};
+            const lInv = localBlob.inventory || {};
+            const mInv = mergedBlob.inventory || {};
+            const allP = new Set([...Object.keys(lInv), ...Object.keys(mInv)]);
+            for (const pn of allP) {
+              const l = Number(lInv[pn] || 0), m = Number(mInv[pn] || 0);
+              if (l !== m) diffs[pn] = { base: Number(bInv[pn] || 0), local: l, merged: m };
+            }
+            console.log('[sync] push done', { changed, superseded, pushSeq, localSeqNow: _localSeq, invDiffs: diffs });
+          }
           if (changed && !superseded) {
             _suspendCloudWrites = true;
             applyRestoreBlob(mergedBlob, { fromCloud: true });  // update local + base
