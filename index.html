@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 31;
+const APP_BUILD = 33;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6547,6 +6547,8 @@ function showStaleBuildOverlay() {
   setTimeout(() => { try { location.reload(true); } catch {} }, 15000);
 }
 let _pendingSince = 0;   // when the current pending push first started (to detect a stuck push)
+let _pushInFlight = false;  // a cloud push transaction is currently running
+let _pushAgain = false;     // an edit arrived while a push was in flight — run one more after
 const UNSYNCED_KEY = 'print_queue_unsynced_v1';
 
 // Set/clear the persistent "unsynced local changes" flag. This flag survives
@@ -6815,8 +6817,14 @@ function scheduleCloudPushNow(blob) {
 }
 
 function _doCloudPush(blob) {
+  // Serialize: never run two pushes at once. Concurrent transactions + their
+  // success handlers were corrupting the sync baseline and reverting a deposit
+  // (the "rapid Done loses one" bug). If a push is already running, just note
+  // that another is needed and run it when this one finishes.
+  if (_pushInFlight) { _pushAgain = true; return; }
+  _pushInFlight = true;
   (async () => {
-    if (!_fbReady || !_fbUser) return;
+    if (!_fbReady || !_fbUser) { _pushInFlight = false; return; }
     try {
       // Read the very latest local state at write time (in case more edits happened)
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -6925,9 +6933,13 @@ function _doCloudPush(blob) {
             _suspendCloudWrites = true;
             applyRestoreBlob(mergedBlob, { fromCloud: true });  // persists + resets base
             _suspendCloudWrites = false;
-          } else {
+          } else if (!superseded) {
             _captureSyncBase(mergedBlob);  // nothing merged in — advance ancestor to committed cloud
           }
+          // If superseded, leave the ancestor ALONE: this committed result is
+          // stale (a newer local edit exists), and the queued follow-up push
+          // will merge the latest and capture the correct baseline. Capturing
+          // from a stale result here was reverting the newer deposit.
         }
       }
 
@@ -6947,6 +6959,12 @@ function _doCloudPush(blob) {
           scheduleCloudPush(blob);
         }
       }, 4000);
+    } finally {
+      _pushInFlight = false;
+      // If an edit arrived while this push was in flight, run exactly one more
+      // now (reads the freshest local state and merges against the up-to-date
+      // baseline). This is what makes rapid Done clicks safe.
+      if (_pushAgain) { _pushAgain = false; _doCloudPush(null); }
     }
   })();
 }
@@ -14598,17 +14616,30 @@ window.addEventListener('focus', resyncFromCloud);
 // consistent without waiting for a cloud round-trip. Ordered by _savedAt
 // (a same-device clock — no skew between windows on one machine).
 window.addEventListener('storage', (e) => {
+  // Another window on THIS device updated the shared sync ancestor — adopt it
+  // so both windows compute inventory deltas against the SAME baseline. Without
+  // this, one window could treat an un-pushed deposit as the baseline and the
+  // deposit would be lost on the next merge (history kept it, inventory didn't).
+  if (e.key === SYNCBASE_KEY) {
+    try { if (e.newValue) _syncBase = JSON.parse(e.newValue); } catch {}
+    return;
+  }
   if (e.key !== STORAGE_KEY || !e.newValue) return;
   let blob;
   try { blob = JSON.parse(e.newValue); } catch { return; }
   const at = blob._savedAt || 0;
   if (at <= _lastLocalSavedAt) return;   // not newer than what this window has
   _lastLocalSavedAt = at;
+  // Re-read the shared ancestor first so this window's future pushes delta
+  // against the same baseline the editing window used.
+  try { const sb = localStorage.getItem(SYNCBASE_KEY); if (sb) _syncBase = JSON.parse(sb); } catch {}
   _suspendCloudWrites = true;
   try {
     // noPersist: localStorage already holds this blob (the other window wrote
-    // it) — just adopt it into this window's state and re-render. No re-push.
-    applyRestoreBlob(blob, { fromCloud: true, noPersist: true });
+    // it). keepUnsynced: do NOT derive a new sync base from this data — it may
+    // contain the other window's un-pushed edits, and treating them as the
+    // synced baseline is exactly what dropped deposits. Display only.
+    applyRestoreBlob(blob, { fromCloud: true, noPersist: true, keepUnsynced: true });
   } catch (err) {
     console.warn('Cross-window sync apply failed:', err);
   }
