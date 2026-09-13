@@ -6000,7 +6000,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 47;
+const APP_BUILD = 48;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6888,6 +6888,35 @@ function _pnProgress(e) {
 // Union two tombstone maps (need id -> ISO delete time). Keep every id (a
 // deletion recorded on ANY device wins and propagates), latest timestamp on
 // collision. Capped: drop the oldest once large so it can't grow forever.
+// A Part Needed card's state is spread across THREE collections: the need
+// object (partsNeeded — source of truth for active/resolved), state.paintParts
+// (paint section, keyed by partName, back-ref fromNeedId), and state.assignments
+// (kanban column, key '__need__<id>'). They merge separately and can drift, so a
+// resolved/deleted need could still show in Paint or a column. This enforcer
+// makes the NEED the single source of truth: it drops any paint entry or
+// assignment whose underlying need is resolved, tombstoned, or gone. Runs at
+// merge time (cleans the synced copy so it propagates) AND at render time.
+function _reconcileDerived(obj) {
+  if (!obj) return;
+  const tomb = obj.deletedNeeds || {};
+  const needById = {};
+  for (const n of (Array.isArray(obj.partsNeeded) ? obj.partsNeeded : [])) {
+    if (n && n.id != null) needById[n.id] = n;
+  }
+  const gone = (id) => { const n = needById[id]; return !n || !!n.resolvedAt || !!tomb[id]; };
+  if (obj.paintParts && typeof obj.paintParts === 'object') {
+    for (const pn of Object.keys(obj.paintParts)) {
+      const info = obj.paintParts[pn];
+      if (info && info.fromNeedId && gone(info.fromNeedId)) delete obj.paintParts[pn];
+    }
+  }
+  if (obj.assignments && typeof obj.assignments === 'object') {
+    for (const key of Object.keys(obj.assignments)) {
+      if (key.startsWith('__need__') && gone(key.slice('__need__'.length))) delete obj.assignments[key];
+    }
+  }
+}
+
 function _mergeTombstones(a, b) {
   const out = {};
   for (const m of [a || {}, b || {}]) {
@@ -8093,6 +8122,10 @@ function daysBetween(a, b) {
 }
 
 function renderQueue(type) {
+  // Keep the paint section + kanban assignments consistent with the source of
+  // truth (the need's resolved/tombstoned status) before rendering, so a
+  // resolved/deleted Part Needed can never linger in Paint or a column.
+  _reconcileDerived(state);
   // Render BOTH queues. Cheap because they share the same buildQueue work
   // structurally; calling once per type keeps the code simple.
   if (!type) {
@@ -14747,6 +14780,7 @@ function _mergeWorkspace(cloud, localBlob, base) {
   merged._inventorySig = cheapHash(JSON.stringify(merged.inventory || {}));
   merged._ver = Math.max(cloudVer, localVer) + 1;
   merged._appBuild = Math.max(cloudBuild, APP_BUILD);
+  _reconcileDerived(merged);   // drop paint/assignment entries for resolved/deleted needs (keeps the 3 collections consistent in the cloud copy)
   return merged;
 }
 
