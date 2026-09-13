@@ -6000,7 +6000,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 43;
+const APP_BUILD = 45;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6530,6 +6530,10 @@ function cheapHash(str) {
 }
 
 function save() {
+  // HARD LOCK: an out-of-date device is frozen — no local persistence, no push.
+  // Combined with the full-screen overlay, this makes it impossible for a stale
+  // build to change anything, locally or in the cloud.
+  if (_staleBuild) return;
   // Keep the inventory event log compact locally (drops only superseded events,
   // never changes counts) so it can't grow unbounded on one device.
   if (Array.isArray(state.invEvents)) state.invEvents = _compactInvEvents(state.invEvents);
@@ -6659,33 +6663,48 @@ function checkBuildGate(blob) {
   const cloudBuild = Number(blob && blob._appBuild) || 0;
   if (cloudBuild > APP_BUILD && !_staleBuild) {
     _staleBuild = true;
+    _suspendCloudWrites = true;   // hard-stop ALL cloud writes from this old build
     try { clearTimeout(_cloudPushTimer); } catch {}
     _cloudPushPending = false;
-    showStaleBuildOverlay();
+    _pushInFlight = false;
+    showStaleBuildOverlay(cloudBuild);
   }
   return _staleBuild;
 }
 
-function showStaleBuildOverlay() {
+// Reload the page WITHOUT using the browser cache. A plain reload can serve the
+// stale index.html again (GitHub Pages caches it), which would just re-show this
+// overlay forever. A fresh query string forces the server copy.
+function _hardReloadForUpdate() {
+  try {
+    const base = location.href.split('?')[0].split('#')[0];
+    location.replace(base + '?v=' + Date.now());
+  } catch {
+    try { location.reload(); } catch {}
+  }
+}
+
+function showStaleBuildOverlay(cloudBuild) {
   if (document.getElementById('stale-build-overlay')) return;
+  try { document.body.style.overflow = 'hidden'; } catch {}
   const el = document.createElement('div');
   el.id = 'stale-build-overlay';
-  el.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(8,8,10,0.94);display:flex;align-items:center;justify-content:center;padding:24px;';
+  el.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(8,8,10,0.97);display:flex;align-items:center;justify-content:center;padding:24px;pointer-events:auto;';
   el.innerHTML = `
     <div style="max-width:440px;text-align:center;background:#15161a;border:1px solid #3a3d45;border-radius:8px;padding:28px 26px;">
       <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:0.06em;color:#f0a830;margin-bottom:10px;">UPDATE REQUIRED</div>
       <div style="font-size:14px;color:#c8ccd4;line-height:1.6;margin-bottom:20px;">
-        A newer version of the app is running on your other devices. This page is out of date, so saving has been
-        <strong>paused here</strong> to protect your data from being overwritten with old information.<br><br>
-        Refresh to load the latest version. Any change you made in the last few seconds on this page may not have been saved — check after refreshing.
+        A newer version of the app is running on your other devices. This device is out of date, so it has been
+        <strong>locked</strong> — editing and saving are disabled here to protect your data.<br><br>
+        Tap Update to load the latest version.${cloudBuild ? ` <span style="color:#8a8f99;">(this device v1.${APP_BUILD}, latest v1.${cloudBuild})</span>` : ''}
       </div>
-      <button id="stale-build-refresh" style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;padding:12px 22px;border-radius:4px;border:none;background:#f0a830;color:#1a1205;cursor:pointer;">Refresh now</button>
+      <button id="stale-build-refresh" style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;padding:12px 22px;border-radius:4px;border:none;background:#f0a830;color:#1a1205;cursor:pointer;">Update now</button>
     </div>`;
   document.body.appendChild(el);
   const btn = document.getElementById('stale-build-refresh');
-  if (btn) btn.addEventListener('click', () => location.reload(true));
-  // Auto-refresh shortly after, in case the device is unattended.
-  setTimeout(() => { try { location.reload(true); } catch {} }, 15000);
+  if (btn) btn.addEventListener('click', _hardReloadForUpdate);
+  // Auto-update shortly after, in case the device is unattended.
+  setTimeout(_hardReloadForUpdate, 12000);
 }
 let _pendingSince = 0;   // when the current pending push first started (to detect a stuck push)
 let _pushInFlight = false;  // a cloud push transaction is currently running
@@ -14070,7 +14089,29 @@ function applyRestoreBlob(blob, opts) {
   if (Object.prototype.hasOwnProperty.call(blob, '_ordersVer')) state._ordersVer = blob._ordersVer || 0;
   if (Object.prototype.hasOwnProperty.call(blob, '_libraryVer')) state._libraryVer = blob._libraryVer || 0;
   if (Object.prototype.hasOwnProperty.call(blob, '_inventoryVer')) state._inventoryVer = blob._inventoryVer || 0;
-  state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
+  // Resolution/placement of a Part Needed card is ONE-WAY. Never let applying a
+  // blob (cloud, another device, or an out-of-order echo) revive an item this
+  // device already advanced — carry forward the MORE-progressed state per id.
+  // This makes resolved cards impossible to revive on this build even if the
+  // other device is stale or sends an older copy.
+  {
+    const _prevById = {};
+    for (const e of (Array.isArray(state.partsNeeded) ? state.partsNeeded : [])) {
+      if (e && e.id != null) _prevById[e.id] = e;
+    }
+    const incoming = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
+    state.partsNeeded = incoming.map(e => {
+      if (!e || e.id == null) return e;
+      const prev = _prevById[e.id];
+      if (!prev) return e;
+      let merged = e;
+      if (prev.resolvedAt && !e.resolvedAt) merged = Object.assign({}, merged, { resolvedAt: prev.resolvedAt });
+      if (prev.placedMachine && !e.placedMachine && !(merged.resolvedAt)) {
+        merged = Object.assign({}, merged, { placedMachine: prev.placedMachine, placedAt: prev.placedAt || merged.placedAt });
+      }
+      return merged;
+    });
+  }
   state.assignments = blob.assignments || {};
   if (Array.isArray(blob.priority)) {
     state.priority = { resin: blob.priority.map(p => ({...p, type: 'resin'})), fdm: [] };
