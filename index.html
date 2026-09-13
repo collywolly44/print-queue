@@ -5145,6 +5145,7 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="boot-progress-fill"></div>
     </div>
     <div class="boot-status" id="boot-status">Starting up…</div>
+    <div class="boot-version" id="boot-version" style="margin-top:14px;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.08em;color:var(--ink-faint);opacity:0.8;">v—</div>
   </div>
 </div>
 
@@ -5174,6 +5175,7 @@ body.mode-mobile .mobile-only { display: block; }
 <div class="cloud-status" id="cloud-status" hidden>
   <span class="cloud-dot"></span>
   <span class="cloud-label" id="cloud-label">Connecting…</span>
+  <span class="cloud-ver" id="cloud-ver" title="App version — must match on every device" style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.06em;color:var(--ink-faint);margin:0 4px;">v—</span>
   <button class="cloud-mode" id="cloud-mode" title="Toggle desktop / mobile mode">📱</button>
   <button class="cloud-signout" id="cloud-signout" title="Sign out">✕</button>
 </div>
@@ -5447,6 +5449,7 @@ body.mode-mobile .mobile-only { display: block; }
           <div class="gridiron-bar-user">
             <span class="gridiron-bar-dot"></span>
             <span id="gridiron-bar-name">—</span>
+            <span id="gridiron-bar-ver" style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.06em;opacity:0.7;margin-left:6px;">v—</span>
           </div>
           <button class="gridiron-signout" id="gridiron-signout" aria-label="Sign out">Sign out</button>
         </div>
@@ -5997,7 +6000,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 40;
+const APP_BUILD = 41;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6845,6 +6848,37 @@ function _mergeInventory(cloudInv, localInv, baseInv) {
 //     in the ancestor. If it WAS in the ancestor but is gone from cloud, another
 //     device deleted it → respect that (drop it). If it's not in the ancestor
 //     either, it's a local add → keep it.
+// Part Needed cards mutate IN PLACE as they progress: unplaced -> placed
+// (placedMachine/placedAt) -> resolved (resolvedAt). That progression is
+// ONE-WAY. Merge so the MORE-advanced copy always wins, regardless of clock or
+// _rev — this is what stops a stale device (or an old build) reverting a card
+// back to Paint/Unassigned. Same-progress ties fall back to _rev then cloud;
+// deletions (removed after being in the ancestor) are still respected.
+function _pnProgress(e) {
+  if (e && e.resolvedAt) return 2;
+  if (e && (e.placedMachine || e.placedAt)) return 1;
+  return 0;
+}
+function _mergePartsNeeded(cloudArr, localArr, baseArr) {
+  const byId = new Map();
+  for (const e of (cloudArr || [])) if (e && e.id != null) byId.set(e.id, e);
+  const baseIds = new Set();
+  for (const e of (baseArr || [])) if (e && e.id != null) baseIds.add(e.id);
+  for (const e of (localArr || [])) {
+    if (!e || e.id == null) continue;
+    const c = byId.get(e.id);
+    if (c) {
+      const pe = _pnProgress(e), pc = _pnProgress(c);
+      if (pe > pc) byId.set(e.id, e);
+      else if (pe === pc && (Number(e._rev) || 0) > (Number(c._rev) || 0)) byId.set(e.id, e);
+      // else keep cloud (more-advanced or higher-rev)
+    } else if (!baseIds.has(e.id)) {
+      byId.set(e.id, e);   // genuine local add
+    } // else respect deletion
+  }
+  return Array.from(byId.values());
+}
+
 function _mergeById(cloudArr, localArr, baseArr) {
   const byId = new Map();
   for (const e of (cloudArr || [])) if (e && e.id != null) byId.set(e.id, e);
@@ -9011,6 +9045,21 @@ if (document.readyState === 'loading') {
 } else {
   wirePaintDropZone();
 }
+
+// Stamp the app version into every visible badge so it's easy to confirm all
+// devices are on the SAME build (mismatched builds are behind most sync bugs).
+(function stampVersion() {
+  const label = 'v1.' + APP_BUILD;
+  const set = () => {
+    ['boot-version', 'cloud-ver', 'gridiron-bar-ver'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = label;
+    });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', set);
+  else set();
+  window.APP_VERSION = label;
+})();
 
 // Helper: find any SKU that uses a given part name (for printPlate sku lookup)
 function findFirstSkuUsingPart(partName) {
@@ -14537,6 +14586,16 @@ function _mergeWorkspace(cloud, localBlob, base) {
   // cloud's recorded build. Carry the highest build forward so a newer client's
   // marker can't be erased by an older one's write.
   const cloudBuild = Number(cloud._appBuild) || 0;
+  // AIRTIGHT STALE-BUILD GUARD: if THIS device is on an older build than what
+  // last wrote the cloud, refuse to let its data change anything — return the
+  // cloud unchanged (just carry the build forward). This is the data-layer
+  // backstop to the client-side freeze: an out-of-date device physically
+  // cannot push old-format/old-logic edits over newer data.
+  if ((Number(localBlob._appBuild) || 0) < cloudBuild) {
+    const keep = Object.assign({}, cloud);
+    keep._appBuild = cloudBuild;
+    return keep;
+  }
   const cloudVer = cloud._ver || 0, localVer = localBlob._ver || 0;
   // Is this device up to date with the cloud? If the cloud has moved on since
   // this device last synced, its "deletions" (keys/ids present in its ancestor
@@ -14554,7 +14613,7 @@ function _mergeWorkspace(cloud, localBlob, base) {
   merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, base ? base.countedParts : {});
   merged.assignments      = _mergeStrMap(cloud.assignments, localBlob.assignments, base ? base.assignments : {});
   merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, base ? base.orderEdits : []);
-  merged.partsNeeded      = _mergeById(cloud.partsNeeded, localBlob.partsNeeded, base ? base.partsNeeded : []);
+  merged.partsNeeded      = _mergePartsNeeded(cloud.partsNeeded, localBlob.partsNeeded, base ? base.partsNeeded : []);
   merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
   merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
   // Previously UNPROTECTED (bulk last-writer-wins) — these were reverting when a
