@@ -6000,7 +6000,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 46;
+const APP_BUILD = 47;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6038,6 +6038,7 @@ const state = {
   _libraryTs: 0, _librarySig: '', // change-stamp + signature for library (per-collection sync)
   _ver: 0, _ordersVer: 0, _libraryVer: 0, _inventoryVer: 0, // monotonic cloud-owned version counters (clock-free conflict resolution)
   partsNeeded: [],     // [{id, partName, type:'resin'|'fdm', addedAt, addedBy, resolvedAt|null}]
+  deletedNeeds: {},    // tombstones: partsNeeded id -> ISO delete time. Union-merged so a delete PROPAGATES + STAYS deleted across devices.
   priority: { resin: [], fdm: [] },  // separate lists per printer type
   assignments: {},     // rowKey -> machine name (only for resin queue)
   view: 'queue-resin',
@@ -6565,6 +6566,7 @@ function save() {
     partLocations: state.partLocations,
     recountPrevLoc: state.recountPrevLoc,
     partsNeeded: state.partsNeeded,
+    deletedNeeds: state.deletedNeeds || {},
     priority: state.priority,
     assignments: state.assignments,
     lastImport: state.lastImport,
@@ -6883,6 +6885,25 @@ function _pnProgress(e) {
 // Part Needed cards "don't work." Backfill a DETERMINISTIC id from content so
 // every device computes the SAME id (no cross-device duplication) and the item
 // becomes first-class. Items that already have an id are untouched.
+// Union two tombstone maps (need id -> ISO delete time). Keep every id (a
+// deletion recorded on ANY device wins and propagates), latest timestamp on
+// collision. Capped: drop the oldest once large so it can't grow forever.
+function _mergeTombstones(a, b) {
+  const out = {};
+  for (const m of [a || {}, b || {}]) {
+    for (const id of Object.keys(m)) {
+      if (!out[id] || String(m[id]) > String(out[id])) out[id] = m[id];
+    }
+  }
+  const ids = Object.keys(out);
+  const CAP = 5000;
+  if (ids.length > CAP) {
+    ids.sort((x, y) => String(out[x]).localeCompare(String(out[y])));  // oldest first
+    for (const id of ids.slice(0, ids.length - CAP)) delete out[id];
+  }
+  return out;
+}
+
 function _normalizePN(arr) {
   if (!Array.isArray(arr)) return arr;
   return arr.map(e => {
@@ -7366,7 +7387,9 @@ function load() {
     state._libraryTs = blob._libraryTs || 0; state._librarySig = blob._librarySig || cheapHash(JSON.stringify(state.library || {}));
     state._inventoryTs = blob._inventoryTs || 0; state._inventorySig = blob._inventorySig || cheapHash(JSON.stringify(state.inventory || {}));
     state._ver = blob._ver || 0; state._ordersVer = blob._ordersVer || 0; state._libraryVer = blob._libraryVer || 0; state._inventoryVer = blob._inventoryVer || 0;
-    state.partsNeeded = _normalizePN(Array.isArray(blob.partsNeeded) ? blob.partsNeeded : []);
+    state.deletedNeeds = (blob.deletedNeeds && typeof blob.deletedNeeds === 'object') ? blob.deletedNeeds : {};
+    state.partsNeeded = _normalizePN(Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [])
+                          .filter(n => !(n && state.deletedNeeds[n.id]));
     state.assignments = blob.assignments || {};
     state.completedOrders = Array.isArray(blob.completedOrders) ? blob.completedOrders : [];
     state.paintParts = blob.paintParts || {};
@@ -7917,6 +7940,7 @@ function buildQueue(typeFilter) {
   const needRows = [];
   for (const need of (state.partsNeeded || [])) {
     if (need.resolvedAt) continue;
+    if (state.deletedNeeds && need.id != null && state.deletedNeeds[need.id]) continue;  // tombstoned — deleted
     if (!need.placedAt) continue;        // skip un-placed items (still in sidebar)
     if (typeFilter && need.placedQueue !== typeFilter) continue;
     needRows.push({
@@ -10420,6 +10444,10 @@ function renderInventory() {
             delete state.countedParts[part];
             if (state.partLocations) delete state.partLocations[part];
             if (Array.isArray(state.partsNeeded)) {
+              state.partsNeeded = _normalizePN(state.partsNeeded);
+              if (!state.deletedNeeds) state.deletedNeeds = {};
+              const _nowDel = new Date().toISOString();
+              for (const n of state.partsNeeded) { if (n && n.partName === part && n.id != null) state.deletedNeeds[n.id] = _nowDel; }
               state.partsNeeded = state.partsNeeded.filter(n => n.partName !== part);
             }
             save();
@@ -12664,6 +12692,7 @@ function buildBackupBlob() {
     _inventoryTs: state._inventoryTs, _inventorySig: state._inventorySig,
     _ver: state._ver || 0, _ordersVer: state._ordersVer || 0, _libraryVer: state._libraryVer || 0, _inventoryVer: state._inventoryVer || 0,
     partsNeeded: state.partsNeeded,
+    deletedNeeds: state.deletedNeeds || {},
     priority: state.priority,
     assignments: state.assignments,
     lastImport: state.lastImport,
@@ -13503,6 +13532,8 @@ const PN = {
         const idx = state.partsNeeded.findIndex(n => n.id === id);
         if (idx === -1) return;
         const name = state.partsNeeded[idx].partName;
+        if (!state.deletedNeeds) state.deletedNeeds = {};
+        state.deletedNeeds[id] = new Date().toISOString();   // tombstone: propagates + stays deleted
         state.partsNeeded.splice(idx, 1);
         save();
         PN.renderSentToday();
@@ -14116,6 +14147,12 @@ function applyRestoreBlob(blob, opts) {
       if (e && e.id != null) _prevById[e.id] = e;
     }
     const incoming = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
+    // Adopt tombstones: union incoming with what we already have, so a deletion
+    // from either side sticks and can't be revived by the other.
+    if (Object.prototype.hasOwnProperty.call(blob, 'deletedNeeds')) {
+      state.deletedNeeds = _mergeTombstones(state.deletedNeeds, blob.deletedNeeds);
+    }
+    const _tomb = state.deletedNeeds || {};
     state.partsNeeded = _normalizePN(incoming).map(e => {
       if (!e || e.id == null) return e;
       const prev = _prevById[e.id];
@@ -14126,7 +14163,7 @@ function applyRestoreBlob(blob, opts) {
         merged = Object.assign({}, merged, { placedMachine: prev.placedMachine, placedAt: prev.placedAt || merged.placedAt });
       }
       return merged;
-    });
+    }).filter(n => !(n && _tomb[n.id]));   // never show a tombstoned card
   }
   state.assignments = blob.assignments || {};
   if (Array.isArray(blob.priority)) {
@@ -14678,7 +14715,9 @@ function _mergeWorkspace(cloud, localBlob, base) {
   merged.countedParts     = _mergeFlags(cloud.countedParts, localBlob.countedParts, base ? base.countedParts : {});
   merged.assignments      = _mergeStrMap(cloud.assignments, localBlob.assignments, base ? base.assignments : {});
   merged.orderEdits       = _mergeById(cloud.orderEdits, localBlob.orderEdits, base ? base.orderEdits : []);
-  merged.partsNeeded      = _mergePartsNeeded(cloud.partsNeeded, localBlob.partsNeeded, base ? base.partsNeeded : []);
+  merged.deletedNeeds     = _mergeTombstones(cloud.deletedNeeds, localBlob.deletedNeeds);
+  merged.partsNeeded      = _mergePartsNeeded(cloud.partsNeeded, localBlob.partsNeeded, base ? base.partsNeeded : [])
+                              .filter(n => !(n && merged.deletedNeeds[n.id]));  // drop anything tombstoned anywhere
   merged.completedOrders  = _mergeCompleted(cloud.completedOrders, localBlob.completedOrders);
   merged.inventoryHistory = _mergeInvHistory(cloud.inventoryHistory, localBlob.inventoryHistory);
   // Previously UNPROTECTED (bulk last-writer-wins) — these were reverting when a
