@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 37;
+const APP_BUILD = 39;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6285,6 +6285,7 @@ function cleanupFulfilledCustomOrders() {
         if (!name) continue;
         const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
         state.completedOrders.push({
+          uid: _uniqueId(),
           at: nowIso,
           partName: name,
           qty: (Number(e.qty) || 1) * per,
@@ -6323,6 +6324,15 @@ function cleanupFulfilledCustomOrders() {
 // stock-update screen, reset, delete) — NOT for automatic changes like
 // shipping subtractions or plate-yield deposits (those are already covered
 // by completedOrders + shippedHistory).
+// Monotonic-ish unique id for append-only log entries, so two entries created
+// in the SAME millisecond don't collide on their content-key and get dedup-
+// dropped by the union merge (that under-counted rapid same-part Dones).
+let _uidCounter = 0;
+function _uniqueId() {
+  _uidCounter = (_uidCounter + 1) % 100000;
+  return Date.now().toString(36) + '-' + _uidCounter.toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
+}
+
 function logInventoryChange(partName, before, after, reason) {
   if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
   const b = Number(before) || 0;
@@ -6332,6 +6342,7 @@ function logInventoryChange(partName, before, after, reason) {
     ? displayName(_fbUser.email)
     : '';
   state.inventoryHistory.push({
+    uid: _uniqueId(),
     at: new Date().toISOString(),
     partName,
     delta: a - b,
@@ -6508,6 +6519,7 @@ let _cloudPushTimer = null;
 let _cloudPushPending = false;
 let _lastLocalSavedAt = 0;   // most recent local save time this window knows about (cross-window coordination)
 let _localSeq = 0;           // monotonic counter, bumped on every local write — orders writes reliably even within the same millisecond
+let _lastCloudInvSnapshot = null;  // diagnostic: cloud inventory the last push transaction actually read
 let _staleBuild = false;     // true once we've seen a cloud payload written by a NEWER build than this one
 let _pushingUnsyncedWork = false;  // true while merging a device's genuinely unsynced edits (allows its base to be trusted)
 
@@ -6728,6 +6740,8 @@ function _mergeById(cloudArr, localArr, baseArr) {
   return Array.from(byId.values());
 }
 function _completedKey(c) {
+  // Prefer a per-entry unique id; fall back to content for legacy entries.
+  if (c && c.uid) return 'uid:' + c.uid;
   return [c.at, c.partName, c.sku, c.customer, c.kind, c.qty, c.qtyToDemand].join('|');
 }
 // Merge completedOrders as an append-only union (dedup by content key), so two
@@ -6745,6 +6759,7 @@ function _mergeCompleted(cloudC, localC) {
 // last-writer-wins push. Without this, a second device could drop just-logged
 // ledger entries (why repeated prints of one part showed only a single change).
 function _invHistKey(e) {
+  if (e && e.uid) return 'uid:' + e.uid;
   return [e.at, e.partName, e.delta, e.before, e.after, e.reason, e.who].join('|');
 }
 function _mergeInvHistory(cloudH, localH) {
@@ -6890,6 +6905,7 @@ function _doCloudPush(blob) {
             return s;
           }
           const cloud = transformKeys(encCurrent, fbDecodeKey);
+          _lastCloudInvSnapshot = Object.assign({}, cloud.inventory || {});
           const cloudVer = cloud._ver || 0, localVer = localBlob._ver || 0;
           basedOnCloud = cloudVer > localVer;
           const merged = _mergeWorkspace(cloud, localBlob, base);
@@ -6928,16 +6944,17 @@ function _doCloudPush(blob) {
             !_completedEqual(mergedBlob.completedOrders, localBlob.completedOrders) ||
             !_invHistEqual(mergedBlob.inventoryHistory, localBlob.inventoryHistory);
           if (window._syncDebug) {
-            const diffs = {};
             const bInv = (base && base.inventory) ? base.inventory : {};
             const lInv = localBlob.inventory || {};
             const mInv = mergedBlob.inventory || {};
+            const cInv = (typeof _lastCloudInvSnapshot === 'object' && _lastCloudInvSnapshot) ? _lastCloudInvSnapshot : {};
             const allP = new Set([...Object.keys(lInv), ...Object.keys(mInv)]);
+            const parts = [];
             for (const pn of allP) {
               const l = Number(lInv[pn] || 0), m = Number(mInv[pn] || 0);
-              if (l !== m) diffs[pn] = { base: Number(bInv[pn] || 0), local: l, merged: m };
+              if (l !== m) parts.push(`${pn}: base=${Number(bInv[pn]||0)} cloudRead=${Number(cInv[pn]||0)} local=${l} MERGED=${m}`);
             }
-            console.log('[sync] push done', { changed, superseded, pushSeq, localSeqNow: _localSeq, invDiffs: diffs });
+            console.log(`[sync] push done changed=${changed} superseded=${superseded} pushSeq=${pushSeq} localSeqNow=${_localSeq} | ${parts.length ? parts.join(' || ') : 'no inv change'}`);
           }
           if (changed && !superseded) {
             _suspendCloudWrites = true;
@@ -6948,10 +6965,32 @@ function _doCloudPush(blob) {
             // even when superseded. The committed blob IS what's now in the
             // cloud, so it's the correct new baseline; the NEXT push then
             // computes its delta from here and captures only genuinely new
-            // local changes. (Freezing the base on superseded — build 33 — was
-            // collapsing rapid same-part deposits: base stuck at the old value
-            // made later deltas net to zero, so only the first deposit synced.)
+            // local changes.
             _captureSyncBase(mergedBlob);
+            // ALSO advance this device's version counters to the committed
+            // cloud versions, WITHOUT doing the full re-render (which superseded
+            // deliberately skips to avoid reverting newer local work). Without
+            // this, local _ver stays behind the cloud's just-committed _ver, so
+            // the NEXT push sees localVer < cloudVer, decides "local is behind,"
+            // skips the delta merge, and takes cloud wholesale — dropping the
+            // deposit. This is the root cause of rapid-Done inventory loss.
+            state._ver = mergedBlob._ver || state._ver || 0;
+            state._ordersVer = mergedBlob._ordersVer || state._ordersVer || 0;
+            state._libraryVer = mergedBlob._libraryVer || state._libraryVer || 0;
+            state._inventoryVer = mergedBlob._inventoryVer || state._inventoryVer || 0;
+            // Persist ONLY the version counters into localStorage (no push, no
+            // _savedAt/_localSeq bump), so the next push — which reads localBlob
+            // from localStorage — sees the up-to-date versions and correctly
+            // treats this device as current.
+            try {
+              const raw2 = localStorage.getItem(STORAGE_KEY);
+              if (raw2) {
+                const b2 = JSON.parse(raw2);
+                b2._ver = state._ver; b2._ordersVer = state._ordersVer;
+                b2._libraryVer = state._libraryVer; b2._inventoryVer = state._inventoryVer;
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(b2));
+              }
+            } catch {}
           }
         }
       }
@@ -7558,7 +7597,7 @@ function buildQueue(typeFilter) {
   // inventory entries changes, or if any of the maps mutate, save() will
   // have already called invalidateBuildQueueCache(). This key just protects
   // against re-runs within a single tick.
-  const cacheKey = `${state.orders.length}|${Object.keys(state.library).length}|${Object.keys(state.inventory).length}|${(state.partsNeeded || []).length}|${Object.keys(state.paintParts || {}).length}`;
+  const cacheKey = `${state.orders.length}|${Object.keys(state.library).length}|${state._inventorySig || Object.keys(state.inventory).length}|${(state.partsNeeded || []).length}|${Object.keys(state.paintParts || {}).length}`;
   if (_buildQueueCache.key !== cacheKey) {
     _buildQueueCache = { key: cacheKey, byType: {} };
   }
@@ -8171,6 +8210,7 @@ function renderQueue(type) {
           // Log to completed history
           if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
           state.completedOrders.push({
+            uid: _uniqueId(),
             at: need.resolvedAt,
             partName: clicked.part,
             qty: 1,
@@ -8557,6 +8597,7 @@ function renderKanban(filtered, allVisible) {
           need.resolvedAt = new Date().toISOString();
           if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
           state.completedOrders.push({
+            uid: _uniqueId(),
             at: need.resolvedAt,
             partName: clicked.part,
             qty: 1,
@@ -8694,6 +8735,7 @@ function renderPaintRow(allKanbanRows) {
           need.resolvedAt = new Date().toISOString();
           if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
           state.completedOrders.push({
+            uid: _uniqueId(),
             at: need.resolvedAt,
             partName,
             qty: 1,
@@ -8969,6 +9011,7 @@ function renderPaintMobile() {
             need.resolvedAt = new Date().toISOString();
             if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
             state.completedOrders.push({
+              uid: _uniqueId(),
               at: need.resolvedAt,
               partName,
               qty: 1,
@@ -9140,6 +9183,7 @@ function printPlate(clicked, qtyOverride) {
     // Log this print to completedOrders history (for dashboard + history view)
     if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
     state.completedOrders.push({
+      uid: _uniqueId(),
       at: new Date().toISOString(),
       partName: part,
       qty,
