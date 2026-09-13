@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Print Queue">
 <meta name="theme-color" content="#0f1419">
@@ -6000,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 49;
+const APP_BUILD = 50;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6423,7 +6424,7 @@ function _compactInvEvents(events) {
     if (String(e.at) === String(ls.at) && String(e.id) <= String(ls.id)) return false;
     return true;
   });
-  const CAP = 12000;
+  const CAP = 4000;
   if (kept.length <= CAP) return kept;
   // Still huge: keep all baselines + the newest events up to the cap.
   const baselines = kept.filter(e => latestSet[e.part] && e.id === latestSet[e.part].id);
@@ -6598,6 +6599,17 @@ function save() {
     _localSeq++;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
   };
+  // Proactively bound the big history arrays EVERY save (not just on quota
+  // failure) so localStorage can't fill up. These are audit logs — recent
+  // entries are all that's practically useful, and a smaller blob also means
+  // far less cloud download bandwidth.
+  const _trim = (arr, keep) => (Array.isArray(arr) && arr.length > keep) ? arr.slice(-keep) : arr;
+  state.completedOrders  = _trim(state.completedOrders, 500);
+  state.inventoryHistory = _trim(state.inventoryHistory, 800);
+  state.shippedHistory   = _trim(state.shippedHistory, 300);
+  blob.completedOrders   = state.completedOrders;
+  blob.inventoryHistory  = state.inventoryHistory;
+  blob.shippedHistory    = state.shippedHistory;
   try {
     writeLocal();
   } catch (err) {
@@ -6608,11 +6620,11 @@ function save() {
       console.warn('localStorage quota hit — clearing snapshots and trimming history to recover.');
       // 1) Drop rolling snapshots (biggest, most expendable consumer)
       try { localStorage.removeItem(SNAPSHOT_KEY); } catch {}
-      // 2) Trim the long history arrays in BOTH state and the blob we're saving
+      // 2) Trim the long history arrays HARD in BOTH state and the blob
       const trim = (arr, keep) => Array.isArray(arr) ? arr.slice(-keep) : arr;
-      state.shippedHistory   = trim(state.shippedHistory, 1500);
-      state.inventoryHistory = trim(state.inventoryHistory, 3000);
-      state.completedOrders  = trim(state.completedOrders, 1500);
+      state.shippedHistory   = trim(state.shippedHistory, 150);
+      state.inventoryHistory = trim(state.inventoryHistory, 300);
+      state.completedOrders  = trim(state.completedOrders, 200);
       blob.shippedHistory    = state.shippedHistory;
       blob.inventoryHistory  = state.inventoryHistory;
       blob.completedOrders   = state.completedOrders;
@@ -7004,7 +7016,7 @@ function _mergeCompleted(cloudC, localC) {
   const seen = new Set(), out = [];
   for (const c of (cloudC || [])) { const k = _completedKey(c); if (!seen.has(k)) { seen.add(k); out.push(c); } }
   for (const c of (localC || [])) { const k = _completedKey(c); if (!seen.has(k)) { seen.add(k); out.push(c); } }
-  const CAP = 5000;
+  const CAP = 500;
   return out.length > CAP ? out.slice(out.length - CAP) : out;
 }
 // The inventory ledger is append-only like completedOrders — union it too, so a
@@ -7019,7 +7031,7 @@ function _mergeInvHistory(cloudH, localH) {
   const seen = new Set(), out = [];
   for (const e of (cloudH || [])) { const k = _invHistKey(e); if (!seen.has(k)) { seen.add(k); out.push(e); } }
   for (const e of (localH || [])) { const k = _invHistKey(e); if (!seen.has(k)) { seen.add(k); out.push(e); } }
-  const CAP = 8000;
+  const CAP = 800;
   return out.length > CAP ? out.slice(out.length - CAP) : out;
 }
 function _invHistEqual(a, b) {
@@ -14235,12 +14247,34 @@ function applyRestoreBlob(blob, opts) {
     // preserving versions, unless noPersist (the data already came FROM this
     // device's localStorage, i.e. another window wrote it).
     if (!(opts && opts.noPersist)) {
+      blob._savedAt = Date.now();
+      _lastLocalSavedAt = blob._savedAt;
+      const _persist = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
       try {
-        blob._savedAt = Date.now();
-        _lastLocalSavedAt = blob._savedAt;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
+        _persist();
       } catch (e) {
-        console.warn('Local persist of cloud data failed (quota?):', e);
+        // Over quota — trim the big history arrays (in state AND the blob we're
+        // storing) and retry, so an incoming cloud update never fails to
+        // persist (which was silently breaking live sync entirely).
+        const isQuota = e && (e.name === 'QuotaExceededError'
+          || e.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+          || /quota/i.test(String(e.message || '')));
+        if (isQuota) {
+          console.warn('Cloud-apply hit quota — trimming history and retrying.');
+          try { localStorage.removeItem(SNAPSHOT_KEY); } catch {}
+          const trim = (arr, keep) => Array.isArray(arr) ? arr.slice(-keep) : arr;
+          state.completedOrders  = trim(state.completedOrders, 300);
+          state.inventoryHistory = trim(state.inventoryHistory, 400);
+          state.shippedHistory   = trim(state.shippedHistory, 150);
+          blob.completedOrders   = state.completedOrders;
+          blob.inventoryHistory  = state.inventoryHistory;
+          blob.shippedHistory    = state.shippedHistory;
+          try { _persist(); } catch (e2) {
+            console.error('Still over quota after trimming (cloud data applied in memory, local copy skipped):', e2);
+          }
+        } else {
+          console.warn('Local persist of cloud data failed:', e);
+        }
       }
     } else {
       _lastLocalSavedAt = blob._savedAt || _lastLocalSavedAt;
@@ -14687,7 +14721,7 @@ function _mergeShipped(cloudS, localS) {
   const seen = new Set(), out = [];
   for (const e of (cloudS || [])) { const k = _shippedKey(e); if (!seen.has(k)) { seen.add(k); out.push(e); } }
   for (const e of (localS || [])) { const k = _shippedKey(e); if (!seen.has(k)) { seen.add(k); out.push(e); } }
-  const CAP = 5000;
+  const CAP = 300;
   return out.length > CAP ? out.slice(out.length - CAP) : out;
 }
 // Merge an object-valued map (paintParts: partName -> {at,qty,...}) by delta vs
