@@ -5997,7 +5997,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 39;
+const APP_BUILD = 40;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6024,7 +6024,8 @@ const LOCATION_LABELS = {
 const state = {
   orders: [],          // {id, date, sku, qty, customer, item}
   library: {},         // sku -> { name, parts: [{name,yield,type}], notes }
-  inventory: {},       // partName -> integer count on hand
+  inventory: {},       // partName -> integer count on hand (DERIVED from invEvents; never written directly)
+  invEvents: [],       // append-only event log: {id, part, op:'delta'|'set', amt, at, reason} — inventory is the fold of this
   countedParts: {},    // partName -> true (parts that have been counted at least once)
   trackedParts: {},    // partName -> true (parts the user is tracking in the Print Tracker tool)
   partLocations: {},   // partName -> 'gun_wall' | 'back_room' | 'shipping_side' (shared across SKUs)
@@ -6269,9 +6270,8 @@ function cleanupFulfilledCustomOrders() {
     for (const [name, need] of Object.entries(demand)) {
       remainingStock[name] = (remainingStock[name] || 0) - need;
       const before = Number(state.inventory[name] || 0);
-      const after = Math.max(0, before - need);
-      if (after === 0) delete state.inventory[name];
-      else state.inventory[name] = after;
+      _invDepositEvent(name, -need, 'custom-order-fulfilled');
+      const after = Number(state.inventory[name] || 0);
       // Log this deduction so the user can trace it in inventory history
       logInventoryChange(name, before, after, 'custom-order-fulfilled');
     }
@@ -6331,6 +6331,128 @@ let _uidCounter = 0;
 function _uniqueId() {
   _uidCounter = (_uidCounter + 1) % 100000;
   return Date.now().toString(36) + '-' + _uidCounter.toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
+}
+
+// ===== Event-sourced inventory =========================================
+// state.inventory is DERIVED, never written directly. Every change is an
+// immutable event appended to state.invEvents: { id, part, op, amt, at, reason }.
+// The count is the fold of the log. Because the log union-merges by id (like
+// completedOrders), no event is ever lost or duplicated — concurrent deposits
+// sum, a refresh can't double-count, and a stale device can't revert.
+function addInvEvent(part, op, amt, reason) {
+  if (!part) return;
+  if (!Array.isArray(state.invEvents)) state.invEvents = [];
+  state.invEvents.push({
+    id: _uniqueId(), part, op, amt: Number(amt) || 0,
+    at: new Date().toISOString(), reason: reason || '',
+  });
+  recomputeInventory();
+}
+function _invDepositEvent(part, qty, reason) { addInvEvent(part, 'delta', Number(qty) || 0, reason); }
+function _invSetEvent(part, value, reason) { addInvEvent(part, 'set', Number(value) || 0, reason); }
+
+// Fold the event log into state.inventory. Per part: start from latest 'set'
+// (by timestamp+id), add every 'delta' at/after it; no set → sum all deltas
+// from 0. Clamp at 0. Deltas are commutative so order is irrelevant.
+function foldInvEvents(events) {
+  events = Array.isArray(events) ? events : [];
+  const byPart = {};
+  for (const e of events) {
+    if (!e || !e.part) continue;
+    (byPart[e.part] = byPart[e.part] || []).push(e);
+  }
+  const inv = {};
+  for (const part of Object.keys(byPart)) {
+    const list = byPart[part];
+    let latestSet = null;
+    for (const e of list) {
+      if (e.op === 'set' && (!latestSet || String(e.at) > String(latestSet.at) ||
+          (String(e.at) === String(latestSet.at) && String(e.id) > String(latestSet.id)))) latestSet = e;
+    }
+    let total = latestSet ? (Number(latestSet.amt) || 0) : 0;
+    for (const e of list) {
+      if (e.op !== 'delta') continue;
+      if (latestSet) {
+        if (String(e.at) < String(latestSet.at)) continue;
+        if (String(e.at) === String(latestSet.at) && String(e.id) <= String(latestSet.id)) continue;
+      }
+      total += (Number(e.amt) || 0);
+    }
+    if (total < 0) total = 0;
+    if (total > 0) inv[part] = total;
+  }
+  return inv;
+}
+function recomputeInventory() {
+  state.inventory = foldInvEvents(state.invEvents);
+}
+
+// Union-merge the event log by id (like completedOrders). Never drops or dupes.
+function _mergeInvEvents(cloudE, localE) {
+  const seen = new Set(), out = [];
+  for (const e of (cloudE || [])) { if (e && e.id && !seen.has(e.id)) { seen.add(e.id); out.push(e); } }
+  for (const e of (localE || [])) { if (e && e.id && !seen.has(e.id)) { seen.add(e.id); out.push(e); } }
+  return _compactInvEvents(out);
+}
+// Safe compaction: a 'set' for a part supersedes everything before it, so any
+// delta/set timestamped at/before the latest set for that part no longer
+// affects the count and can be dropped. This never changes the computed totals
+// and never removes a live baseline. Only if STILL over a hard cap do we keep
+// the newest — and even then baselines (latest set per part) are always kept.
+function _compactInvEvents(events) {
+  events = Array.isArray(events) ? events : [];
+  const latestSet = {};
+  for (const e of events) {
+    if (!e || e.op !== 'set' || !e.part) continue;
+    const cur = latestSet[e.part];
+    if (!cur || String(e.at) > String(cur.at) || (String(e.at) === String(cur.at) && String(e.id) > String(cur.id))) {
+      latestSet[e.part] = e;
+    }
+  }
+  const kept = events.filter(e => {
+    if (!e || !e.part) return false;
+    const ls = latestSet[e.part];
+    if (!ls) return true;                 // no set for this part — keep everything
+    if (e.id === ls.id) return true;      // the baseline itself — always keep
+    // drop anything at/before the latest set (superseded); keep deltas after it
+    if (String(e.at) < String(ls.at)) return false;
+    if (String(e.at) === String(ls.at) && String(e.id) <= String(ls.id)) return false;
+    return true;
+  });
+  const CAP = 12000;
+  if (kept.length <= CAP) return kept;
+  // Still huge: keep all baselines + the newest events up to the cap.
+  const baselines = kept.filter(e => latestSet[e.part] && e.id === latestSet[e.part].id);
+  const rest = kept.filter(e => !(latestSet[e.part] && e.id === latestSet[e.part].id));
+  const room = Math.max(0, CAP - baselines.length);
+  return baselines.concat(rest.slice(rest.length - room));
+}
+function _invEventsEqual(a, b) {
+  a = a || []; b = b || [];
+  if (a.length !== b.length) return false;
+  const sa = new Set(a.map(e => e && e.id));
+  for (const e of b) if (!sa.has(e && e.id)) return false;
+  return true;
+}
+// On load/migration: if we have inventory counts but no event log, seed one
+// 'set' per part so nothing resets when upgrading to event-sourcing.
+// Convert a bare inventory map into migration 'set' events. Deterministic id
+// per part ('mig:'+part) and an epoch timestamp, so: (a) two devices migrating
+// the same part produce the SAME event (union to one, no duplication), and
+// (b) the baseline sits before any real delta, which then count on top.
+function _eventsFromMap(map) {
+  const out = [];
+  const inv = map || {};
+  for (const part of Object.keys(inv)) {
+    const v = Number(inv[part]) || 0;
+    if (v !== 0) out.push({ id: 'mig:' + part, part, op: 'set', amt: v, at: '1970-01-01T00:00:00.000Z', reason: 'migrate' });
+  }
+  return out;
+}
+function migrateInventoryToEvents() {
+  if (Array.isArray(state.invEvents) && state.invEvents.length > 0) { recomputeInventory(); return; }
+  state.invEvents = _eventsFromMap(state.inventory || {});
+  recomputeInventory();
 }
 
 function logInventoryChange(partName, before, after, reason) {
@@ -6405,6 +6527,9 @@ function cheapHash(str) {
 }
 
 function save() {
+  // Keep the inventory event log compact locally (drops only superseded events,
+  // never changes counts) so it can't grow unbounded on one device.
+  if (Array.isArray(state.invEvents)) state.invEvents = _compactInvEvents(state.invEvents);
   // Per-collection change stamps for orders & library. These bump ONLY when the
   // collection's content actually changes — so a device editing something else
   // (which stamps the whole-blob lastSync to "now") can NOT drag its stale
@@ -6426,7 +6551,8 @@ function save() {
   const blob = {
     orders: state.orders,
     library: state.library,
-    inventory: state.inventory,
+    inventory: state.inventory,          // derived cache (for old-build readers)
+    invEvents: state.invEvents || [],    // authoritative event log
     countedParts: state.countedParts,
     trackedParts: state.trackedParts,
     partLocations: state.partLocations,
@@ -6939,6 +7065,7 @@ function _doCloudPush(blob) {
             JSON.stringify(mergedBlob.priority || {}) !== JSON.stringify(localBlob.priority || {}) ||
             JSON.stringify(mergedBlob.partLocations || {}) !== JSON.stringify(localBlob.partLocations || {}) ||
             !_invEqual(mergedBlob.inventory, localBlob.inventory) ||
+            !_invEventsEqual(mergedBlob.invEvents, localBlob.invEvents) ||
             !_byIdEqual(mergedBlob.orderEdits, localBlob.orderEdits) ||
             !_byIdEqual(mergedBlob.partsNeeded, localBlob.partsNeeded) ||
             !_completedEqual(mergedBlob.completedOrders, localBlob.completedOrders) ||
@@ -7152,7 +7279,8 @@ function load() {
     const blob = JSON.parse(raw);
     state.orders = blob.orders || [];
     state.library = blob.library || {};
-    state.inventory = blob.inventory || {};
+    state.inventory = blob.inventory || {};   // cache; authoritative value re-derived below
+    state.invEvents = Array.isArray(blob.invEvents) ? blob.invEvents : [];
     state.countedParts = blob.countedParts || {};
     state.trackedParts = blob.trackedParts || {};
     state.partLocations = blob.partLocations || {};
@@ -9165,8 +9293,8 @@ function printPlate(clicked, qtyOverride) {
   const qtyToDemand = Math.min(qty, unmetDemand);
 
   if (qty > 0) {
-    const newStock = Number(state.inventory[part] || 0) + qty;
-    state.inventory[part] = newStock;
+    _invDepositEvent(part, qty, 'print');
+    const newStock = Number(state.inventory[part] || 0);
     logInventoryChange(part, priorStock, newStock, 'print');  // full audit trail
     if (window._syncDebug) {
       console.log(`[done] ${part}: ${priorStock} +${qty} = ${newStock}`);
@@ -10119,8 +10247,7 @@ function renderInventory() {
       if (raw === '') return; // empty doesn't mark counted; the user hasn't entered anything
       const n = Math.max(0, Math.floor(Number(raw) || 0));
       const before = Number(state.inventory[part] || 0);
-      if (n === 0) delete state.inventory[part];
-      else state.inventory[part] = n;
+      _invSetEvent(part, n, 'inventory-edit');
       markCounted(part); // auto-mark counted on any numeric entry
       logInventoryChange(part, before, n, 'inventory-edit');
       save();
@@ -10196,7 +10323,7 @@ function renderInventory() {
             }
             // Strip inventory, location, counted flag, and any pending Part Needed
             const beforeStock = Number(state.inventory[part] || 0);
-            delete state.inventory[part];
+            _invSetEvent(part, 0, 'delete');
             logInventoryChange(part, beforeStock, 0, 'delete');
             delete state.countedParts[part];
             if (state.partLocations) delete state.partLocations[part];
@@ -12281,8 +12408,7 @@ function importCSV(text) {
       if (have - sub < 0) {
         shippedShortfalls[part] = (shippedShortfalls[part] || 0) + (sub - have);
       }
-      if (next <= 0) delete state.inventory[part];
-      else state.inventory[part] = next;
+      _invDepositEvent(part, -sub, 'csv-ship');
       shippedSubtractions[part] = (shippedSubtractions[part] || 0) + sub;
     }
   }
@@ -12435,7 +12561,8 @@ function buildBackupBlob() {
   return {
     orders: state.orders,
     library: state.library,
-    inventory: state.inventory,
+    inventory: state.inventory,          // derived cache (for old-build readers)
+    invEvents: state.invEvents || [],    // authoritative event log
     countedParts: state.countedParts,
     trackedParts: state.trackedParts,
     partLocations: state.partLocations,
@@ -12921,10 +13048,10 @@ document.getElementById('btn-resort-inventory').addEventListener('click', () => 
     for (const [name, per] of Object.entries(perPart)) {
       const delta = sign * qty * per;
       const before = Number(state.inventory[name] || 0);
-      const after = Math.max(0, before + delta);
+      if (delta === 0) continue;
+      _invDepositEvent(name, delta, 'sku-adjust');
+      const after = Number(state.inventory[name] || 0);
       if (after === before) continue;
-      if (after === 0) delete state.inventory[name];
-      else state.inventory[name] = after;
       markCounted(name);
       logInventoryChange(name, before, after, 'sku-adjust');
       changes.push({ name, before, after, delta: after - before });
@@ -13141,8 +13268,7 @@ const WT = {
     const part = this.parts[this.idx];
     const n = Math.max(0, Math.floor(Number(this.pendingValue) || 0));
     const before = Number(state.inventory[part] || 0);
-    if (n === 0) delete state.inventory[part];
-    else state.inventory[part] = n;
+    _invSetEvent(part, n, 'walkthrough');
     markCounted(part);
     logInventoryChange(part, before, n, 'walkthrough');
     save();
@@ -13412,8 +13538,7 @@ const MS = {
     if (raw === '') { toast('Enter a number', 'error'); return; }
     const n = Math.max(0, Math.floor(Number(raw) || 0));
     const before = Number(state.inventory[partName] || 0);
-    if (n === 0) delete state.inventory[partName];
-    else state.inventory[partName] = n;
+    _invSetEvent(partName, n, 'manual-stock');
     markCounted(partName);
     logInventoryChange(partName, before, n, 'manual-stock');
     save();
@@ -13855,7 +13980,15 @@ function applyRestoreBlob(blob, opts) {
   const fromCloud = opts && opts.fromCloud;
   state.orders = blob.orders || [];
   state.library = blob.library || {};
-  state.inventory = blob.inventory || {};
+  // Inventory is event-sourced: adopt the incoming event log (or migrate from a
+  // bare inventory map in an older blob), then re-derive the count.
+  if (Array.isArray(blob.invEvents)) {
+    state.invEvents = blob.invEvents;
+    recomputeInventory();
+  } else {
+    state.inventory = blob.inventory || {};
+    migrateInventoryToEvents();   // seed events from the bare map so future syncs are event-based
+  }
   state.countedParts = blob.countedParts || {};
   state.trackedParts = blob.trackedParts || {};
   // partLocations: if the incoming blob doesn't have the field at all (e.g.
@@ -14438,16 +14571,16 @@ function _mergeWorkspace(cloud, localBlob, base) {
   merged.orders = _o.value; merged._ordersVer = _o.ver; merged._ordersSig = _o.sig;
   const _l = _pickFieldVer(cloud, localBlob, mergeBase, 'library', '_libraryVer', '_librarySig');
   merged.library = _l.value; merged._libraryVer = _l.ver; merged._librarySig = _l.sig;
-  if (base && localIsCurrent) {
-    // Safe delta merge against the real ancestor.
-    merged.inventory = _mergeInventory(cloud.inventory, localBlob.inventory, base.inventory);
-    merged._inventoryVer = _pickFieldVer(cloud, localBlob, base, 'inventory', '_inventoryVer', '_inventorySig').ver;
-  } else {
-    // No ancestor: pick wholesale by version (ties keep cloud). NEVER delta
-    // here — a null/empty base would double every count.
-    const _i = _pickFieldVer(cloud, localBlob, null, 'inventory', '_inventoryVer', '_inventorySig');
-    merged.inventory = _i.value; merged._inventoryVer = _i.ver;
-  }
+  // Inventory is EVENT-SOURCED: union the event logs by id (never drops/dupes),
+  // then derive the count. This is what makes concurrent deposits sum, refreshes
+  // not double-count, and stale devices unable to revert — the delta-merge is
+  // gone. If a side lacks invEvents (old blob) fall back to migrating its map.
+  const cloudEvents = Array.isArray(cloud.invEvents) ? cloud.invEvents
+    : _eventsFromMap(cloud.inventory);
+  const localEvents = Array.isArray(localBlob.invEvents) ? localBlob.invEvents
+    : _eventsFromMap(localBlob.inventory);
+  merged.invEvents = _mergeInvEvents(cloudEvents, localEvents);
+  merged.inventory = foldInvEvents(merged.invEvents);
   merged._inventorySig = cheapHash(JSON.stringify(merged.inventory || {}));
   merged._ver = Math.max(cloudVer, localVer) + 1;
   merged._appBuild = Math.max(cloudBuild, APP_BUILD);
@@ -14512,13 +14645,6 @@ async function pullFromCloudOnce() {
     // or the sync base — this device may hold un-pushed work, and destroying
     // the local copy here would lose it permanently on refresh.
     if (cloudBlob && checkBuildGate(cloudBlob)) {
-      // Safety net: preserve this device's local copy under its own key BEFORE
-      // showing cloud data, so any un-pushed work is recoverable even if
-      // something later overwrites localStorage.
-      try {
-        const lr = localStorage.getItem(STORAGE_KEY);
-        if (lr) localStorage.setItem('print_queue_prerefresh_backup_v1', lr);
-      } catch {}
       _suspendCloudWrites = true;
       const roBlob = Object.assign({}, cloudBlob); delete roBlob._writeToken;
       applyRestoreBlob(roBlob, { fromCloud: true, noPersist: true, keepUnsynced: true });
@@ -14530,22 +14656,7 @@ async function pullFromCloudOnce() {
     const cloudTime = cloudBlob && cloudBlob.lastSync ? new Date(cloudBlob.lastSync).getTime() : 0;
 
     const localRaw = localStorage.getItem(STORAGE_KEY);
-    let localBlob = localRaw ? JSON.parse(localRaw) : null;
-    // RECOVERY: if a previous page-load was blocked by the stale-build gate, it
-    // stashed this device's local copy. Prefer whichever copy is further along
-    // so any work that hadn't pushed before the forced refresh is still merged
-    // into the cloud below instead of being silently dropped.
-    try {
-      const bk = localStorage.getItem('print_queue_prerefresh_backup_v1');
-      if (bk) {
-        const bkBlob = JSON.parse(bk);
-        if (bkBlob && (!localBlob || (bkBlob._ver || 0) >= (localBlob._ver || 0))) {
-          localBlob = bkBlob;
-          console.warn('Recovered pre-refresh local data for merge.');
-        }
-        localStorage.removeItem('print_queue_prerefresh_backup_v1');
-      }
-    } catch {}
+    const localBlob = localRaw ? JSON.parse(localRaw) : null;
     const localTime = localBlob && localBlob.lastSync ? new Date(localBlob.lastSync).getTime() : 0;
 
     // Decide direction:
@@ -14864,6 +14975,7 @@ async function doSignOut() {
 // BOOT
 // ============================================================
 load();
+migrateInventoryToEvents();   // event-source inventory (seeds from existing counts on first run)
 renderQueue();
 renderSidebarCounts();
 // Default view: Inventory on mobile (where Part Needed and Walk Through live),
