@@ -6000,7 +6000,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 41;
+const APP_BUILD = 42;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6875,6 +6875,14 @@ function _mergePartsNeeded(cloudArr, localArr, baseArr) {
     } else if (!baseIds.has(e.id)) {
       byId.set(e.id, e);   // genuine local add
     } // else respect deletion
+  }
+  // DELETION PASS: an id present in the ancestor but gone from local means this
+  // device removed the card — drop it from the result. (Was missing, so deleted
+  // cards kept coming back from the cloud copy.)
+  const localIds = new Set();
+  for (const e of (localArr || [])) if (e && e.id != null) localIds.add(e.id);
+  for (const id of baseIds) {
+    if (!localIds.has(id)) byId.delete(id);
   }
   return Array.from(byId.values());
 }
@@ -14586,12 +14594,12 @@ function _mergeWorkspace(cloud, localBlob, base) {
   // cloud's recorded build. Carry the highest build forward so a newer client's
   // marker can't be erased by an older one's write.
   const cloudBuild = Number(cloud._appBuild) || 0;
-  // AIRTIGHT STALE-BUILD GUARD: if THIS device is on an older build than what
-  // last wrote the cloud, refuse to let its data change anything — return the
-  // cloud unchanged (just carry the build forward). This is the data-layer
-  // backstop to the client-side freeze: an out-of-date device physically
-  // cannot push old-format/old-logic edits over newer data.
-  if ((Number(localBlob._appBuild) || 0) < cloudBuild) {
+  // AIRTIGHT STALE-BUILD GUARD: if THIS RUNNING BUILD is older than what last
+  // wrote the cloud, refuse to let its data change anything — return the cloud
+  // unchanged. Uses the runtime APP_BUILD (the code actually executing), NOT the
+  // stored blob (which carries no build and would always look "older", wrongly
+  // dropping every local edit on a single device).
+  if (APP_BUILD < cloudBuild) {
     const keep = Object.assign({}, cloud);
     keep._appBuild = cloudBuild;
     return keep;
