@@ -6000,7 +6000,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 42;
+const APP_BUILD = 43;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -14851,6 +14851,15 @@ window.addEventListener('beforeunload', flushPendingWork);
 // applies genuinely newer data and merges when there's un-pushed local work,
 // so this is always safe and cheap (a single read that no-ops if unchanged).
 setInterval(() => {
+  // Clear a pending push that's been stuck too long (a transaction that never
+  // completed — iOS background-kill, network loss). Left set, it blocks the
+  // resync and the listener guard, freezing the device. The retry cycle re-fires
+  // from any later save; here we just stop the stale flag from blocking reads.
+  if (_cloudPushPending && (Date.now() - (_pendingSince || 0)) > 20000) {
+    if (window._syncDebug) console.log('[sync] clearing stuck pending push flag');
+    _cloudPushPending = false;
+    _pushInFlight = false;
+  }
   if (document.visibilityState === 'visible') resyncFromCloud();
 }, 5000);
 
@@ -14960,9 +14969,21 @@ function subscribeWorkspace() {
     // applies the merged result. Preserves local edits AND recovers a device
     // that would otherwise go deaf if its push were stuck failing.
     if (_cloudPushPending || hasUnsyncedFlag()) {
-      if (window._syncDebug) console.log('[sync] listener: unsynced/stuck → merge-push instead of overwrite');
-      scheduleCloudPush(null);
-      return;
+      const stuckMs = Date.now() - (_pendingSince || 0);
+      if (stuckMs < 15000) {
+        // Fresh un-pushed work: prefer a merge-push so we don't overwrite it.
+        if (window._syncDebug) console.log('[sync] listener: fresh unsynced → merge-push instead of overwrite');
+        scheduleCloudPush(null);
+        return;
+      }
+      // Stuck > 15s (a push that never completed — common on iOS Safari after a
+      // background-kill). Do NOT keep discarding live updates forever, or the
+      // phone goes permanently deaf and stale (resolved cards revive, no live
+      // sync). Clear the stuck pending flag and fall through to APPLY the cloud
+      // update. We keep the unsynced flag so any genuinely un-pushed local work
+      // still gets a push cycle — but the UI now reflects reality.
+      if (window._syncDebug) console.log('[sync] listener: STUCK ' + stuckMs + 'ms → applying cloud anyway');
+      _cloudPushPending = false;
     }
     // Otherwise it came from another device (or another tab). Apply it.
     try {
