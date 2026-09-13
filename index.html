@@ -6000,7 +6000,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 48;
+const APP_BUILD = 49;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -15088,62 +15088,33 @@ function subscribeWorkspace() {
     // echo — ignore it (covers rapid pushes where the latest token moved on).
     if (raw && raw._writeToken &&
         (raw._writeToken === _localWriteToken || _recentWriteTokens.includes(raw._writeToken))) return;
-    // If a push is already pending and HEALTHY (started recently), just return:
-    // that push reads the freshest cloud (which includes this incoming update)
-    // when it fires, so it already absorbs it — no need to pile on another push
-    // (avoids a re-push storm when 5 devices are all active).
-    if (_cloudPushPending && (Date.now() - _pendingSince) < 8000) return;
-    // Otherwise, if we have un-pushed local work (a stuck pending push, or the
-    // unsynced flag set), don't overwrite local — merge instead. A push
-    // reconciles local against the freshest cloud (incl. this update) and
-    // applies the merged result. Preserves local edits AND recovers a device
-    // that would otherwise go deaf if its push were stuck failing.
+    // Decode and gate on VERSION, not on the fragile pending/unsynced ladder.
+    const blob = transformKeys(raw, fbDecodeKey);
+    delete blob._writeToken;
+    // Build gate: a newer build wrote this → we're outdated, lock + refresh.
+    if (checkBuildGate(blob)) return;
+    const incomingVer = blob._ver || 0;
+    const localRaw = localStorage.getItem(STORAGE_KEY);
+    const localBlobNow = localRaw ? JSON.parse(localRaw) : null;
+    const localVerNow = localBlobNow ? (localBlobNow._ver || 0) : 0;
+    // Not newer than what we already have → it's our own echo or an out-of-order
+    // delivery. Nothing to do.
+    if (incomingVer > 0 && localVerNow > 0 && incomingVer <= localVerNow) return;
+    // Genuinely newer cloud data. If WE have un-pushed local work, merge it up
+    // (the push reconciles local against the freshest cloud — which includes
+    // this update — and applies the merged result, preserving our edits). If we
+    // have nothing pending, apply the newer cloud DIRECTLY so the other device's
+    // edit shows live. Either way the update is never silently dropped.
     if (_cloudPushPending || hasUnsyncedFlag()) {
-      const stuckMs = Date.now() - (_pendingSince || 0);
-      if (stuckMs < 15000) {
-        // Fresh un-pushed work: prefer a merge-push so we don't overwrite it.
-        if (window._syncDebug) console.log('[sync] listener: fresh unsynced → merge-push instead of overwrite');
-        scheduleCloudPush(null);
-        return;
-      }
-      // Stuck > 15s (a push that never completed — common on iOS Safari after a
-      // background-kill). Do NOT keep discarding live updates forever, or the
-      // phone goes permanently deaf and stale (resolved cards revive, no live
-      // sync). Clear the stuck pending flag and fall through to APPLY the cloud
-      // update. We keep the unsynced flag so any genuinely un-pushed local work
-      // still gets a push cycle — but the UI now reflects reality.
-      if (window._syncDebug) console.log('[sync] listener: STUCK ' + stuckMs + 'ms → applying cloud anyway');
-      _cloudPushPending = false;
+      if (window._syncDebug) console.log('[sync] listener: local pending → merge-push (ver ' + incomingVer + ')');
+      scheduleCloudPush(null);
+      return;
     }
-    // Otherwise it came from another device (or another tab). Apply it.
     try {
-      const blob = transformKeys(raw, fbDecodeKey);
-      // Strip the internal token before applying
-      delete blob._writeToken;
-      // Build gate: if this update came from a NEWER build, our sync logic is
-      // outdated — freeze writes and force a refresh rather than risk a stale
-      // overwrite.
-      if (checkBuildGate(blob)) return;
-      // Version guard: ignore an incoming update whose cloud-owned version is
-      // LOWER than what we already have (a rare out-of-order delivery). Clock-
-      // free — no wall-clock comparison, so device skew can't matter.
-      const incomingVer = blob._ver || 0;
-      const localRaw = localStorage.getItem(STORAGE_KEY);
-      const localBlobNow = localRaw ? JSON.parse(localRaw) : null;
-      const localVerNow = localBlobNow ? (localBlobNow._ver || 0) : 0;
-      if (incomingVer > 0 && localVerNow > 0 && incomingVer < localVerNow) {
-        console.warn('Ignoring lower-version cloud update:', incomingVer, '<', localVerNow);
-        scheduleCloudPush(null);
-        return;
-      }
       _suspendCloudWrites = true;
-      if (window._syncDebug) console.log('[sync] listener APPLYING foreign update',
-        { incomingTime: blob.lastSync, localTime: localBlobNow && localBlobNow.lastSync,
-          token: raw._writeToken, tokenWasOurs: _recentWriteTokens.includes(raw._writeToken),
-          invKeys: Object.keys(blob.inventory||{}).length });
+      if (window._syncDebug) console.log('[sync] listener APPLYING foreign update ver ' + incomingVer + ' (local ' + localVerNow + ')');
       applyRestoreBlob(blob, { fromCloud: true });
       _suspendCloudWrites = false;
-      // Subtle hint instead of a noisy toast on every echo
       cloudStatus('connected', _fbUser ? `${displayName(_fbUser.email)} · synced` : "Online");
       setTimeout(() => {
         if (_fbUser) cloudStatus("connected", displayName(_fbUser.email));
