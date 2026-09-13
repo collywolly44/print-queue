@@ -6000,7 +6000,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 45;
+const APP_BUILD = 46;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6878,7 +6878,22 @@ function _pnProgress(e) {
   if (e && (e.placedMachine || e.placedAt)) return 1;
   return 0;
 }
+// Legacy items (added by old builds) may have NO id. Both the Done/resolve
+// handler (find by id) and the merges (skip id==null) then ignore them — so old
+// Part Needed cards "don't work." Backfill a DETERMINISTIC id from content so
+// every device computes the SAME id (no cross-device duplication) and the item
+// becomes first-class. Items that already have an id are untouched.
+function _normalizePN(arr) {
+  if (!Array.isArray(arr)) return arr;
+  return arr.map(e => {
+    if (!e || e.id != null) return e;
+    const key = String(e.partName || e.name || '') + '|' + String(e.addedAt || '') + '|' + String(e.type || '');
+    return Object.assign({}, e, { id: 'pn-legacy-' + cheapHash(key) });
+  });
+}
+
 function _mergePartsNeeded(cloudArr, localArr, baseArr) {
+  cloudArr = _normalizePN(cloudArr); localArr = _normalizePN(localArr); baseArr = _normalizePN(baseArr);
   const byId = new Map();
   for (const e of (cloudArr || [])) if (e && e.id != null) byId.set(e.id, e);
   const baseIds = new Set();
@@ -6907,6 +6922,7 @@ function _mergePartsNeeded(cloudArr, localArr, baseArr) {
 }
 
 function _mergeById(cloudArr, localArr, baseArr) {
+  cloudArr = _normalizePN(cloudArr); localArr = _normalizePN(localArr); baseArr = _normalizePN(baseArr);
   const byId = new Map();
   for (const e of (cloudArr || [])) if (e && e.id != null) byId.set(e.id, e);
   const baseIds = new Set();
@@ -7350,7 +7366,7 @@ function load() {
     state._libraryTs = blob._libraryTs || 0; state._librarySig = blob._librarySig || cheapHash(JSON.stringify(state.library || {}));
     state._inventoryTs = blob._inventoryTs || 0; state._inventorySig = blob._inventorySig || cheapHash(JSON.stringify(state.inventory || {}));
     state._ver = blob._ver || 0; state._ordersVer = blob._ordersVer || 0; state._libraryVer = blob._libraryVer || 0; state._inventoryVer = blob._inventoryVer || 0;
-    state.partsNeeded = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
+    state.partsNeeded = _normalizePN(Array.isArray(blob.partsNeeded) ? blob.partsNeeded : []);
     state.assignments = blob.assignments || {};
     state.completedOrders = Array.isArray(blob.completedOrders) ? blob.completedOrders : [];
     state.paintParts = blob.paintParts || {};
@@ -14096,11 +14112,11 @@ function applyRestoreBlob(blob, opts) {
   // other device is stale or sends an older copy.
   {
     const _prevById = {};
-    for (const e of (Array.isArray(state.partsNeeded) ? state.partsNeeded : [])) {
+    for (const e of _normalizePN(Array.isArray(state.partsNeeded) ? state.partsNeeded : [])) {
       if (e && e.id != null) _prevById[e.id] = e;
     }
     const incoming = Array.isArray(blob.partsNeeded) ? blob.partsNeeded : [];
-    state.partsNeeded = incoming.map(e => {
+    state.partsNeeded = _normalizePN(incoming).map(e => {
       if (!e || e.id == null) return e;
       const prev = _prevById[e.id];
       if (!prev) return e;
