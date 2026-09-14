@@ -6001,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 53;
+const APP_BUILD = 54;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -14858,13 +14858,23 @@ function _attachListenersV2() {
     _lastPushedMetaSig = _metaSig(); _afterCloudApply();
   });
 }
+// Called by every node listener. Coalesce into ONE render+persist per burst —
+// otherwise the ~8 listeners (and any push echo) each triggered a full save() +
+// full re-render, which tore down the DOM repeatedly (Done-button flicker) and
+// bogged the machine down.
+let _applyTimer = null;
 function _afterCloudApply() {
+  clearTimeout(_applyTimer);
+  _applyTimer = setTimeout(_doAfterCloudApply, 150);
+}
+function _doAfterCloudApply() {
   try { invalidateBuildQueueCache(); } catch {}
   _sidebarQueueCounts.resin = null; _sidebarQueueCounts.fdm = null;
   // Persist the applied cloud data to localStorage so a reload reflects it.
-  // _applyingCloud is still true here, so save()'s cloudSyncPush() no-ops — no
-  // echo back to the cloud.
+  // _applyingCloud may be false by now (debounced), so guard the push flag too.
+  const wasApplying = _applyingCloud; _applyingCloud = true;
   try { save(); } catch (e) { console.warn('sync2 local persist:', e); }
+  _applyingCloud = wasApplying;
   try {
     renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
     if (typeof renderHistory === 'function') renderHistory();
