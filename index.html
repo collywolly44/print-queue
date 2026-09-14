@@ -6001,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 50;
+const APP_BUILD = 51;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6654,9 +6654,9 @@ function save() {
   _sidebarQueueCounts.resin = null;
   _sidebarQueueCounts.fdm = null;
   if (typeof MS !== 'undefined' && MS.invalidateCache) { try { MS.invalidateCache(); } catch {} }
-  // Push to cloud if we're connected and signed in. This is the critical path
-  // for cross-device sync and must ALWAYS run, even if local storage failed.
-  scheduleCloudPush(blob);
+  // Push to cloud via the per-collection sync (v2): only the changed pieces are
+  // written; a device never uploads a whole blob, so stale data can't overwrite.
+  cloudSyncPush();
 }
 
 // Debounced cloud push. Combines rapid edits (typing, +/- clicks, etc.) into
@@ -14566,9 +14566,7 @@ async function initFirebase() {
         document.getElementById('auth-overlay').classList.add('hidden');
         cloudStatus("connecting", displayName(user.email));
         bootStatus('Syncing with cloud…');
-        await pullFromCloudOnce();
-        watchCloudConnection();
-        // Cloud pull done — safe to hide the boot overlay
+        await initSyncV2();
         hideBootOverlay();
       } else {
         document.getElementById('auth-overlay').classList.remove('hidden');
@@ -14698,6 +14696,214 @@ function transformKeys(value, fn) {
     return out;
   }
   return value;
+}
+
+// ============================================================================
+// SYNC v2 — per-collection nodes, one small operation per action, NO bulk
+// overwrite. Writes to a SEPARATE node ('workspace2') so the old build-50 blob
+// at 'workspace' is left untouched (clean rollback). A device only ever writes
+// the ONE thing it changed, so stale data can never overwrite newer.
+// ============================================================================
+const WS2 = 'workspace2';
+function _node(path) { return window._fb.ref(_fbDb, WS2 + '/' + path); }
+let _syncReadyV2 = false;
+let _pushedInvEventIds = new Set();
+let _pushedLogKeys = new Set();
+let _lastPushedNeeds = {};
+let _lastPushedOrdersSig = '', _lastPushedLibrarySig = '', _lastPushedMetaSig = '';
+let _applyingCloud = false;
+let _syncPushTimer = null;
+
+function _blobFromState() {
+  return {
+    orders: state.orders, library: state.library,
+    invEvents: state.invEvents || [], partsNeeded: state.partsNeeded || [],
+    completedOrders: state.completedOrders || [], inventoryHistory: state.inventoryHistory || [],
+    shippedHistory: state.shippedHistory || [],
+    assignments: state.assignments || {}, paintParts: state.paintParts || {},
+    priority: state.priority || { resin: [], fdm: [] }, countedParts: state.countedParts || {},
+    deletedNeeds: state.deletedNeeds || {}, trackedParts: state.trackedParts || {},
+    partLocations: state.partLocations || {}, recountPrevLoc: state.recountPrevLoc || {},
+    overdueStandard: state.overdueStandard || 18, overdueVehicle: state.overdueVehicle || 28,
+    lastImport: state.lastImport || null,
+  };
+}
+function _metaFromState() {
+  const b = _blobFromState();
+  return { assignments: b.assignments, paintParts: b.paintParts, priority: b.priority,
+    countedParts: b.countedParts, deletedNeeds: b.deletedNeeds, trackedParts: b.trackedParts,
+    partLocations: b.partLocations, recountPrevLoc: b.recountPrevLoc,
+    overdueStandard: b.overdueStandard, overdueVehicle: b.overdueVehicle,
+    lastImport: b.lastImport, appBuild: APP_BUILD };
+}
+function _metaSig() {
+  const m = _metaFromState();
+  return cheapHash(JSON.stringify([m.assignments, m.paintParts, m.priority, m.countedParts,
+    m.deletedNeeds, m.trackedParts, m.partLocations, m.recountPrevLoc, m.overdueStandard,
+    m.overdueVehicle, m.lastImport]));
+}
+
+function blobToNodes(blob) {
+  const b = blob || {};
+  const nodes = { orders: {}, library: {}, invEvents: {}, partsNeeded: {},
+                  completed: {}, invHistory: {}, shipped: {}, meta: {} };
+  for (const o of (b.orders || [])) { const id = o && (o.orderId || o.id); if (id != null) nodes.orders[String(id)] = o; }
+  for (const sku of Object.keys(b.library || {})) nodes.library[sku] = b.library[sku];
+  for (const e of (b.invEvents || [])) if (e && e.id) nodes.invEvents[String(e.id)] = e;
+  for (const n of (b.partsNeeded || [])) if (n && n.id != null) nodes.partsNeeded[String(n.id)] = n;
+  const keyLog = (arr, into) => { for (const x of (arr || [])) { const k = x && (x.uid || x.id); if (k) into[String(k)] = x; } };
+  keyLog(b.completedOrders, nodes.completed);
+  keyLog(b.inventoryHistory, nodes.invHistory);
+  keyLog(b.shippedHistory, nodes.shipped);
+  nodes.meta = {
+    assignments: b.assignments || {}, paintParts: b.paintParts || {},
+    priority: b.priority || { resin: [], fdm: [] }, countedParts: b.countedParts || {},
+    deletedNeeds: b.deletedNeeds || {}, trackedParts: b.trackedParts || {},
+    partLocations: b.partLocations || {}, recountPrevLoc: b.recountPrevLoc || {},
+    overdueStandard: b.overdueStandard || 18, overdueVehicle: b.overdueVehicle || 28,
+    lastImport: b.lastImport || null, appBuild: b.appBuild || 0,
+  };
+  return nodes;
+}
+
+async function _migrateIfNeeded() {
+  const snap = await window._fb.get(_node('_seeded'));
+  if (snap.exists() && snap.val()) return;
+  let src = _blobFromState();
+  const empty = (!src.orders || src.orders.length === 0) && Object.keys(src.library || {}).length === 0;
+  if (empty) {
+    try {
+      const oldSnap = await window._fb.get(window._fb.ref(_fbDb, 'workspace'));
+      if (oldSnap.exists()) src = transformKeys(oldSnap.val(), fbDecodeKey);
+    } catch {}
+  }
+  const nodes = blobToNodes(src);
+  const setN = (p, v) => window._fb.set(_node(p), transformKeys(v, fbEncodeKey));
+  await setN('orders', nodes.orders);
+  await setN('library', nodes.library);
+  await setN('invEvents', nodes.invEvents);
+  await setN('partsNeeded', nodes.partsNeeded);
+  await setN('completed', nodes.completed);
+  await setN('invHistory', nodes.invHistory);
+  await setN('shipped', nodes.shipped);
+  await setN('meta', nodes.meta);
+  await window._fb.set(_node('_seeded'), true);
+}
+
+function _attachListenersV2() {
+  const objVals = (o) => Object.keys(o || {}).map(k => o[k]);
+  const onNode = (path, fn) => window._fb.onValue(_node(path), (snap) => {
+    if (!snap.exists()) return;
+    _applyingCloud = true;
+    try { fn(transformKeys(snap.val(), fbDecodeKey)); } catch (e) { console.warn('sync2 apply ' + path + ':', e); }
+    _applyingCloud = false;
+  });
+  onNode('orders', v => { state.orders = objVals(v); _afterCloudApply(); });
+  onNode('library', v => { state.library = v || {}; _afterCloudApply(); });
+  onNode('invEvents', v => { const evs = objVals(v); state.invEvents = evs; for (const e of evs) if (e && e.id) _pushedInvEventIds.add(String(e.id)); recomputeInventory(); _afterCloudApply(); });
+  onNode('partsNeeded', v => { state.partsNeeded = objVals(v); _lastPushedNeeds = {}; for (const n of state.partsNeeded) if (n && n.id != null) _lastPushedNeeds[n.id] = JSON.stringify(n); _afterCloudApply(); });
+  onNode('completed', v => { state.completedOrders = objVals(v); for (const x of state.completedOrders) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
+  onNode('invHistory', v => { state.inventoryHistory = objVals(v); for (const x of state.inventoryHistory) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
+  onNode('shipped', v => { state.shippedHistory = objVals(v); for (const x of state.shippedHistory) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
+  onNode('meta', v => {
+    if (checkBuildGate({ _appBuild: v.appBuild || 0 })) return;
+    state.assignments = v.assignments || {}; state.paintParts = v.paintParts || {};
+    state.priority = v.priority || { resin: [], fdm: [] }; state.countedParts = v.countedParts || {};
+    state.deletedNeeds = v.deletedNeeds || {}; state.trackedParts = v.trackedParts || {};
+    state.partLocations = v.partLocations || {}; state.recountPrevLoc = v.recountPrevLoc || {};
+    if (v.overdueStandard) state.overdueStandard = v.overdueStandard;
+    if (v.overdueVehicle) state.overdueVehicle = v.overdueVehicle;
+    if ('lastImport' in v) state.lastImport = v.lastImport;
+    _lastPushedMetaSig = _metaSig(); _afterCloudApply();
+  });
+}
+function _afterCloudApply() {
+  try { invalidateBuildQueueCache(); } catch {}
+  _sidebarQueueCounts.resin = null; _sidebarQueueCounts.fdm = null;
+  // Persist the applied cloud data to localStorage so a reload reflects it.
+  // _applyingCloud is still true here, so save()'s cloudSyncPush() no-ops — no
+  // echo back to the cloud.
+  try { save(); } catch (e) { console.warn('sync2 local persist:', e); }
+  try {
+    renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
+    if (typeof renderHistory === 'function') renderHistory();
+    if (typeof renderStats === 'function') renderStats();
+    if (typeof renderImportStatus === 'function') renderImportStatus();
+    if (typeof PN !== 'undefined' && PN.renderSentToday) PN.renderSentToday();
+    if (typeof window._syncThresholdSliders === 'function') window._syncThresholdSliders();
+  } catch (e) { console.warn('sync2 render:', e); }
+  cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online');
+}
+
+function cloudSyncPush() {
+  if (!_fbReady || !_fbUser || _applyingCloud || _staleBuild || !_syncReadyV2) return;
+  clearTimeout(_syncPushTimer);
+  _syncPushTimer = setTimeout(_doSyncPush, 250);
+}
+async function _doSyncPush() {
+  if (!_fbReady || !_fbUser || _staleBuild || !_syncReadyV2) return;
+  try {
+    const oSig = cheapHash(JSON.stringify(state.orders || []));
+    if (oSig !== _lastPushedOrdersSig) {
+      const byId = {}; for (const o of (state.orders || [])) { const id = o && (o.orderId || o.id); if (id != null) byId[String(id)] = o; }
+      await window._fb.set(_node('orders'), transformKeys(byId, fbEncodeKey));
+      _lastPushedOrdersSig = oSig;
+    }
+    const lSig = cheapHash(JSON.stringify(state.library || {}));
+    if (lSig !== _lastPushedLibrarySig) {
+      await window._fb.set(_node('library'), transformKeys(state.library || {}, fbEncodeKey));
+      _lastPushedLibrarySig = lSig;
+    }
+    for (const e of (state.invEvents || [])) {
+      if (!e || !e.id || _pushedInvEventIds.has(String(e.id))) continue;
+      await window._fb.set(_node('invEvents/' + fbEncodeKey(String(e.id))), transformKeys(e, fbEncodeKey));
+      _pushedInvEventIds.add(String(e.id));
+    }
+    const curNeeds = {}; for (const n of (state.partsNeeded || [])) if (n && n.id != null) curNeeds[String(n.id)] = n;
+    for (const id of Object.keys(curNeeds)) {
+      const j = JSON.stringify(curNeeds[id]);
+      if (_lastPushedNeeds[id] !== j) { await window._fb.set(_node('partsNeeded/' + fbEncodeKey(id)), transformKeys(curNeeds[id], fbEncodeKey)); _lastPushedNeeds[id] = j; }
+    }
+    for (const id of Object.keys(_lastPushedNeeds)) {
+      if (!(id in curNeeds)) { try { await window._fb.dbMod.remove(_node('partsNeeded/' + fbEncodeKey(id))); } catch {} delete _lastPushedNeeds[id]; }
+    }
+    const pushLog = async (arr, path) => {
+      for (const x of (arr || [])) { const k = x && (x.uid || x.id); if (!k || _pushedLogKeys.has(String(k))) continue;
+        await window._fb.set(_node(path + '/' + fbEncodeKey(String(k))), transformKeys(x, fbEncodeKey)); _pushedLogKeys.add(String(k)); }
+    };
+    await pushLog(state.completedOrders, 'completed');
+    await pushLog(state.inventoryHistory, 'invHistory');
+    await pushLog(state.shippedHistory, 'shipped');
+    const mSig = _metaSig();
+    if (mSig !== _lastPushedMetaSig) { await window._fb.set(_node('meta'), transformKeys(_metaFromState(), fbEncodeKey)); _lastPushedMetaSig = mSig; }
+    setUnsyncedFlag(false);
+    cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online');
+  } catch (e) {
+    console.error('sync2 push failed:', e);
+    setUnsyncedFlag(true);
+    setTimeout(() => { if (_fbReady && _fbUser) _doSyncPush(); }, 4000);
+  }
+}
+
+async function initSyncV2() {
+  try {
+    bootStatus('Syncing…');
+    await _migrateIfNeeded();
+    for (const e of (state.invEvents || [])) if (e && e.id) _pushedInvEventIds.add(String(e.id));
+    for (const x of (state.completedOrders || [])) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); }
+    for (const x of (state.inventoryHistory || [])) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); }
+    for (const x of (state.shippedHistory || [])) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); }
+    for (const n of (state.partsNeeded || [])) if (n && n.id != null) _lastPushedNeeds[n.id] = JSON.stringify(n);
+    _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || []));
+    _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {}));
+    _lastPushedMetaSig = _metaSig();
+    _attachListenersV2();
+    _syncReadyV2 = true;
+    cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online');
+  } catch (e) {
+    console.error('initSyncV2 failed:', e);
+    cloudStatus('offline', 'Sync error — data saved locally');
+  }
 }
 
 // Pull cloud data on first sign-in. If cloud is empty, push local data up
@@ -15001,55 +15207,34 @@ function wakeCloud() {
   resyncFromCloud();                        // immediate one-shot pull as a belt-and-suspenders
 }
 
+// SYNC v2 window handlers. The per-node onValue listeners deliver live updates
+// automatically; on iOS Safari the socket can suspend, so on focus/visible we
+// force it back online and flush any unsynced push. We NEVER call the old
+// resyncFromCloud/wakeCloud (those read the retired 'workspace' blob and would
+// clobber v2 state).
+function _wakeV2() {
+  if (!_fbReady || !_fbDb || !_fbUser) return;
+  try { window._fb.dbMod.goOnline(_fbDb); } catch {}
+  cloudSyncPush();   // flush anything unsynced; listeners re-fire current values
+}
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') wakeCloud();
-  else flushPendingWork();
+  if (document.visibilityState === 'visible') _wakeV2();
+  else _flushV2();
 });
-window.addEventListener('focus', wakeCloud);
-window.addEventListener('pageshow', wakeCloud);   // fires when returning via bfcache (common on iOS)
-window.addEventListener('pagehide', flushPendingWork);
-window.addEventListener('beforeunload', flushPendingWork);
+window.addEventListener('focus', _wakeV2);
+window.addEventListener('pageshow', _wakeV2);
+window.addEventListener('pagehide', _flushV2);
+window.addEventListener('beforeunload', _flushV2);
 
-// Safety poll: even when foregrounded, mobile Safari can silently stall the
-// socket. Poll every 5s while visible as a backstop. resyncFromCloud() only
-// applies genuinely newer data and merges when there's un-pushed local work,
-// so this is always safe and cheap (a single read that no-ops if unchanged).
-setInterval(() => {
-  // Clear a pending push that's been stuck too long (a transaction that never
-  // completed — iOS background-kill, network loss). Left set, it blocks the
-  // resync and the listener guard, freezing the device. The retry cycle re-fires
-  // from any later save; here we just stop the stale flag from blocking reads.
-  if (_cloudPushPending && (Date.now() - (_pendingSince || 0)) > 20000) {
-    if (window._syncDebug) console.log('[sync] clearing stuck pending push flag');
-    _cloudPushPending = false;
-    _pushInFlight = false;
-  }
-  if (document.visibilityState === 'visible') resyncFromCloud();
-}, 5000);
-
-// Called when the page is about to go away (refresh, close, backgrounding).
-// If a push is still waiting in the debounce window, the page could die before
-// it fires and that work would only exist in localStorage. We (a) mark it
-// unsynced so the NEXT boot knows to merge it up, and (b) fire the push
-// immediately so it usually lands before the page dies.
-function flushPendingWork() {
+// On unload, fire the push immediately (best effort) so a change in the debounce
+// window still lands. localStorage already holds it, so a reload recovers it.
+function _flushV2() {
   try {
-    if (_cloudPushPending || hasUnsyncedFlag()) {
-      setUnsyncedFlag(true);   // survives the reload; boot will merge it up
-      if (_cloudPushTimer) {
-        clearTimeout(_cloudPushTimer);
-        _cloudPushTimer = null;
-      }
-      // Best-effort immediate push. May not complete, but the unsynced flag +
-      // localStorage copy guarantee the boot merge recovers it either way.
-      if (_fbReady && _fbUser && !_suspendCloudWrites && !_staleBuild) {
-        _cloudPushPending = true;
-        scheduleCloudPushNow();
-      }
-    }
+    if (!_fbReady || !_fbUser || _staleBuild || !_syncReadyV2) return;
+    clearTimeout(_syncPushTimer);
+    _doSyncPush();
   } catch {}
 }
-window.addEventListener('focus', resyncFromCloud);
 
 // Cross-WINDOW sync (two windows/tabs of the app open on the SAME device).
 // They share one localStorage; a `storage` event fires in the OTHER window
