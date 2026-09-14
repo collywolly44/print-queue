@@ -6001,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 51;
+const APP_BUILD = 53;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -14800,11 +14800,52 @@ function _attachListenersV2() {
   });
   onNode('orders', v => { state.orders = objVals(v); _afterCloudApply(); });
   onNode('library', v => { state.library = v || {}; _afterCloudApply(); });
-  onNode('invEvents', v => { const evs = objVals(v); state.invEvents = evs; for (const e of evs) if (e && e.id) _pushedInvEventIds.add(String(e.id)); recomputeInventory(); _afterCloudApply(); });
-  onNode('partsNeeded', v => { state.partsNeeded = objVals(v); _lastPushedNeeds = {}; for (const n of state.partsNeeded) if (n && n.id != null) _lastPushedNeeds[n.id] = JSON.stringify(n); _afterCloudApply(); });
-  onNode('completed', v => { state.completedOrders = objVals(v); for (const x of state.completedOrders) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
-  onNode('invHistory', v => { state.inventoryHistory = objVals(v); for (const x of state.inventoryHistory) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
-  onNode('shipped', v => { state.shippedHistory = objVals(v); for (const x of state.shippedHistory) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
+  onNode('invEvents', v => {
+    const byId = new Map();
+    for (const e of objVals(v)) if (e && e.id) { byId.set(String(e.id), e); _pushedInvEventIds.add(String(e.id)); }
+    // Keep un-pushed local events (a CONCURRENT local Done, or one made just
+    // before a refresh) so the cloud snapshot can't wipe them.
+    for (const e of (state.invEvents || [])) if (e && e.id && !byId.has(String(e.id))) byId.set(String(e.id), e);
+    state.invEvents = Array.from(byId.values());
+    recomputeInventory(); _afterCloudApply(); _flushLocalSoon();
+  });
+  const _unionLog = (cloudArr, localArr) => {
+    const seen = new Set(), out = [];
+    for (const x of cloudArr) { const k = x && (x.uid || x.id); if (k && !seen.has(String(k))) { seen.add(String(k)); _pushedLogKeys.add(String(k)); out.push(x); } }
+    for (const x of (localArr || [])) { const k = x && (x.uid || x.id); if (k && !seen.has(String(k))) { seen.add(String(k)); out.push(x); } }
+    return out;
+  };
+  onNode('partsNeeded', v => {
+    const cloud = {}; for (const n of objVals(v)) if (n && n.id != null) cloud[String(n.id)] = n;
+    const localById = {}; for (const n of (state.partsNeeded || [])) if (n && n.id != null) localById[String(n.id)] = n;
+    const out = {};
+    // Cloud entries: keep this device's version instead ONLY if it has an
+    // un-pushed change to that card (local JSON differs from what we last
+    // pushed). Otherwise the cloud is authoritative.
+    for (const id of Object.keys(cloud)) {
+      const localJson = localById[id] ? JSON.stringify(localById[id]) : null;
+      if (localJson != null && localJson !== (_lastPushedNeeds[id] || null)) {
+        out[id] = localById[id];                       // un-pushed local edit wins
+      } else {
+        out[id] = cloud[id];                           // cloud authoritative
+        _lastPushedNeeds[id] = JSON.stringify(cloud[id]); // now in sync
+      }
+    }
+    // Local-only cards (not in cloud): keep genuine un-pushed ADDs; drop cards
+    // that were previously synced but are now gone from the cloud (deleted on
+    // another device).
+    for (const id of Object.keys(localById)) {
+      if (id in cloud) continue;
+      const localJson = JSON.stringify(localById[id]);
+      if (localJson !== (_lastPushedNeeds[id] || null)) out[id] = localById[id];
+      else delete _lastPushedNeeds[id];                // remote delete — respect it
+    }
+    state.partsNeeded = Object.values(out);
+    _afterCloudApply(); _flushLocalSoon();
+  });
+  onNode('completed', v => { state.completedOrders = _unionLog(objVals(v), state.completedOrders); _flushLocalSoon(); });
+  onNode('invHistory', v => { state.inventoryHistory = _unionLog(objVals(v), state.inventoryHistory); _flushLocalSoon(); });
+  onNode('shipped', v => { state.shippedHistory = _unionLog(objVals(v), state.shippedHistory); _flushLocalSoon(); });
   onNode('meta', v => {
     if (checkBuildGate({ _appBuild: v.appBuild || 0 })) return;
     state.assignments = v.assignments || {}; state.paintParts = v.paintParts || {};
@@ -14834,6 +14875,11 @@ function _afterCloudApply() {
   } catch (e) { console.warn('sync2 render:', e); }
   cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online');
 }
+
+// Deferred flush: push any local rows not yet in the cloud (used after a listener
+// unions in un-pushed local work — e.g. concurrent edits or a pre-refresh event).
+let _flushTimer = null;
+function _flushLocalSoon() { clearTimeout(_flushTimer); _flushTimer = setTimeout(() => cloudSyncPush(), 300); }
 
 function cloudSyncPush() {
   if (!_fbReady || !_fbUser || _applyingCloud || _staleBuild || !_syncReadyV2) return;
@@ -14889,10 +14935,6 @@ async function initSyncV2() {
   try {
     bootStatus('Syncing…');
     await _migrateIfNeeded();
-    for (const e of (state.invEvents || [])) if (e && e.id) _pushedInvEventIds.add(String(e.id));
-    for (const x of (state.completedOrders || [])) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); }
-    for (const x of (state.inventoryHistory || [])) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); }
-    for (const x of (state.shippedHistory || [])) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); }
     for (const n of (state.partsNeeded || [])) if (n && n.id != null) _lastPushedNeeds[n.id] = JSON.stringify(n);
     _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || []));
     _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {}));
