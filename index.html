@@ -6001,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 55;
+const APP_BUILD = 56;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -14792,21 +14792,49 @@ async function _migrateIfNeeded() {
 
 function _attachListenersV2() {
   const objVals = (o) => Object.keys(o || {}).map(k => o[k]);
+  // Order-insensitive canonical signature — lets us tell whether an incoming
+  // cloud snapshot ACTUALLY changes our state, or is just the echo of a change
+  // this device already applied+rendered (a Done, a stock edit, a card move).
+  // If it's an echo, skip the re-render so the DOM isn't torn down under the
+  // user's cursor (the flicker that was blocking clicks on the inventory page).
+  const _canon = (x) => {
+    if (Array.isArray(x)) return '[' + x.map(_canon).sort().join(',') + ']';
+    if (x && typeof x === 'object') return '{' + Object.keys(x).sort().map(k => JSON.stringify(k) + ':' + _canon(x[k])).join(',') + '}';
+    return JSON.stringify(x);
+  };
   const onNode = (path, fn) => window._fb.onValue(_node(path), (snap) => {
     if (!snap.exists()) return;
     _applyingCloud = true;
     try { fn(transformKeys(snap.val(), fbDecodeKey)); } catch (e) { console.warn('sync2 apply ' + path + ':', e); }
     _applyingCloud = false;
   });
-  onNode('orders', v => { state.orders = objVals(v); _afterCloudApply(); });
-  onNode('library', v => { state.library = v || {}; _afterCloudApply(); });
-  onNode('invEvents', v => { const evs = objVals(v); state.invEvents = evs; for (const e of evs) if (e && e.id) _pushedInvEventIds.add(String(e.id)); recomputeInventory(); _afterCloudApply(); });
-  onNode('partsNeeded', v => { state.partsNeeded = objVals(v); _lastPushedNeeds = {}; for (const n of state.partsNeeded) if (n && n.id != null) _lastPushedNeeds[n.id] = JSON.stringify(n); _afterCloudApply(); });
+  const applySlice = (getSlice, setFrom) => {
+    const before = _canon(getSlice());
+    setFrom();
+    if (_canon(getSlice()) !== before) _afterCloudApply();  // only redraw on a REAL change
+  };
+  onNode('orders', v => applySlice(() => state.orders, () => { state.orders = objVals(v); }));
+  onNode('library', v => applySlice(() => state.library, () => { state.library = v || {}; }));
+  onNode('invEvents', v => {
+    const before = _canon(state.invEvents);
+    const evs = objVals(v); state.invEvents = evs;
+    for (const e of evs) if (e && e.id) _pushedInvEventIds.add(String(e.id));
+    recomputeInventory();
+    if (_canon(state.invEvents) !== before) _afterCloudApply();
+  });
+  onNode('partsNeeded', v => {
+    const before = _canon(state.partsNeeded);
+    state.partsNeeded = objVals(v); _lastPushedNeeds = {};
+    for (const n of state.partsNeeded) if (n && n.id != null) _lastPushedNeeds[n.id] = JSON.stringify(n);
+    if (_canon(state.partsNeeded) !== before) _afterCloudApply();
+  });
   onNode('completed', v => { state.completedOrders = objVals(v); for (const x of state.completedOrders) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
   onNode('invHistory', v => { state.inventoryHistory = objVals(v); for (const x of state.inventoryHistory) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
   onNode('shipped', v => { state.shippedHistory = objVals(v); for (const x of state.shippedHistory) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
   onNode('meta', v => {
     if (checkBuildGate({ _appBuild: v.appBuild || 0 })) return;
+    const _mb = () => _canon([state.assignments, state.paintParts, state.priority, state.countedParts, state.deletedNeeds, state.trackedParts, state.partLocations, state.recountPrevLoc, state.overdueStandard, state.overdueVehicle, state.lastImport]);
+    const before = _mb();
     state.assignments = v.assignments || {}; state.paintParts = v.paintParts || {};
     state.priority = v.priority || { resin: [], fdm: [] }; state.countedParts = v.countedParts || {};
     state.deletedNeeds = v.deletedNeeds || {}; state.trackedParts = v.trackedParts || {};
@@ -14814,7 +14842,8 @@ function _attachListenersV2() {
     if (v.overdueStandard) state.overdueStandard = v.overdueStandard;
     if (v.overdueVehicle) state.overdueVehicle = v.overdueVehicle;
     if ('lastImport' in v) state.lastImport = v.lastImport;
-    _lastPushedMetaSig = _metaSig(); _afterCloudApply();
+    _lastPushedMetaSig = _metaSig();
+    if (_mb() !== before) _afterCloudApply();
   });
 }
 function _afterCloudApply() {
