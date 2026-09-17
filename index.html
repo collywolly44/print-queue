@@ -5736,6 +5736,26 @@ body.mode-mobile .mobile-only { display: block; }
         </div>
       </div>
 
+      <div class="section-title">Data Management</div>
+      <div class="danger-card" style="margin-bottom:16px;">
+        <div class="danger-title" style="color: var(--ink); margin-bottom:8px;">Backup</div>
+        <div class="danger-text">Download a full backup of all orders, parts library, and printed history as JSON. Save the file somewhere safe (Dropbox, Google Drive, USB).</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+          <button class="btn" id="btn-backup">Download backup</button>
+          <button class="btn" id="btn-restore">Restore from backup</button>
+          <input type="file" class="file-input" id="restore-input" accept=".json">
+        </div>
+      </div>
+
+      <div class="danger-card" style="margin-bottom:16px;border-color:rgba(240,168,48,0.3);">
+        <div class="danger-title" style="color:var(--amber);margin-bottom:8px;">Auto-save history</div>
+        <div class="danger-text">
+          The app keeps up to 5 automatic snapshots as you work — roughly 20 minutes, 2 hours, 8 hours, 24 hours, and 72 hours back. Older ones are discarded automatically. If you ever break something, restore from a recent snapshot here. Snapshots live in this browser only — download a backup for off-device safety.
+        </div>
+        <button class="btn" id="btn-show-snapshots">View snapshots</button>
+        <div id="snapshot-list" hidden style="margin-top:14px;"></div>
+      </div>
+
       <div class="section-title">Load CSV</div>
       <div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px 18px;margin-bottom:14px;font-size:13px;color:var(--ink-dim);">
         Upload each CSV as a complete snapshot of pending orders. Any order that was present before but isn't in the new CSV is treated as shipped — its parts are automatically subtracted from inventory. New orders get added to the queues.
@@ -5790,26 +5810,6 @@ body.mode-mobile .mobile-only { display: block; }
           <button class="btn btn-primary" id="btn-save-thresholds" disabled>Save Thresholds</button>
           <span class="thr-save-status" id="thr-save-status" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:0.04em;">No changes</span>
         </div>
-      </div>
-
-      <div class="section-title">Data Management</div>
-      <div class="danger-card" style="margin-bottom:16px;">
-        <div class="danger-title" style="color: var(--ink); margin-bottom:8px;">Backup</div>
-        <div class="danger-text">Download a full backup of all orders, parts library, and printed history as JSON. Save the file somewhere safe (Dropbox, Google Drive, USB).</div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-          <button class="btn" id="btn-backup">Download backup</button>
-          <button class="btn" id="btn-restore">Restore from backup</button>
-          <input type="file" class="file-input" id="restore-input" accept=".json">
-        </div>
-      </div>
-
-      <div class="danger-card" style="margin-bottom:16px;border-color:rgba(240,168,48,0.3);">
-        <div class="danger-title" style="color:var(--amber);margin-bottom:8px;">Auto-save history</div>
-        <div class="danger-text">
-          The app keeps up to 5 automatic snapshots as you work — roughly 20 minutes, 2 hours, 8 hours, 24 hours, and 72 hours back. Older ones are discarded automatically. If you ever break something, restore from a recent snapshot here. Snapshots live in this browser only — download a backup for off-device safety.
-        </div>
-        <button class="btn" id="btn-show-snapshots">View snapshots</button>
-        <div id="snapshot-list" hidden style="margin-top:14px;"></div>
       </div>
 
       <div class="section-title">Current order data</div>
@@ -6001,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 56;
+const APP_BUILD = 57;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -12164,7 +12164,20 @@ function renderHistoryLedger() {
 
   const q = (document.getElementById('ledger-search')?.value || '').trim().toLowerCase();
   let entries = (state.inventoryHistory || []).slice().reverse(); // newest first
-  if (q) entries = entries.filter(e => (e.partName || '').toLowerCase().includes(q));
+  // Hide SHIPPING changes — the ledger shows only prints and manual changes.
+  // (Shipping is the only automatic category; everything else is a print the
+  // user did or a manual/hand edit.)
+  const SHIP_REASONS = new Set(['csv-ship', 'csv-ship-short', 'custom-order-fulfilled']);
+  entries = entries.filter(e => !SHIP_REASONS.has(e.reason));
+  if (q) {
+    // Searching a part: show its full (non-shipping) timeline so a bad count
+    // can still be traced back beyond 7 days.
+    entries = entries.filter(e => (e.partName || '').toLowerCase().includes(q));
+  } else {
+    // Default view: last 7 days only.
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    entries = entries.filter(e => { const t = new Date(e.at).getTime(); return isNaN(t) || t >= cutoff; });
+  }
 
   // Per-part running summary when searching — the fast way to spot a bad count.
   const summaryEl = document.getElementById('ledger-summary');
