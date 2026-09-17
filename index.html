@@ -6001,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 57;
+const APP_BUILD = 58;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -12148,6 +12148,7 @@ const INV_REASON_LABEL = {
   'sku-adjust': 'SKU adjust',
   'custom-order-fulfilled': 'Custom order shipped',
   'manual': 'Manual',
+  'priority-print': 'Priority print',
 };
 
 // The full, searchable inventory ledger on the History page. Shows EVERY change
@@ -12163,10 +12164,16 @@ function renderHistoryLedger() {
   if (panel && panel.classList.contains('hidden')) return;
 
   const q = (document.getElementById('ledger-search')?.value || '').trim().toLowerCase();
-  let entries = (state.inventoryHistory || []).slice().reverse(); // newest first
+  // Inventory changes (prints/manual), plus PRIORITY PRINTS (resolved Part
+  // Needed cards). Priority prints don't change inventory, so they show as a
+  // "Printed" record with no delta.
+  let entries = (state.inventoryHistory || []).map(e => e);
+  const needPrints = (state.completedOrders || [])
+    .filter(c => c && c.kind === 'need')
+    .map(c => ({ at: c.at, partName: c.partName || '', delta: null, before: null, after: null, reason: 'priority-print', who: c.who || '', _noInv: true }));
+  entries = entries.concat(needPrints);
+  entries.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()); // newest first
   // Hide SHIPPING changes — the ledger shows only prints and manual changes.
-  // (Shipping is the only automatic category; everything else is a print the
-  // user did or a manual/hand edit.)
   const SHIP_REASONS = new Set(['csv-ship', 'csv-ship-short', 'custom-order-fulfilled']);
   entries = entries.filter(e => !SHIP_REASONS.has(e.reason));
   if (q) {
@@ -12234,14 +12241,16 @@ function renderHistoryLedger() {
     const timeStr = isNaN(at.getTime()) ? '—'
       : `${at.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })} · ${at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
     const delta = Number(e.delta) || 0;
-    const deltaClass = delta > 0 ? 'positive' : (delta < 0 ? 'negative' : '');
-    const deltaStr = delta > 0 ? `+${delta}` : `${delta}`;
+    const noInv = e._noInv || e.delta == null;
+    const deltaClass = noInv ? '' : (delta > 0 ? 'positive' : (delta < 0 ? 'negative' : ''));
+    const deltaStr = noInv ? '—' : (delta > 0 ? `+${delta}` : `${delta}`);
+    const changeStr = noInv ? 'Printed' : `${e.before} → ${e.after}`;
     const reason = INV_REASON_LABEL[e.reason] || e.reason || '—';
     html += `
       <div class="inv-hist-row">
         <div class="inv-hist-time">${escapeHtml(timeStr)}</div>
         <div class="inv-hist-part">${escapeHtml(e.partName || '')}</div>
-        <div class="inv-hist-change">${e.before} → ${e.after}</div>
+        <div class="inv-hist-change">${escapeHtml(changeStr)}</div>
         <div class="inv-hist-delta ${deltaClass}">${deltaStr}</div>
         <div class="inv-hist-reason">${escapeHtml(reason)}</div>
         <div class="inv-hist-who">${escapeHtml(e.who || '—')}</div>
