@@ -6001,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 63;
+const APP_BUILD = 64;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6607,23 +6607,6 @@ function save() {
   state.completedOrders  = _trim(state.completedOrders, 500);
   state.inventoryHistory = _trim(state.inventoryHistory, 800);
   state.shippedHistory   = _trim(state.shippedHistory, 300);
-  // Prune DONE Part Needed cards older than 7 days — they're invisible, already
-  // recorded in the completed-prints log, and were the biggest storage/sync
-  // bloat (1600+ dead cards). Cap the number removed per save so the cloud
-  // deletes don't flood; the rest clear over the next few saves.
-  if (Array.isArray(state.partsNeeded)) {
-    const _cut = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const _old = [];
-    for (const n of state.partsNeeded) {
-      if (n && n.resolvedAt) { const t = new Date(n.resolvedAt).getTime(); if (!isNaN(t) && t < _cut) _old.push(n); }
-    }
-    if (_old.length) {
-      _old.sort((a, b) => new Date(a.resolvedAt) - new Date(b.resolvedAt)); // oldest first
-      const _drop = new Set(_old.slice(0, 80).map(n => n.id));               // cap 80/save
-      state.partsNeeded = state.partsNeeded.filter(n => !(n && _drop.has(n.id)));
-      blob.partsNeeded = state.partsNeeded;
-    }
-  }
   blob.completedOrders   = state.completedOrders;
   blob.inventoryHistory  = state.inventoryHistory;
   blob.shippedHistory    = state.shippedHistory;
