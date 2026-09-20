@@ -6001,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 59;
+const APP_BUILD = 62;
 const MAX_SNAPSHOTS = 5;
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -10426,12 +10426,21 @@ function renderInventory() {
     row.querySelectorAll('[data-step]').forEach(btn => {
       btn.addEventListener('click', () => {
         const step = parseInt(btn.dataset.step, 10);
-        const current = parseInt(input.value, 10);
-        // If uncounted (blank input), step from 0
-        const base = isNaN(current) ? 0 : current;
-        const next = Math.max(0, base + step);
-        input.value = next;
-        commit(next);
+        // Read from STATE, not the input field, and apply a DELTA event. Deltas
+        // sum, so tapping +1 twice fast reliably adds 2 — an absolute "set"
+        // could lose a tap when two land in the same millisecond.
+        const before = Number(state.inventory[part] || 0);
+        const next = Math.max(0, before + step);
+        const delta = next - before;               // 0 when clamping at 0
+        if (delta !== 0) {
+          _invDepositEvent(part, delta, 'inventory-edit');
+          logInventoryChange(part, before, next, 'inventory-edit');
+        }
+        markCounted(part);                          // any tap marks it counted
+        if (input) input.value = next;              // instant feedback
+        save();
+        renderQueue();
+        renderInventory();
       });
     });
     // Location dropdown
@@ -14734,6 +14743,8 @@ let _pushedLogKeys = new Set();
 let _lastPushedNeeds = {};
 let _lastPushedOrdersSig = '', _lastPushedLibrarySig = '', _lastPushedMetaSig = '';
 let _applyingCloud = false;
+let _dragActive = false;      // true while any HTML5 drag is in progress
+let _deferredApply = false;   // a cloud update arrived during a drag; apply it on dragend
 let _syncPushTimer = null;
 
 function _blobFromState() {
@@ -14851,8 +14862,30 @@ function _attachListenersV2() {
   });
   onNode('partsNeeded', v => {
     const before = _canon(state.partsNeeded);
-    state.partsNeeded = objVals(v); _lastPushedNeeds = {};
-    for (const n of state.partsNeeded) if (n && n.id != null) _lastPushedNeeds[n.id] = JSON.stringify(n);
+    const cloud = {}; for (const n of objVals(v)) if (n && n.id != null) cloud[String(n.id)] = n;
+    const localById = {}; for (const n of (state.partsNeeded || [])) if (n && n.id != null) localById[String(n.id)] = n;
+    const out = {};
+    // For each card the cloud has: keep THIS device's version only if it has an
+    // un-pushed change to that card (local JSON differs from what we last
+    // pushed) — e.g. a drop to FDM/resin, a resolve — so an echo can't revert it.
+    for (const id of Object.keys(cloud)) {
+      const lj = localById[id] ? JSON.stringify(localById[id]) : null;
+      if (lj != null && lj !== (_lastPushedNeeds[id] || null)) {
+        out[id] = localById[id];                          // un-pushed local edit wins
+      } else {
+        out[id] = cloud[id];                              // cloud authoritative
+        _lastPushedNeeds[id] = JSON.stringify(cloud[id]); // now in sync
+      }
+    }
+    // Local-only cards (not in cloud): keep genuine un-pushed adds; drop cards
+    // that were previously synced but are now gone from cloud (deleted elsewhere).
+    for (const id of Object.keys(localById)) {
+      if (id in cloud) continue;
+      const lj = JSON.stringify(localById[id]);
+      if (lj !== (_lastPushedNeeds[id] || null)) out[id] = localById[id];
+      else delete _lastPushedNeeds[id];
+    }
+    state.partsNeeded = Object.values(out);
     if (_canon(state.partsNeeded) !== before) _afterCloudApply();
   });
   onNode('completed', v => { state.completedOrders = objVals(v); for (const x of state.completedOrders) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
@@ -14874,6 +14907,11 @@ function _attachListenersV2() {
   });
 }
 function _afterCloudApply() {
+  // Never re-render the board WHILE the user is mid-drag — a redraw destroys the
+  // element being dragged (or the drop target) and cancels the drag, which was
+  // blocking Part Needed drops after the first couple. Persist locally now, but
+  // defer the visual refresh until the drag ends.
+  if (_dragActive) { _deferredApply = true; try { save(); } catch {} return; }
   try { invalidateBuildQueueCache(); } catch {}
   _sidebarQueueCounts.resin = null; _sidebarQueueCounts.fdm = null;
   // Persist the applied cloud data to localStorage so a reload reflects it.
@@ -15273,6 +15311,17 @@ function _wakeV2() {
   try { window._fb.dbMod.goOnline(_fbDb); } catch {}
   cloudSyncPush();   // flush anything unsynced; listeners re-fire current values
 }
+// Track drag state globally so cloud re-renders can hold off until a drag ends
+// (a redraw mid-drag cancels the drag — this was blocking repeated FDM drops).
+document.addEventListener('dragstart', () => { _dragActive = true; }, true);
+function _endDrag() {
+  if (!_dragActive) return;
+  _dragActive = false;
+  if (_deferredApply) { _deferredApply = false; try { _afterCloudApply(); } catch {} }
+}
+document.addEventListener('dragend', _endDrag, true);
+document.addEventListener('drop', () => { setTimeout(_endDrag, 0); }, true);
+
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') _wakeV2();
   else _flushV2();
