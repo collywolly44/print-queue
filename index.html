@@ -6001,7 +6001,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 65;
+const APP_BUILD = 66;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -15458,35 +15458,41 @@ if (state.appMode === 'mobile') {
 }
 
 // Wire the FDM queue as a drop target for Priority items dragged from the sidebar.
+// FDM queue drop target for Part Needed drags. Uses DOCUMENT-LEVEL delegation
+// (not one-time wiring on the section) so it works no matter when the queue
+// renders or which child cell the cursor is over — the earlier once-at-load
+// handler silently bound to nothing and drops were refused (defaultPrevented
+// stayed false even though the event reached the section).
 (function wireFdmDrop() {
-  const fdmSection = document.getElementById('view-queue-fdm');
-  if (!fdmSection) return;
-  const dropZone = fdmSection.querySelector('[data-queue-container]') || fdmSection;
-  // We use the section itself as the visible target so drops anywhere on the
-  // page count, even if the queue is empty.
-  const visualZone = fdmSection.querySelector('.queue-main') || fdmSection;
-
-  fdmSection.addEventListener('dragover', e => {
-    // Only handle Priority drags (which set application/x-need-id or text/plain "need:")
-    const types = Array.from(e.dataTransfer.types || []);
-    if (!types.includes('application/x-need-id') && !types.includes('text/plain')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    visualZone.classList.add('drop-target-active');
+  const isNeedDrag = (e) => {
+    const t = Array.from((e.dataTransfer && e.dataTransfer.types) || []);
+    return t.includes('application/x-need-id') || t.includes('text/plain');
+  };
+  const inFdm = (e) => e.target && e.target.closest && e.target.closest('#view-queue-fdm');
+  document.addEventListener('dragover', (e) => {
+    if (!inFdm(e) || !isNeedDrag(e)) return;
+    e.preventDefault();                      // REQUIRED to allow the drop
+    try { e.dataTransfer.dropEffect = 'move'; } catch {}
+    const vz = document.querySelector('#view-queue-fdm .queue-main') || document.getElementById('view-queue-fdm');
+    if (vz) vz.classList.add('drop-target-active');
   });
-  fdmSection.addEventListener('dragleave', e => {
-    if (!fdmSection.contains(e.relatedTarget)) {
-      visualZone.classList.remove('drop-target-active');
+  document.addEventListener('dragleave', (e) => {
+    const fdm = document.getElementById('view-queue-fdm');
+    if (fdm && !fdm.contains(e.relatedTarget)) {
+      const vz = fdm.querySelector('.queue-main') || fdm;
+      vz.classList.remove('drop-target-active');
     }
   });
-  fdmSection.addEventListener('drop', e => {
+  document.addEventListener('drop', (e) => {
+    if (!inFdm(e)) return;
     const needId = e.dataTransfer.getData('application/x-need-id');
     const fallback = e.dataTransfer.getData('text/plain');
-    const isFallbackNeed = fallback && fallback.startsWith('need:');
-    if (!needId && !isFallbackNeed) return; // not a Priority drop
+    const id = needId || (fallback && fallback.indexOf('need:') === 0 ? fallback.slice(5) : null);
+    if (!id) return;                          // not a Part Needed drag
     e.preventDefault();
-    visualZone.classList.remove('drop-target-active');
-    const id = needId || fallback.slice(5);
+    const fdm = document.getElementById('view-queue-fdm');
+    const vz = fdm && (fdm.querySelector('.queue-main') || fdm);
+    if (vz) vz.classList.remove('drop-target-active');
     const need = (state.partsNeeded || []).find(n => n.id === id);
     if (!need) return;
     need.placedAt = new Date().toISOString();
