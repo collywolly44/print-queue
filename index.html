@@ -4084,6 +4084,26 @@ body.is-gridiron .app { grid-template-columns: 1fr !important; }
 /* Hide the Locate Parts button (it's collin-only) explicitly under gridiron */
 body.is-gridiron #btn-locate-mobile { display: none !important; }
 
+/* Gridiron: compact Count Parts + Recount buttons side by side, and no
+   Manually Update Stock section. */
+body.is-gridiron .inv-count-row { display: flex; gap: 10px; margin-bottom: 20px; }
+body.is-gridiron .inv-count-btn {
+  width: auto; flex: 1; font-size: 15px; padding: 12px 10px;
+  min-height: 0; margin-bottom: 0; letter-spacing: 0.04em;
+}
+body.is-gridiron #btn-recount-mobile { display: block; }
+body.is-gridiron .manual-stock-box { display: none !important; }
+/* Recount button: greyed out by default, red outline when parts await recount */
+.inv-recount-btn {
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink-faint);
+  opacity: 0.5; font-weight: 700;
+}
+.inv-recount-btn:disabled { cursor: default; }
+.inv-recount-btn.has-recount {
+  opacity: 1; cursor: pointer;
+  background: var(--panel); border: 2px solid var(--red); color: var(--red);
+}
+
 /* Permanent Priority panel in the sidebar (where Part Needed lands).
    Items are draggable into the resin kanban or the FDM queue. */
 .sidebar-priority {
@@ -5484,8 +5504,13 @@ body.mode-mobile .mobile-only { display: block; }
 
         <div class="inv-mobile-title">Inventory</div>
 
-        <!-- Uncounted Parts button (top-priority action) -->
-        <button class="btn btn-primary inv-mobile-btn" id="btn-walkthrough-mobile">Uncounted Parts</button>
+        <!-- Count / Recount buttons. On gridiron these render as two small
+             side-by-side buttons ("Count Parts" + "Recount"); on other accounts
+             the count button stays the original large "Uncounted Parts". -->
+        <div class="inv-count-row" id="inv-count-row">
+          <button class="btn btn-primary inv-mobile-btn inv-count-btn" id="btn-walkthrough-mobile">Uncounted Parts</button>
+          <button class="btn inv-count-btn inv-recount-btn" id="btn-recount-mobile" hidden disabled>Recount</button>
+        </div>
 
         <!-- Locate Parts button — only shown to the gridiron account -->
         <button class="btn inv-mobile-btn inv-locate-btn" id="btn-locate-mobile" hidden style="background:var(--panel);border:1px solid var(--green);color:var(--green);">
@@ -6028,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 73;
+const APP_BUILD = 74;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -10546,6 +10571,7 @@ function renderInventory() {
     }
   });
   renderInventoryHistory();
+  if (typeof updateRecountButton === 'function') updateRecountButton();
 }
 
 function renderInventoryHistory() {
@@ -13550,6 +13576,32 @@ const WT = {
 
 document.getElementById('btn-walkthrough').addEventListener('click', () => WT.start());
 document.getElementById('btn-walkthrough-mobile').addEventListener('click', () => WT.start());
+document.getElementById('btn-recount-mobile').addEventListener('click', () => {
+  const b = document.getElementById('btn-recount-mobile');
+  if (b && b.disabled) return;
+  WT.start();
+  WT.pickLocation('recount');   // jump straight into the Recount pile
+});
+
+// Enable/label the Recount button based on how many parts are flagged for recount
+// (parts whose location is 'recount'). Greyed + disabled when none; red-outlined
+// and clickable when there are.
+function updateRecountButton() {
+  const btn = document.getElementById('btn-recount-mobile');
+  if (!btn) return;
+  let n = 0;
+  const pl = state.partLocations || {};
+  for (const p in pl) if (pl[p] === 'recount') n++;
+  if (n > 0) {
+    btn.disabled = false;
+    btn.classList.add('has-recount');
+    btn.textContent = 'Recount (' + n + ')';
+  } else {
+    btn.disabled = true;
+    btn.classList.remove('has-recount');
+    btn.textContent = 'Recount';
+  }
+}
 
 // ============================================================
 // PART NEEDED (mobile inventory landing)
@@ -13987,6 +14039,13 @@ function applyAccountLockdown() {
   // Set the username text in the gridiron bar
   const nameEl = document.getElementById('gridiron-bar-name');
   if (nameEl) nameEl.textContent = username.toUpperCase();
+  // Gridiron: "Count Parts" + a compact "Recount" button; other accounts keep
+  // the original large "Uncounted Parts" button and no Recount button.
+  const cntBtn = document.getElementById('btn-walkthrough-mobile');
+  const rcBtn = document.getElementById('btn-recount-mobile');
+  if (cntBtn) cntBtn.textContent = isGridiron ? 'Count Parts' : 'Uncounted Parts';
+  if (rcBtn) rcBtn.hidden = !isGridiron;
+  if (isGridiron) updateRecountButton();
   if (isGridiron && state.view !== 'inventory') {
     switchView('inventory');
   }
