@@ -6028,7 +6028,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 71;
+const APP_BUILD = 72;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -14832,7 +14832,7 @@ function blobToNodes(blob) {
   const b = blob || {};
   const nodes = { orders: {}, library: {}, invEvents: {}, partsNeeded: {},
                   completed: {}, invHistory: {}, shipped: {}, meta: {} };
-  for (const o of (b.orders || [])) { const id = o && (o.orderId || o.id); if (id != null) nodes.orders[String(id)] = o; }
+  for (const o of (b.orders || [])) { const id = o && (o.id || o.orderId); if (id != null) nodes.orders[String(id)] = o; }
   for (const sku of Object.keys(b.library || {})) nodes.library[sku] = b.library[sku];
   for (const e of (b.invEvents || [])) if (e && e.id) nodes.invEvents[String(e.id)] = e;
   for (const n of (b.partsNeeded || [])) if (n && n.id != null) nodes.partsNeeded[String(n.id)] = n;
@@ -15036,8 +15036,12 @@ async function _doSyncPush() {
       // reached the cloud, and a refresh pulled the old list back. Write in
       // chunks via update(), and null out any orders removed since the last cloud
       // copy so a merge-write still deletes them (update() alone only adds/updates).
+      // Key by o.id (unique PER LINE ITEM via _rebuildStableId), NOT orderId.
+      // A multi-item order shares one orderId across several rows, so keying by
+      // orderId collapsed them to a single cloud entry and silently dropped the
+      // rest — the node held only the count of unique order numbers, not rows.
       const byId = {};
-      for (const o of (state.orders || [])) { const id = o && (o.orderId || o.id); if (id != null) byId[fbEncodeKey(String(id))] = transformKeys(o, fbEncodeKey); }
+      for (const o of (state.orders || [])) { const id = o && (o.id || o.orderId); if (id != null) byId[fbEncodeKey(String(id))] = transformKeys(o, fbEncodeKey); }
       let staleKeys = [];
       try { const cur = await window._fb.get(_node('orders')); if (cur.exists()) { const cv = cur.val(); for (const k in cv) if (!(k in byId)) staleKeys.push(k); } } catch {}
       const upd = {}; for (const k in byId) upd[k] = byId[k]; for (const k of staleKeys) upd[k] = null;
