@@ -3957,6 +3957,28 @@ body:not(.mode-mobile) .nav-paint-mobile-only { display: none !important; }
 .cloud-status.connected .cloud-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .cloud-status.connecting .cloud-dot { background: var(--amber); animation: cloud-pulse 1s ease-in-out infinite; }
 .cloud-status.offline .cloud-dot { background: var(--red); }
+/* Sync progress bar — shown at the top of the screen during a large push
+   (e.g. a CSV import or resume of an interrupted sync). Works on every account,
+   including gridiron where the corner cloud-status pill is hidden. */
+#sync-progress {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 2147483646;
+  height: 3px; background: rgba(255,255,255,0.08);
+  opacity: 0; transition: opacity .25s ease; pointer-events: none;
+}
+#sync-progress.show { opacity: 1; }
+#sync-progress-fill {
+  height: 100%; width: 0%;
+  background: var(--green); box-shadow: 0 0 8px var(--green);
+  transition: width .2s ease;
+}
+#sync-progress-label {
+  position: fixed; top: 8px; right: 12px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .04em;
+  color: var(--ink); background: rgba(20,20,24,0.92);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
+  padding: 3px 10px; opacity: 0; transition: opacity .25s ease; pointer-events: none;
+}
+#sync-progress.show #sync-progress-label { opacity: 1; }
 @keyframes cloud-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
@@ -5181,6 +5203,11 @@ body.mode-mobile .mobile-only { display: block; }
   <button class="cloud-signout" id="cloud-signout" title="Sign out">✕</button>
 </div>
 
+<div id="sync-progress" aria-hidden="true">
+  <div id="sync-progress-fill"></div>
+  <div id="sync-progress-label">Syncing…</div>
+</div>
+
 <div class="app">
   <!-- ============== SIDEBAR ============== -->
   <aside class="sidebar">
@@ -6001,7 +6028,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 68;
+const APP_BUILD = 70;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -14553,6 +14580,30 @@ function cloudStatus(state, label) {
   el.hidden = false;
 }
 
+// Top-of-screen sync progress bar. syncProgress(done, total) updates it;
+// (…, true) marks it finished (fills, then fades out); (…, false, true) hides on
+// error. Only _doSyncPush calls this, and only for a big change.
+let _syncProgHideTimer = null;
+function syncProgress(done, total, finished, errored) {
+  const bar = document.getElementById('sync-progress');
+  if (!bar) return;
+  const fill = document.getElementById('sync-progress-fill');
+  const label = document.getElementById('sync-progress-label');
+  clearTimeout(_syncProgHideTimer);
+  if (errored) { bar.classList.remove('show', 'done'); if (fill) fill.style.width = '0%'; return; }
+  if (finished || (total > 0 && done >= total)) {
+    if (fill) fill.style.width = '100%';
+    if (label) label.textContent = 'Synced';
+    bar.classList.add('show', 'done');
+    _syncProgHideTimer = setTimeout(() => { bar.classList.remove('show', 'done'); if (fill) fill.style.width = '0%'; }, 800);
+    return;
+  }
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  if (fill) fill.style.width = pct + '%';
+  if (label) label.textContent = 'Syncing ' + done + ' / ' + total;
+  bar.classList.add('show'); bar.classList.remove('done');
+}
+
 async function initFirebase() {
   try {
     bootStatus('Loading Firebase…');
@@ -14847,8 +14898,12 @@ function _attachListenersV2() {
     setFrom();
     if (_canon(getSlice()) !== before) _afterCloudApply();  // only redraw on a REAL change
   };
-  onNode('orders', v => applySlice(() => state.orders, () => { state.orders = objVals(v); }));
-  onNode('library', v => applySlice(() => state.library, () => { state.library = v || {}; }));
+  // On receiving orders/library from cloud, record the synced signature so this
+  // device doesn't redundantly re-push the whole node on its next save (which
+  // doubled bulk writes and sent large payloads that stalled the phone). Only a
+  // device that actually EDITS orders/library will now push them.
+  onNode('orders', v => applySlice(() => state.orders, () => { state.orders = objVals(v); _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || [])); }));
+  onNode('library', v => applySlice(() => state.library, () => { state.library = v || {}; _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {})); }));
   onNode('invEvents', v => {
     const before = _canon(state.invEvents);
     const byId = new Map();
@@ -14911,43 +14966,89 @@ function cloudSyncPush() {
 async function _doSyncPush() {
   if (!_fbReady || !_fbUser || _staleBuild || !_syncReadyV2) return;
   try {
-    const oSig = cheapHash(JSON.stringify(state.orders || []));
-    if (oSig !== _lastPushedOrdersSig) {
-      const byId = {}; for (const o of (state.orders || [])) { const id = o && (o.orderId || o.id); if (id != null) byId[String(id)] = o; }
-      await window._fb.set(_node('orders'), transformKeys(byId, fbEncodeKey));
-      _lastPushedOrdersSig = oSig;
-    }
-    const lSig = cheapHash(JSON.stringify(state.library || {}));
-    if (lSig !== _lastPushedLibrarySig) {
-      await window._fb.set(_node('library'), transformKeys(state.library || {}, fbEncodeKey));
-      _lastPushedLibrarySig = lSig;
-    }
+    // --- Gather every pending write FIRST, so we know the total up front and can
+    // show an honest progress bar (done / total) for a big change. Nothing is
+    // sent until below; trackers are only marked pushed after each chunk lands.
+    const invPend = [];
     for (const e of (state.invEvents || [])) {
       if (!e || !e.id || _pushedInvEventIds.has(String(e.id))) continue;
-      await window._fb.set(_node('invEvents/' + fbEncodeKey(String(e.id))), transformKeys(e, fbEncodeKey));
-      _pushedInvEventIds.add(String(e.id));
+      const id = String(e.id);
+      invPend.push([fbEncodeKey(id), transformKeys(e, fbEncodeKey), () => _pushedInvEventIds.add(id)]);
     }
     const curNeeds = {}; for (const n of (state.partsNeeded || [])) if (n && n.id != null) curNeeds[String(n.id)] = n;
+    const needPend = [];
     for (const id of Object.keys(curNeeds)) {
       const j = JSON.stringify(curNeeds[id]);
-      if (_lastPushedNeeds[id] !== j) { await window._fb.set(_node('partsNeeded/' + fbEncodeKey(id)), transformKeys(curNeeds[id], fbEncodeKey)); _lastPushedNeeds[id] = j; }
+      if (_lastPushedNeeds[id] !== j) needPend.push([fbEncodeKey(id), transformKeys(curNeeds[id], fbEncodeKey), () => { _lastPushedNeeds[id] = j; }]);
     }
     for (const id of Object.keys(_lastPushedNeeds)) {
-      if (!(id in curNeeds)) { try { await window._fb.dbMod.remove(_node('partsNeeded/' + fbEncodeKey(id))); } catch {} delete _lastPushedNeeds[id]; }
+      if (!(id in curNeeds)) needPend.push([fbEncodeKey(id), null, () => { delete _lastPushedNeeds[id]; }]);
     }
-    const pushLog = async (arr, path) => {
+    const logJobs = [];
+    const mkLog = (arr, path) => {
+      const pend = [];
       for (const x of (arr || [])) { const k = x && (x.uid || x.id); if (!k || _pushedLogKeys.has(String(k))) continue;
-        await window._fb.set(_node(path + '/' + fbEncodeKey(String(k))), transformKeys(x, fbEncodeKey)); _pushedLogKeys.add(String(k)); }
+        const kk = String(k);
+        pend.push([fbEncodeKey(kk), transformKeys(x, fbEncodeKey), () => _pushedLogKeys.add(kk)]); }
+      if (pend.length) logJobs.push([_node(path), pend]);
     };
-    await pushLog(state.completedOrders, 'completed');
-    await pushLog(state.inventoryHistory, 'invHistory');
-    await pushLog(state.shippedHistory, 'shipped');
+    mkLog(state.completedOrders, 'completed');
+    mkLog(state.inventoryHistory, 'invHistory');
+    mkLog(state.shippedHistory, 'shipped');
+
+    const oSig = cheapHash(JSON.stringify(state.orders || []));
+    const lSig = cheapHash(JSON.stringify(state.library || {}));
     const mSig = _metaSig();
-    if (mSig !== _lastPushedMetaSig) { await window._fb.set(_node('meta'), transformKeys(_metaFromState(), fbEncodeKey)); _lastPushedMetaSig = mSig; }
+    const ordersChanged = oSig !== _lastPushedOrdersSig;
+    const libraryChanged = lSig !== _lastPushedLibrarySig;
+    const metaChanged = mSig !== _lastPushedMetaSig;
+
+    const logCount = logJobs.reduce((s, j) => s + j[1].length, 0);
+    const totalItems = invPend.length + needPend.length + logCount
+      + (ordersChanged ? 1 : 0) + (libraryChanged ? 1 : 0) + (metaChanged ? 1 : 0);
+
+    // Show the bar only for a BIG change so routine single edits don't flash it.
+    const showBar = totalItems >= 40;
+    let done = 0;
+    if (showBar) syncProgress(0, totalItems);
+    const tick = (n) => { done += n; if (showBar) syncProgress(done, totalItems); };
+
+    // Batched multi-path writes: instead of one round-trip per event (which
+    // stalls Safari on ~1,000-event imports/resets so the phone never catches
+    // up), send them in chunks via Firebase update(). Keys/values/encoding are
+    // identical to the old per-item set(); ids are only marked pushed after
+    // their chunk's write resolves, so a failure re-pushes exactly the misses.
+    const CHUNK = 150;
+    const _batch = async (baseNode, pend) => {
+      for (let i = 0; i < pend.length; i += CHUNK) {
+        const chunk = pend.slice(i, i + CHUNK);
+        const obj = {}; for (const p of chunk) obj[p[0]] = p[1];
+        await window._fb.dbMod.update(baseNode, obj);
+        for (const p of chunk) if (p[2]) p[2]();
+        tick(chunk.length);
+      }
+    };
+
+    if (ordersChanged) {
+      const byId = {}; for (const o of (state.orders || [])) { const id = o && (o.orderId || o.id); if (id != null) byId[String(id)] = o; }
+      await window._fb.set(_node('orders'), transformKeys(byId, fbEncodeKey));
+      _lastPushedOrdersSig = oSig; tick(1);
+    }
+    if (libraryChanged) {
+      await window._fb.set(_node('library'), transformKeys(state.library || {}, fbEncodeKey));
+      _lastPushedLibrarySig = lSig; tick(1);
+    }
+    await _batch(_node('invEvents'), invPend);
+    await _batch(_node('partsNeeded'), needPend);
+    for (const [node, pend] of logJobs) await _batch(node, pend);
+    if (metaChanged) { await window._fb.set(_node('meta'), transformKeys(_metaFromState(), fbEncodeKey)); _lastPushedMetaSig = mSig; tick(1); }
+
+    if (showBar) syncProgress(totalItems, totalItems, true);
     setUnsyncedFlag(false);
     cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online');
   } catch (e) {
     console.error('sync2 push failed:', e);
+    syncProgress(0, 0, false, true);
     setUnsyncedFlag(true);
     setTimeout(() => { if (_fbReady && _fbUser) _doSyncPush(); }, 4000);
   }
@@ -14957,17 +15058,41 @@ async function initSyncV2() {
   try {
     bootStatus('Syncing…');
     await _migrateIfNeeded();
-    for (const e of (state.invEvents || [])) if (e && e.id) _pushedInvEventIds.add(String(e.id));
-    for (const x of (state.completedOrders || [])) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); }
-    for (const x of (state.inventoryHistory || [])) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); }
-    for (const x of (state.shippedHistory || [])) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); }
-    for (const n of (state.partsNeeded || [])) if (n && n.id != null) _lastPushedNeeds[n.id] = JSON.stringify(n);
+    // Seed the "already pushed" trackers from what is ACTUALLY IN THE CLOUD, not
+    // from local state. If a previous session created Done/inventory events (or
+    // parts-needed changes) and the app was closed BEFORE the push finished,
+    // those events live in local state but never reached the cloud. Seeding from
+    // local would flag them "pushed" and orphan them forever. Seeding from cloud
+    // means the boot flush below resends exactly the ones that didn't make it —
+    // so an interrupted sync always finishes on the next open.
+    try {
+      const [cE, cC, cIH, cSH, cPN] = await Promise.all([
+        window._fb.get(_node('invEvents')),
+        window._fb.get(_node('completed')),
+        window._fb.get(_node('invHistory')),
+        window._fb.get(_node('shipped')),
+        window._fb.get(_node('partsNeeded')),
+      ]);
+      const _snapVal = (s) => (s && s.exists()) ? s.val() : null;
+      { const v = _snapVal(cE); if (v) for (const k in v) { const e = v[k]; if (e && e.id != null) _pushedInvEventIds.add(String(e.id)); } }
+      const _seedLog = (s) => { const v = _snapVal(s); if (!v) return; for (const k in v) { const x = v[k]; const kk = x && (x.uid || x.id); if (kk) _pushedLogKeys.add(String(kk)); } };
+      _seedLog(cC); _seedLog(cIH); _seedLog(cSH);
+      { const v = _snapVal(cPN); if (v) for (const k in v) { const n = transformKeys(v[k], fbDecodeKey); if (n && n.id != null) _lastPushedNeeds[String(n.id)] = JSON.stringify(n); } }
+    } catch (e) {
+      console.warn('sync2 seed-from-cloud failed; listeners will reconcile:', e);
+    }
     _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || []));
     _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {}));
     _lastPushedMetaSig = _metaSig();
     _attachListenersV2();
     _syncReadyV2 = true;
     cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online');
+    // Flush any local events that never reached the cloud (an interrupted sync
+    // from a previous session). Trackers were seeded from cloud above, so this
+    // pushes exactly the missing ones. Delayed so the initial cloud snapshots
+    // land first, and it runs with no user action — so closing the app mid-sync
+    // self-heals on the next open.
+    setTimeout(() => { if (_fbReady && _fbUser && _syncReadyV2 && !_staleBuild) _doSyncPush(); }, 1500);
   } catch (e) {
     console.error('initSyncV2 failed:', e);
     cloudStatus('offline', 'Sync error — data saved locally');
