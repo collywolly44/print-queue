@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 75;
+const APP_BUILD = 76;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -9650,6 +9650,11 @@ function _openNextPlateConfirm() {
   setTimeout(() => { input.focus(); input.select(); }, 50);
 }
 
+// Sticky membership for the "Needs Parts" filter. When that filter is active, a
+// SKU that was "needs" at the time you selected it stays in the list even after
+// you add its first part (most SKUs need several) — its badge flips to Defined
+// but it won't vanish mid-edit. Rebuilt each time the filter is (re)selected.
+let _needsStickySkus = null;
 function renderLibrary() {
   // Perf: skip when Library view is hidden. switchView calls this on nav-in.
   const view = document.getElementById('view-library');
@@ -9657,9 +9662,17 @@ function renderLibrary() {
   const all = libraryRows();
   const q = state.librarySearch.toLowerCase().trim();
   const sf = state.statusFilter;
+  if (sf === 'needs' && !_needsStickySkus) {
+    _needsStickySkus = new Set(all.filter(r => r.status === 'needs').map(r => r.sku));
+  }
   const filtered = all.filter(r => {
     if (q && !`${r.sku} ${r.name}`.toLowerCase().includes(q)) return false;
-    if (sf !== 'all' && r.status !== sf) return false;
+    if (sf === 'needs') {
+      // keep current "needs" SKUs plus any sticky ones from when the filter was applied
+      if (r.status !== 'needs' && !(_needsStickySkus && _needsStickySkus.has(r.sku))) return false;
+    } else if (sf !== 'all' && r.status !== sf) {
+      return false;
+    }
     return true;
   });
 
@@ -13121,6 +13134,13 @@ document.querySelectorAll('[data-status-filter]').forEach(b => {
     b.classList.add('active');
     state.statusFilter = b.dataset.statusFilter;
     state._libraryShown = 20;
+    // (Re)snapshot the "Needs Parts" membership so SKUs you fill in stay put
+    // until you click this filter again; clear it for any other filter.
+    if (state.statusFilter === 'needs') {
+      _needsStickySkus = new Set(libraryRows().filter(r => r.status === 'needs').map(r => r.sku));
+    } else {
+      _needsStickySkus = null;
+    }
     renderLibrary();
   });
 });
