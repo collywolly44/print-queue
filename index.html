@@ -6028,7 +6028,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 70;
+const APP_BUILD = 71;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -15005,7 +15005,7 @@ async function _doSyncPush() {
 
     const logCount = logJobs.reduce((s, j) => s + j[1].length, 0);
     const totalItems = invPend.length + needPend.length + logCount
-      + (ordersChanged ? 1 : 0) + (libraryChanged ? 1 : 0) + (metaChanged ? 1 : 0);
+      + (ordersChanged ? (state.orders || []).length : 0) + (libraryChanged ? 1 : 0) + (metaChanged ? 1 : 0);
 
     // Show the bar only for a BIG change so routine single edits don't flash it.
     const showBar = totalItems >= 40;
@@ -15030,9 +15030,24 @@ async function _doSyncPush() {
     };
 
     if (ordersChanged) {
-      const byId = {}; for (const o of (state.orders || [])) { const id = o && (o.orderId || o.id); if (id != null) byId[String(id)] = o; }
-      await window._fb.set(_node('orders'), transformKeys(byId, fbEncodeKey));
-      _lastPushedOrdersSig = oSig; tick(1);
+      // Orders can be ~1,700 rows. A single set() of the whole node is one giant
+      // write that stalls/fails on a weak connection (the same failure the
+      // inventory batching fixed) — so an import looked applied locally but never
+      // reached the cloud, and a refresh pulled the old list back. Write in
+      // chunks via update(), and null out any orders removed since the last cloud
+      // copy so a merge-write still deletes them (update() alone only adds/updates).
+      const byId = {};
+      for (const o of (state.orders || [])) { const id = o && (o.orderId || o.id); if (id != null) byId[fbEncodeKey(String(id))] = transformKeys(o, fbEncodeKey); }
+      let staleKeys = [];
+      try { const cur = await window._fb.get(_node('orders')); if (cur.exists()) { const cv = cur.val(); for (const k in cv) if (!(k in byId)) staleKeys.push(k); } } catch {}
+      const upd = {}; for (const k in byId) upd[k] = byId[k]; for (const k of staleKeys) upd[k] = null;
+      const okeys = Object.keys(upd);
+      for (let i = 0; i < okeys.length; i += CHUNK) {
+        const obj = {}; for (const k of okeys.slice(i, i + CHUNK)) obj[k] = upd[k];
+        await window._fb.dbMod.update(_node('orders'), obj);
+        tick(Math.min(CHUNK, okeys.length - i));
+      }
+      _lastPushedOrdersSig = oSig;
     }
     if (libraryChanged) {
       await window._fb.set(_node('library'), transformKeys(state.library || {}, fbEncodeKey));
