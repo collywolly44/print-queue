@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 74;
+const APP_BUILD = 75;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -13538,6 +13538,13 @@ const WT = {
       this.idx++;
       this.renderCurrent();
     } else {
+      // Gridiron: finishing the Recount pile returns to the Inventory landing,
+      // not the location picker (there's nothing left to recount).
+      if (this.currentLoc === 'recount' && document.body.classList.contains('is-gridiron')) {
+        toast('Recount complete');
+        this.exit();
+        return;
+      }
       const locName = this.currentLoc === 'all' ? 'all locations' : (LOCATION_LABELS[this.currentLoc] || '');
       toast(`Finished ${locName} — pick another or exit`);
       this.showPicker();
@@ -13691,14 +13698,28 @@ const PN = {
         const idx = state.partsNeeded.findIndex(n => n.id === id);
         if (idx === -1) return;
         const name = state.partsNeeded[idx].partName;
-        if (!state.deletedNeeds) state.deletedNeeds = {};
-        state.deletedNeeds[id] = new Date().toISOString();   // tombstone: propagates + stays deleted
-        state.partsNeeded.splice(idx, 1);
-        save();
-        PN.renderSentToday();
-        renderQueue();
-        renderSidebarCounts();
-        toast(`Removed "${name}" from Part Needed`);
+        const doRemove = () => {
+          const j = state.partsNeeded.findIndex(n => n.id === id);
+          if (j === -1) return;
+          if (!state.deletedNeeds) state.deletedNeeds = {};
+          state.deletedNeeds[id] = new Date().toISOString();   // tombstone: propagates + stays deleted
+          state.partsNeeded.splice(j, 1);
+          save();
+          PN.renderSentToday();
+          renderQueue();
+          renderSidebarCounts();
+          toast(`Removed "${name}" from Part Needed`);
+        };
+        // Gridiron: confirm before removing a part that was sent to the queue.
+        if (document.body.classList.contains('is-gridiron')) {
+          confirmModal({
+            title: 'Remove from queue?',
+            text: `Are you sure you want to remove "${name}" from the queue?`,
+            onConfirm: doRemove,
+          });
+        } else {
+          doRemove();
+        }
       });
     });
   },
