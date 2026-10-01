@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 80;
+const APP_BUILD = 82;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -15179,7 +15179,7 @@ function _attachListenersV2() {
   // OLD meta node: now used ONLY for the build gate and for back-compat with
   // devices still on the pre-split build. The real settings data lives in the
   // per-key map nodes + the settings node below, which are authoritative here.
-  onNode('meta', v => { checkBuildGate({ _appBuild: v.appBuild || 0 }); });
+  onNode('meta', v => { checkBuildGate({ _appBuild: v.appBuild || 0 }); const r = _revOf(v); if (r > _appliedRev.meta) _appliedRev.meta = r; });
   // Per-key settings maps — each merges independently, so simultaneous edits to
   // DIFFERENT keys (two phones counting different parts) all survive.
   for (const [field, node] of MAP_FIELDS) {
@@ -15336,7 +15336,11 @@ async function _doSyncPush() {
     // "Am I behind on this whole-node?" — true if the cloud's version is newer
     // than the last version we adopted. Used to refuse stale whole-node writes.
     const _behind = async (path, kind) => {
-      try { const s = await window._fb.get(_node(path + '/__ctl')); const r = (s.exists() && Number(s.val().rev)) || 0; return r > _appliedRev[kind]; } catch { return false; }
+      // Behind only if the cloud holds a REAL version (> 0) newer than ours.
+      // max(applied,0) so a missing/unversioned node (rev 0) never counts as
+      // "behind" — otherwise a brand-new node (e.g. settings) would be skipped
+      // forever because its rev 0 looks greater than the initial applied -1.
+      try { const s = await window._fb.get(_node(path + '/__ctl')); const r = (s.exists() && Number(s.val().rev)) || 0; return r > Math.max(_appliedRev[kind], 0); } catch { return false; }
     };
     if (libraryChanged) {
       if (await _behind('library', 'library')) { console.warn('sync2: library push skipped — behind cloud'); }
