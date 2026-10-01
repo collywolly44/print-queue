@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 84;
+const APP_BUILD = 86;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6418,8 +6418,9 @@ function _invDepositEvent(part, qty, reason) { addInvEvent(part, 'delta', Number
 function _invSetEvent(part, value, reason) { addInvEvent(part, 'set', Number(value) || 0, reason); }
 
 // Fold the event log into state.inventory. Per part: start from latest 'set'
-// (by timestamp+id), add every 'delta' at/after it; no set → sum all deltas
-// from 0. Clamp at 0. Deltas are commutative so order is irrelevant.
+// (by timestamp+id), then apply every 'delta' at/after it IN TIME ORDER, flooring
+// at 0 after each (stock can't go negative; an over-ship stops at 0 instead of
+// building a debt that would swallow later additions). No set → start from 0.
 function foldInvEvents(events) {
   events = Array.isArray(events) ? events : [];
   const byPart = {};
@@ -6436,15 +6437,22 @@ function foldInvEvents(events) {
           (String(e.at) === String(latestSet.at) && String(e.id) > String(latestSet.id)))) latestSet = e;
     }
     let total = latestSet ? (Number(latestSet.amt) || 0) : 0;
+    if (total < 0) total = 0;
+    // Gather the deltas at/after the latest set, apply them in TIMESTAMP ORDER,
+    // and floor at 0 after EACH one. A single end-clamp let a part that was
+    // shipped more than it ever stocked accrue a negative debt that silently ate
+    // later +1 prints (stock stuck at 0). Per-step flooring matches reality.
+    const deltas = [];
     for (const e of list) {
       if (e.op !== 'delta') continue;
       if (latestSet) {
         if (String(e.at) < String(latestSet.at)) continue;
         if (String(e.at) === String(latestSet.at) && String(e.id) <= String(latestSet.id)) continue;
       }
-      total += (Number(e.amt) || 0);
+      deltas.push(e);
     }
-    if (total < 0) total = 0;
+    deltas.sort((a, b) => String(a.at).localeCompare(String(b.at)) || String(a.id).localeCompare(String(b.id)));
+    for (const e of deltas) { total += (Number(e.amt) || 0); if (total < 0) total = 0; }
     if (total > 0) inv[part] = total;
   }
   return inv;
@@ -12696,13 +12704,15 @@ function importCSV(text) {
       // Capture the original stock the FIRST time we touch this part during
       // this import. Multiple shipped orders might subtract from the same part.
       if (!(part in inventoryBefore)) inventoryBefore[part] = have;
-      const next = Math.max(0, have - sub);
-      // If demand exceeded stock we CLAMP at 0 — record the shortfall so the
-      // ledger can explain why (sum of deltas won't equal the raw subtraction).
-      if (have - sub < 0) {
+      // Only subtract what's actually in stock — never drive a part below 0 in
+      // the event log. If more shipped than we had on record, record the
+      // shortfall (the difference) for the ledger, and subtract just the on-hand
+      // amount. A part already at 0 writes no csv-ship event at all.
+      const applied = Math.min(sub, have);
+      if (sub > have) {
         shippedShortfalls[part] = (shippedShortfalls[part] || 0) + (sub - have);
       }
-      _invDepositEvent(part, -sub, 'csv-ship');
+      if (applied > 0) _invDepositEvent(part, -applied, 'csv-ship');
       shippedSubtractions[part] = (shippedSubtractions[part] || 0) + sub;
     }
   }
