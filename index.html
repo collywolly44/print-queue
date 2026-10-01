@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 82;
+const APP_BUILD = 84;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6399,9 +6399,18 @@ function _uniqueId() {
 function addInvEvent(part, op, amt, reason) {
   if (!part) return;
   if (!Array.isArray(state.invEvents)) state.invEvents = [];
+  // Stamp a time guaranteed to sort AFTER every existing event for this part, so
+  // a new delta always lands after the part's latest 'set' (and a new set always
+  // supersedes). Without this, if another device's clock was ahead — or a recount
+  // 'set' and a Done '+1' shared a millisecond — the +1 could sort before the set
+  // and be dropped by the fold, so "+1" showed stock 0.
+  let maxAt = '';
+  for (const e of state.invEvents) { if (e && e.part === part && e.at && String(e.at) > maxAt) maxAt = String(e.at); }
+  let at = new Date().toISOString();
+  if (maxAt && at <= maxAt) { const t = Date.parse(maxAt); if (!isNaN(t)) at = new Date(t + 1).toISOString(); }
   state.invEvents.push({
     id: _uniqueId(), part, op, amt: Number(amt) || 0,
-    at: new Date().toISOString(), reason: reason || '',
+    at, reason: reason || '',
   });
   recomputeInventory();
 }
@@ -15446,8 +15455,13 @@ async function initSyncV2() {
           if ('lastImport' in s) state.lastImport = s.lastImport;
           _appliedRev.settings = _revOf(s);
         }
+        _lastPushedSettingsSig = _settingsSig();
+      } else {
+        // Settings node doesn't exist yet → force the boot flush to create it,
+        // so thresholds/priority start syncing immediately instead of only after
+        // the first manual change.
+        _lastPushedSettingsSig = '';
       }
-      _lastPushedSettingsSig = _settingsSig();
     } catch (e) {
       console.warn('sync2 settings seed failed; listeners will reconcile:', e);
     }
