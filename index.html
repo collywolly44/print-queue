@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 77;
+const APP_BUILD = 80;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -14921,6 +14921,80 @@ let _lastPushedOrdersSig = '', _lastPushedLibrarySig = '', _lastPushedMetaSig = 
 let _applyingCloud = false;
 let _syncPushTimer = null;
 
+// --- No-revert sync: version-gated whole-node adoption ----------------------
+// Each whole-node collection (orders, library, meta) carries a monotonic version
+// stamp (__ctl.rev). A device adopts a cloud copy ONLY if its version is higher
+// than the last one it applied — so a stale snapshot, a lagging echo, or a
+// half-written chunk stream (the CSV import writes orders in ~12 chunks) can
+// never overwrite newer data. The version is bumped ONCE, after all content is
+// written, so devices adopt only complete versions, atomically.
+let _deviceId = (() => {
+  try {
+    let d = localStorage.getItem('pq_device_id');
+    if (!d) { d = 'dev-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); localStorage.setItem('pq_device_id', d); }
+    return d;
+  } catch { return 'dev-' + Math.random().toString(36).slice(2, 10); }
+})();
+let _appliedRev = { orders: -1, library: -1, meta: -1, settings: -1 };
+function _revOf(v) { return (v && v.__ctl && Number(v.__ctl.rev)) || 0; }
+
+// --- Per-KEY settings sync (no whole-blob clobber) --------------------------
+// The map-type settings each sync as their own node, keyed by the map's key, and
+// are written PER KEY (only the keys a device changed). Two devices changing
+// different keys (e.g. two phones counting different parts) just write different
+// keys, which Firebase merges server-side — neither can wipe the other. On
+// receive we overlay any un-pushed local changes on top of the cloud copy, so a
+// device never loses an edit it hasn't sent yet and deletions still propagate.
+// [stateField, cloudNode]
+const MAP_FIELDS = [
+  ['countedParts', 'm_cp'], ['partLocations', 'm_pl'], ['assignments', 'm_asg'],
+  ['paintParts', 'm_pp'], ['trackedParts', 'm_tp'], ['recountPrevLoc', 'm_rpl'],
+  ['deletedNeeds', 'm_dn'],
+];
+let _lastPushedMaps = { countedParts: {}, partLocations: {}, assignments: {}, paintParts: {}, trackedParts: {}, recountPrevLoc: {}, deletedNeeds: {} };
+let _lastPushedSettingsSig = '';
+function _settingsFromState() {
+  return {
+    priority: state.priority || { resin: [], fdm: [] },
+    overdueStandard: state.overdueStandard || 18,
+    overdueVehicle: state.overdueVehicle || 28,
+    lastImport: state.lastImport || null,
+    appBuild: APP_BUILD,
+  };
+}
+function _settingsSig() {
+  const s = _settingsFromState();
+  return cheapHash(JSON.stringify([s.priority, s.overdueStandard, s.overdueVehicle, s.lastImport]));
+}
+// Overlay-merge a cloud map into local: adopt cloud, then re-apply any local key
+// that differs from what we last pushed (an un-pushed add/edit), and drop any
+// key we deleted locally but haven't pushed yet.
+function _mergeMapField(field, cloudMap) {
+  cloudMap = cloudMap || {};
+  const snap = _lastPushedMaps[field] || {};
+  const local = state[field] || {};
+  const merged = {};
+  for (const k of Object.keys(cloudMap)) merged[k] = cloudMap[k];
+  for (const k of Object.keys(local)) {
+    if (JSON.stringify(local[k]) !== JSON.stringify(snap[k])) merged[k] = local[k];   // un-pushed local add/edit
+  }
+  for (const k of Object.keys(snap)) {
+    if (!(k in local) && (k in merged)) delete merged[k];   // un-pushed local delete
+  }
+  state[field] = merged;
+  // What we now know is in the cloud becomes the new baseline; un-pushed overlay
+  // keys differ from it and get re-pushed on the next cycle.
+  _lastPushedMaps[field] = JSON.parse(JSON.stringify(cloudMap));
+}
+// Stamp a node with a strictly-higher version after its content is written.
+async function _writeNodeRev(path, kind) {
+  let cur = 0;
+  try { const s = await window._fb.get(_node(path + '/__ctl')); if (s.exists()) cur = Number(s.val().rev) || 0; } catch {}
+  const next = Math.max(cur, _appliedRev[kind]) + 1;
+  await window._fb.set(_node(path + '/__ctl'), { rev: next, by: _deviceId });
+  _appliedRev[kind] = next;
+}
+
 function _blobFromState() {
   return {
     orders: state.orders, library: state.library,
@@ -15024,8 +15098,28 @@ function _attachListenersV2() {
   // device doesn't redundantly re-push the whole node on its next save (which
   // doubled bulk writes and sent large payloads that stalled the phone). Only a
   // device that actually EDITS orders/library will now push them.
-  onNode('orders', v => applySlice(() => state.orders, () => { state.orders = objVals(v); _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || [])); }));
-  onNode('library', v => applySlice(() => state.library, () => { state.library = v || {}; _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {})); }));
+  // Orders/Library: adopt ONLY a newer complete version. Partial import chunks
+  // and lagging echoes share the old version and are ignored; the import bumps
+  // the version once at the end, so everyone adopts the full new list atomically.
+  onNode('orders', v => {
+    const rev = _revOf(v);
+    if (rev <= _appliedRev.orders) return;   // stale / partial / our own already-applied
+    _appliedRev.orders = rev;
+    applySlice(() => state.orders, () => {
+      state.orders = Object.keys(v).filter(k => k !== '__ctl').map(k => v[k]);
+      _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || []));
+    });
+  });
+  onNode('library', v => {
+    const rev = _revOf(v);
+    if (rev <= _appliedRev.library) return;
+    _appliedRev.library = rev;
+    applySlice(() => state.library, () => {
+      const lib = {}; for (const k of Object.keys(v)) if (k !== '__ctl') lib[k] = v[k];
+      state.library = lib;
+      _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {}));
+    });
+  });
   onNode('invEvents', v => {
     const before = _canon(state.invEvents);
     const byId = new Map();
@@ -15039,27 +15133,77 @@ function _attachListenersV2() {
     if (_canon(state.invEvents) !== before) _afterCloudApply();
   });
   onNode('partsNeeded', v => {
+    // Progression-merge instead of wholesale replace: a card only ever moves
+    // forward (waiting → placed → resolved), tombstones always win, and
+    // un-pushed local cards survive. A stale cloud snapshot can never un-resolve
+    // or revive a card.
     const before = _canon(state.partsNeeded);
-    state.partsNeeded = objVals(v); _lastPushedNeeds = {};
-    for (const n of state.partsNeeded) if (n && n.id != null) _lastPushedNeeds[n.id] = JSON.stringify(n);
+    const incoming = objVals(v);
+    const prevById = {};
+    for (const e of (state.partsNeeded || [])) if (e && e.id != null) prevById[e.id] = e;
+    const tomb = state.deletedNeeds || {};
+    const byId = new Map();
+    for (const e of incoming) {
+      if (!e || e.id == null || tomb[e.id]) continue;
+      let m = e;
+      const prev = prevById[e.id];
+      if (prev) {
+        if (prev.resolvedAt && !m.resolvedAt) m = Object.assign({}, m, { resolvedAt: prev.resolvedAt });
+        if (prev.placedMachine && !m.placedMachine && !m.resolvedAt) m = Object.assign({}, m, { placedMachine: prev.placedMachine, placedAt: prev.placedAt || m.placedAt, placedQueue: m.placedQueue || prev.placedQueue });
+        else if (prev.placedAt && !m.placedAt && !m.resolvedAt) m = Object.assign({}, m, { placedAt: prev.placedAt, placedQueue: m.placedQueue || prev.placedQueue });
+      }
+      byId.set(String(e.id), m);
+    }
+    // keep local-only cards (added here, not yet in cloud), unless tombstoned
+    for (const e of (state.partsNeeded || [])) {
+      if (e && e.id != null && !byId.has(String(e.id)) && !tomb[e.id]) byId.set(String(e.id), e);
+    }
+    state.partsNeeded = Array.from(byId.values());
+    // Mark what the CLOUD holds as pushed; anything we kept/progressed beyond
+    // cloud will differ and re-push on the next cycle.
+    _lastPushedNeeds = {};
+    for (const e of incoming) if (e && e.id != null) _lastPushedNeeds[String(e.id)] = JSON.stringify(e);
     if (_canon(state.partsNeeded) !== before) _afterCloudApply();
   });
-  onNode('completed', v => { state.completedOrders = objVals(v); for (const x of state.completedOrders) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
-  onNode('invHistory', v => { state.inventoryHistory = objVals(v); for (const x of state.inventoryHistory) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
-  onNode('shipped', v => { state.shippedHistory = objVals(v); for (const x of state.shippedHistory) { const k = x && (x.uid || x.id); if (k) _pushedLogKeys.add(String(k)); } });
-  onNode('meta', v => {
+  // History logs: union by id (append-only). A stale cloud snapshot can never
+  // drop entries this device already has.
+  const _mergeLog = (localArr, v) => {
+    const byId = new Map();
+    for (const x of objVals(v)) { const k = x && (x.uid || x.id); if (k) { byId.set(String(k), x); _pushedLogKeys.add(String(k)); } }
+    for (const x of (localArr || [])) { const k = x && (x.uid || x.id); if (k && !byId.has(String(k))) byId.set(String(k), x); }
+    return Array.from(byId.values());
+  };
+  onNode('completed', v => { state.completedOrders = _mergeLog(state.completedOrders, v); });
+  onNode('invHistory', v => { state.inventoryHistory = _mergeLog(state.inventoryHistory, v); });
+  onNode('shipped', v => { state.shippedHistory = _mergeLog(state.shippedHistory, v); });
+  // OLD meta node: now used ONLY for the build gate and for back-compat with
+  // devices still on the pre-split build. The real settings data lives in the
+  // per-key map nodes + the settings node below, which are authoritative here.
+  onNode('meta', v => { checkBuildGate({ _appBuild: v.appBuild || 0 }); });
+  // Per-key settings maps — each merges independently, so simultaneous edits to
+  // DIFFERENT keys (two phones counting different parts) all survive.
+  for (const [field, node] of MAP_FIELDS) {
+    onNode(node, v => {
+      const before = _canon(state[field]);
+      _mergeMapField(field, v || {});
+      if (_canon(state[field]) !== before) _afterCloudApply();
+    });
+  }
+  // Settings node (priority, thresholds, lastImport): low-concurrency, so
+  // version-gated whole like orders/library.
+  onNode('settings', v => {
     if (checkBuildGate({ _appBuild: v.appBuild || 0 })) return;
-    const _mb = () => _canon([state.assignments, state.paintParts, state.priority, state.countedParts, state.deletedNeeds, state.trackedParts, state.partLocations, state.recountPrevLoc, state.overdueStandard, state.overdueVehicle, state.lastImport]);
-    const before = _mb();
-    state.assignments = v.assignments || {}; state.paintParts = v.paintParts || {};
-    state.priority = v.priority || { resin: [], fdm: [] }; state.countedParts = v.countedParts || {};
-    state.deletedNeeds = v.deletedNeeds || {}; state.trackedParts = v.trackedParts || {};
-    state.partLocations = v.partLocations || {}; state.recountPrevLoc = v.recountPrevLoc || {};
-    if (v.overdueStandard) state.overdueStandard = v.overdueStandard;
-    if (v.overdueVehicle) state.overdueVehicle = v.overdueVehicle;
+    const rev = _revOf(v);
+    if (rev <= _appliedRev.settings) return;
+    _appliedRev.settings = rev;
+    const _sb = () => _canon([state.priority, state.overdueStandard, state.overdueVehicle, state.lastImport]);
+    const before = _sb();
+    if (v.priority) state.priority = v.priority;
+    if (typeof v.overdueStandard === 'number') state.overdueStandard = v.overdueStandard;
+    if (typeof v.overdueVehicle === 'number') state.overdueVehicle = v.overdueVehicle;
     if ('lastImport' in v) state.lastImport = v.lastImport;
-    _lastPushedMetaSig = _metaSig();
-    if (_mb() !== before) _afterCloudApply();
+    _lastPushedSettingsSig = _settingsSig();
+    if (_sb() !== before) _afterCloudApply();
   });
 }
 function _afterCloudApply() {
@@ -15169,25 +15313,70 @@ async function _doSyncPush() {
       // rest — the node held only the count of unique order numbers, not rows.
       const byId = {};
       for (const o of (state.orders || [])) { const id = o && (o.id || o.orderId); if (id != null) byId[fbEncodeKey(String(id))] = transformKeys(o, fbEncodeKey); }
-      let staleKeys = [];
-      try { const cur = await window._fb.get(_node('orders')); if (cur.exists()) { const cv = cur.val(); for (const k in cv) if (!(k in byId)) staleKeys.push(k); } } catch {}
-      const upd = {}; for (const k in byId) upd[k] = byId[k]; for (const k of staleKeys) upd[k] = null;
-      const okeys = Object.keys(upd);
-      for (let i = 0; i < okeys.length; i += CHUNK) {
-        const obj = {}; for (const k of okeys.slice(i, i + CHUNK)) obj[k] = upd[k];
-        await window._fb.dbMod.update(_node('orders'), obj);
-        tick(Math.min(CHUNK, okeys.length - i));
+      let staleKeys = []; let cloudRev = 0;
+      try { const cur = await window._fb.get(_node('orders')); if (cur.exists()) { const cv = cur.val(); cloudRev = (cv.__ctl && Number(cv.__ctl.rev)) || 0; for (const k in cv) if (k !== '__ctl' && !(k in byId)) staleKeys.push(k); } } catch {}
+      // GUARD: if the cloud is ahead of what we've adopted, another device changed
+      // orders since we last synced. Do NOT overwrite with our (possibly stale)
+      // copy — skip; the listener will deliver the newer version and we adopt it.
+      // This is what stops a slept/behind device from clobbering orders.
+      if (cloudRev > _appliedRev.orders) {
+        console.warn('sync2: orders push skipped — behind cloud (rev', cloudRev, '> applied', _appliedRev.orders, ')');
+      } else {
+        const upd = {}; for (const k in byId) upd[k] = byId[k]; for (const k of staleKeys) upd[k] = null;
+        const okeys = Object.keys(upd);
+        for (let i = 0; i < okeys.length; i += CHUNK) {
+          const obj = {}; for (const k of okeys.slice(i, i + CHUNK)) obj[k] = upd[k];
+          await window._fb.dbMod.update(_node('orders'), obj);
+          tick(Math.min(CHUNK, okeys.length - i));
+        }
+        await _writeNodeRev('orders', 'orders');   // bump version ONCE, after all chunks → atomic adoption
+        _lastPushedOrdersSig = oSig;
       }
-      _lastPushedOrdersSig = oSig;
     }
+    // "Am I behind on this whole-node?" — true if the cloud's version is newer
+    // than the last version we adopted. Used to refuse stale whole-node writes.
+    const _behind = async (path, kind) => {
+      try { const s = await window._fb.get(_node(path + '/__ctl')); const r = (s.exists() && Number(s.val().rev)) || 0; return r > _appliedRev[kind]; } catch { return false; }
+    };
     if (libraryChanged) {
-      await window._fb.set(_node('library'), transformKeys(state.library || {}, fbEncodeKey));
-      _lastPushedLibrarySig = lSig; tick(1);
+      if (await _behind('library', 'library')) { console.warn('sync2: library push skipped — behind cloud'); }
+      else { await window._fb.set(_node('library'), transformKeys(state.library || {}, fbEncodeKey)); await _writeNodeRev('library', 'library'); _lastPushedLibrarySig = lSig; tick(1); }
     }
     await _batch(_node('invEvents'), invPend);
     await _batch(_node('partsNeeded'), needPend);
     for (const [node, pend] of logJobs) await _batch(node, pend);
-    if (metaChanged) { await window._fb.set(_node('meta'), transformKeys(_metaFromState(), fbEncodeKey)); _lastPushedMetaSig = mSig; tick(1); }
+    if (metaChanged) {
+      // Back-compat only: keep the old whole-meta node for devices still on the
+      // pre-split build (and as a build-gate carrier). 80+ devices ignore its
+      // fields on receive; the per-key nodes below are authoritative.
+      if (await _behind('meta', 'meta')) { console.warn('sync2: meta push skipped — behind cloud'); }
+      else { await window._fb.set(_node('meta'), transformKeys(_metaFromState(), fbEncodeKey)); await _writeNodeRev('meta', 'meta'); _lastPushedMetaSig = mSig; tick(1); }
+    }
+    // Per-key settings maps: write ONLY the keys this device changed/removed, so
+    // two devices editing different keys never clobber each other. No behind-guard
+    // needed — per-key writes can't overwrite keys we didn't touch.
+    for (const [field, node] of MAP_FIELDS) {
+      const cur = state[field] || {};
+      const snap = _lastPushedMaps[field] || {};
+      const upd = {};
+      for (const k of Object.keys(cur)) { if (JSON.stringify(cur[k]) !== JSON.stringify(snap[k])) upd[fbEncodeKey(k)] = transformKeys(cur[k], fbEncodeKey); }
+      for (const k of Object.keys(snap)) { if (!(k in cur)) upd[fbEncodeKey(k)] = null; }
+      const ukeys = Object.keys(upd);
+      if (ukeys.length) {
+        for (let i = 0; i < ukeys.length; i += CHUNK) {
+          const obj = {}; for (const k of ukeys.slice(i, i + CHUNK)) obj[k] = upd[k];
+          await window._fb.dbMod.update(_node(node), obj);
+          tick(Math.min(CHUNK, ukeys.length - i));
+        }
+        _lastPushedMaps[field] = JSON.parse(JSON.stringify(cur));
+      }
+    }
+    // Settings (priority / thresholds / lastImport): version-gated whole, guarded.
+    const sSig = _settingsSig();
+    if (sSig !== _lastPushedSettingsSig) {
+      if (await _behind('settings', 'settings')) { console.warn('sync2: settings push skipped — behind cloud'); }
+      else { await window._fb.set(_node('settings'), transformKeys(_settingsFromState(), fbEncodeKey)); await _writeNodeRev('settings', 'settings'); _lastPushedSettingsSig = sSig; tick(1); }
+    }
 
     if (showBar) syncProgress(totalItems, totalItems, true);
     setUnsyncedFlag(false);
@@ -15226,6 +15415,37 @@ async function initSyncV2() {
       { const v = _snapVal(cPN); if (v) for (const k in v) { const n = transformKeys(v[k], fbDecodeKey); if (n && n.id != null) _lastPushedNeeds[String(n.id)] = JSON.stringify(n); } }
     } catch (e) {
       console.warn('sync2 seed-from-cloud failed; listeners will reconcile:', e);
+    }
+    // Per-key settings maps: at load, adopt the cloud copy of each map wholesale
+    // (so a key another device deleted stays deleted — no resurrection) and set
+    // the push baseline to it. If a map node doesn't exist yet (first run on the
+    // split), leave local as-is with an empty baseline so the boot flush writes
+    // it up once. In-session, the per-key merge takes over.
+    try {
+      for (const [field, node] of MAP_FIELDS) {
+        const s = await window._fb.get(_node(node));
+        if (s && s.exists()) {
+          const cloud = transformKeys(s.val(), fbDecodeKey) || {};
+          state[field] = cloud;
+          _lastPushedMaps[field] = JSON.parse(JSON.stringify(cloud));
+        } else {
+          _lastPushedMaps[field] = {};   // first run → boot flush bootstraps this node
+        }
+      }
+      const sv = await window._fb.get(_node('settings'));
+      if (sv && sv.exists()) {
+        const s = transformKeys(sv.val(), fbDecodeKey) || {};
+        if (!checkBuildGate({ _appBuild: s.appBuild || 0 })) {
+          if (s.priority) state.priority = s.priority;
+          if (typeof s.overdueStandard === 'number') state.overdueStandard = s.overdueStandard;
+          if (typeof s.overdueVehicle === 'number') state.overdueVehicle = s.overdueVehicle;
+          if ('lastImport' in s) state.lastImport = s.lastImport;
+          _appliedRev.settings = _revOf(s);
+        }
+      }
+      _lastPushedSettingsSig = _settingsSig();
+    } catch (e) {
+      console.warn('sync2 settings seed failed; listeners will reconcile:', e);
     }
     _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || []));
     _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {}));
@@ -15551,10 +15771,20 @@ function wakeCloud() {
 // force it back online and flush any unsynced push. We NEVER call the old
 // resyncFromCloud/wakeCloud (those read the retired 'workspace' blob and would
 // clobber v2 state).
+let _wakeFlushTimer = null;
 function _wakeV2() {
   if (!_fbReady || !_fbDb || !_fbUser) return;
   try { window._fb.dbMod.goOnline(_fbDb); } catch {}
-  cloudSyncPush();   // flush anything unsynced; listeners re-fire current values
+  // PULL BEFORE PUSH. A device that was asleep/backgrounded (phone socket
+  // suspended, laptop lid closed) wakes with stale data. Flushing first would
+  // shove that stale data up. Instead, going online makes the listeners re-fire
+  // with the latest cloud, which the version gates adopt; we defer the flush so
+  // that catch-up happens first. The push guards above are the hard backstop —
+  // even if the flush races, a behind device refuses to overwrite whole-nodes.
+  clearTimeout(_wakeFlushTimer);
+  _wakeFlushTimer = setTimeout(() => {
+    if (_fbReady && _fbUser && !_staleBuild && _syncReadyV2) cloudSyncPush();
+  }, 1500);
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') _wakeV2();
