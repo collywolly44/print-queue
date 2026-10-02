@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 89;
+const APP_BUILD = 91;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6520,15 +6520,18 @@ function recomputeInventory() {
 // Fix: stamp a fresh 'set' per part at the restored value, dated NOW, so the
 // restored numbers are the newest 'set' for every part and therefore win the
 // fold on every device — no deletes, no resurrection.
-function _reseedInventoryAfterRestore() {
+function _reseedInventoryAfterRestore(extraParts) {
   const now = new Date().toISOString();
   const inv = state.inventory || {};
   if (!Array.isArray(state.invEvents)) state.invEvents = [];
-  for (const part of Object.keys(inv)) {
-    state.invEvents.push({
-      id: _uniqueId(), part, op: 'set', amt: Number(inv[part]) || 0,
-      at: now, reason: 'restore',
-    });
+  // v1.91: also re-stamp parts that are 0 in the restore (the count leaves them
+  // out) and parts that had stock before the restore — otherwise the cloud's
+  // newer numbers for those parts merged back in and undid the restore.
+  const parts = new Set(Object.keys(inv));
+  for (const p of (extraParts || [])) if (p) parts.add(p);
+  for (const e of state.invEvents) if (e && e.part) parts.add(e.part);
+  for (const part of parts) {
+    addInvEvent(part, 'set', Number(inv[part]) || 0, 'restore');   // stamped after every existing event for the part
   }
   recomputeInventory();
 }
@@ -6796,6 +6799,7 @@ function save() {
   // Push to cloud via the per-collection sync (v2): only the changed pieces are
   // written; a device never uploads a whole blob, so stale data can't overwrite.
   cloudSyncPush();
+  try { if (!_applyingCloud) _persistPendingSync(); } catch {}
 }
 
 // Debounced cloud push. Combines rapid edits (typing, +/- clicks, etc.) into
@@ -7459,7 +7463,7 @@ function thinSnapshots(snaps) {
 //   - Skip taking a new snapshot if the last one was within SNAPSHOT_MIN_INTERVAL_MS
 //     AND the data is "small" (essentially identical) — but always record if
 //     a major shape change happened (e.g. library shrunk meaningfully).
-function recordSnapshot(blob) {
+function recordSnapshot(blob, force) {
   try {
     const snaps = loadSnapshots();
     const now = Date.now();
@@ -7483,7 +7487,7 @@ function recordSnapshot(blob) {
       const sinceLast = now - last.at;
       // Always take a snapshot if a destructive change happened (lots of data removed).
       const isDestructive = looksDestructive(last.data, blob);
-      if (!isDestructive && sinceLast < SNAPSHOT_MIN_INTERVAL_MS) {
+      if (!force && !isDestructive && sinceLast < SNAPSHOT_MIN_INTERVAL_MS) {
         // Skip — too soon and nothing alarming.
         return;
       }
@@ -14478,8 +14482,11 @@ function applyRestoreBlob(blob, opts) {
     state.invEvents = blob.invEvents;
     recomputeInventory();
   } else {
+    // Older backup with only a stock map: rebuild the log from THAT map (the old
+    // code kept the current log when one existed, so the restore changed nothing).
     state.inventory = blob.inventory || {};
-    migrateInventoryToEvents();   // seed events from the bare map so future syncs are event-based
+    state.invEvents = _eventsFromMap(state.inventory);
+    recomputeInventory();
   }
   state.countedParts = blob.countedParts || {};
   state.trackedParts = blob.trackedParts || {};
@@ -14642,6 +14649,7 @@ document.getElementById('restore-input').addEventListener('change', e => {
         title: 'Restore from backup?',
         text: 'This replaces all current data with the backup contents.',
         onConfirm: () => {
+          const _partsBefore = new Set((state.invEvents || []).map(e => e && e.part).filter(Boolean));
           applyRestoreBlob(blob);
           // Restored order edits are what you want now: let them sync, and lift any
           // tombstone so they aren't dropped as "deleted".
@@ -14650,7 +14658,7 @@ document.getElementById('restore-input').addEventListener('change', e => {
             oe.sv = oe.sv || 2;
             if (state.deletedEdits) delete state.deletedEdits[oe.id];
           }
-          _reseedInventoryAfterRestore();  // make restored inventory win over cloud's newer events
+          _reseedInventoryAfterRestore(_partsBefore);  // make restored inventory win over cloud's newer events
           save();                          // persist + push the fresh 'set' events to the cloud
           toast('Restored from backup');
           switchView('queue-resin');
@@ -14727,7 +14735,13 @@ function renderSnapshotList() {
             inventoryHistory: state.inventoryHistory,
             shippedHistory: state.shippedHistory,
           });
+          // v1.91: keep the current data as a snapshot first (the dialog promises
+          // this; before, edits since the last auto-snapshot were simply lost).
+          try { recordSnapshot(buildBackupBlob(), true); } catch {}
+          const _partsBefore = new Set((state.invEvents || []).map(e => e && e.part).filter(Boolean));
           applyRestoreBlob(merged);
+          _reseedInventoryAfterRestore(_partsBefore);
+          save();
           toast(`Restored to ${formatSnapshotTime(snap.at)}`);
           renderSnapshotList();
         },
@@ -15049,6 +15063,7 @@ function transformKeys(value, fn) {
   if (value && typeof value === 'object') {
     const out = {};
     for (const k of Object.keys(value)) {
+      if (value[k] === undefined) continue;   // Firebase rejects undefined (it blocked the whole upload)
       out[fn(k)] = transformKeys(value[k], fn);
     }
     return out;
@@ -15068,6 +15083,121 @@ let _syncReadyV2 = false;
 let _pushedInvEventIds = new Set();
 let _pushedLogKeys = new Set();
 let _lastPushedNeeds = {};
+// v1.90: content signature of each card as last seen in / sent to the cloud,
+// ignoring the local-only _rev stamp (which changes on every device and must not
+// make an untouched card look "changed here").
+let _lastPushedNeedSig = {};
+function _pnSig(e) { if (!e) return ''; const { _rev, ...rest } = e; return JSON.stringify(rest); }
+function _setPushedNeed(id, e) { _lastPushedNeeds[id] = JSON.stringify(e); _lastPushedNeedSig[id] = _pnSig(e); }
+function _clearPushedNeed(id) { delete _lastPushedNeeds[id]; delete _lastPushedNeedSig[id]; }
+// --- Survive a quick close (v1.90) ------------------------------------------
+// Uploads happen ~¼s after a change. If the app is closed/locked inside that
+// window, the change exists only locally. We remember WHAT is still waiting to
+// upload (small lists, not whole copies) so the next open re-applies it on top of
+// the cloud copy instead of silently dropping it.
+const PENDING_SYNC_KEY = 'pq_pending_sync_v1';
+let _bootPending = null;     // what was waiting to upload when the app last closed
+let _pnFirstSnapDone = false;
+function _readPendingSync() {
+  try { const r = localStorage.getItem(PENDING_SYNC_KEY); return r ? JSON.parse(r) : null; } catch { return null; }
+}
+function _persistPendingSync() {
+  if (!_syncReadyV2) return;
+  try {
+    const maps = [];
+    for (const [field] of MAP_FIELDS) {
+      const cur = state[field] || {}, snap = _lastPushedMaps[field] || {};
+      for (const k of Object.keys(cur)) if (JSON.stringify(cur[k]) !== JSON.stringify(snap[k])) maps.push([field, k, cur[k]]);
+      for (const k of Object.keys(snap)) if (!(k in cur)) maps.push([field, k, null]);
+    }
+    const needs = [];
+    for (const n of (state.partsNeeded || [])) {
+      if (n && n.id != null && _lastPushedNeedSig[String(n.id)] !== _pnSig(n)) needs.push(String(n.id));
+    }
+    const rec = {
+      maps, needs,
+      ordersSig: _lastPushedOrdersSig, ordersRev: _appliedRev.orders,
+      librarySig: _lastPushedLibrarySig, libraryRev: _appliedRev.library,
+    };
+    localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(rec));
+  } catch (e) { /* storage full — best effort */ }
+}
+// --- Daily cloud housekeeping (v1.91) ---------------------------------------
+// The cloud only ever grew: resolved Part Needed cards (invisible, ~1,700),
+// history logs, and inventory events already replaced by a later count. Every
+// device downloads all of it on open and keeps 3 copies on the phone. This trims
+// ONLY data that can't affect any number or anything on screen:
+//   - Part Needed cards resolved more than 30 days ago (tombstoned, so no device
+//     can bring them back; the History/Stats record of them is untouched)
+//   - stock-change events made obsolete by a LATER manual count of that part
+//   - history logs beyond a generous size (oldest first)
+// Runs on at most one device per day (collin, desktop), never in save().
+const HOUSEKEEP_KEY = 'pq_housekeep_at';
+const HK_LOG_CAPS = { completed: 1000, invHistory: 2500, shipped: 600 };
+async function _housekeepCloud() {
+  if (!_fbReady || !_fbUser || !_syncReadyV2 || _staleBuild) return;
+  const who = (_fbUser && _fbUser.email) ? displayName(_fbUser.email).toLowerCase() : '';
+  if (who !== 'collin' || !document.body.classList.contains('mode-desktop')) return;
+  let last = 0; try { last = Number(localStorage.getItem(HOUSEKEEP_KEY)) || 0; } catch {}
+  if (Date.now() - last < 23 * 3600 * 1000) return;
+  // Shared once-a-day lock so two desktops don't both run it.
+  const lockSnap = await window._fb.get(_node('housekeepAt'));
+  const cloudLast = lockSnap && lockSnap.exists() ? Date.parse(lockSnap.val()) || 0 : 0;
+  if (Date.now() - cloudLast < 23 * 3600 * 1000) { try { localStorage.setItem(HOUSEKEEP_KEY, String(Date.now())); } catch {} return; }
+  await window._fb.set(_node('housekeepAt'), new Date().toISOString());
+  const report = { needs: 0, events: 0, completed: 0, invHistory: 0, shipped: 0 };
+  // 1) old resolved Part Needed cards
+  const cutoff = Date.now() - 30 * 864e5;
+  const old = (state.partsNeeded || []).filter(n => n && n.id != null && n.resolvedAt && Date.parse(n.resolvedAt) < cutoff);
+  if (old.length) {
+    if (!state.deletedNeeds) state.deletedNeeds = {};
+    const now = new Date().toISOString();
+    const ids = new Set(old.map(n => String(n.id)));
+    for (const id of ids) state.deletedNeeds[id] = now;
+    state.partsNeeded = state.partsNeeded.filter(n => !(n && ids.has(String(n.id))));
+    report.needs = ids.size;
+    save();   // uploads the removals + tombstones through the normal path
+  }
+  // 2) stock events replaced by a later count (can never change a number)
+  {
+    const s = await window._fb.get(_node('invEvents'));
+    if (s && s.exists()) {
+      const v = s.val();
+      const all = Object.keys(v).map(k => ({ key: k, e: transformKeys(v[k], fbDecodeKey) })).filter(x => x.e && x.e.id);
+      const keep = new Set(_compactInvEvents(all.map(x => x.e)).map(e => String(e.id)));
+      const before = JSON.stringify(foldInvEvents(all.map(x => x.e)));
+      const after = JSON.stringify(foldInvEvents(all.map(x => x.e).filter(e => keep.has(String(e.id)))));
+      if (before === after) {   // belt and braces: only prune if every count is identical
+        const upd = {};
+        for (const x of all) if (!keep.has(String(x.e.id))) upd[x.key] = null;
+        const keys = Object.keys(upd);
+        for (let i = 0; i < keys.length; i += 300) {
+          const chunk = {}; for (const k of keys.slice(i, i + 300)) chunk[k] = null;
+          await window._fb.dbMod.update(_node('invEvents'), chunk);
+        }
+        report.events = keys.length;
+      } else console.warn('housekeeping: event prune skipped (counts would differ)');
+    }
+  }
+  // 3) history logs beyond a generous cap (oldest first)
+  for (const [node, cap] of Object.entries(HK_LOG_CAPS)) {
+    const s = await window._fb.get(_node(node));
+    if (!s || !s.exists()) continue;
+    const v = s.val();
+    const keys = Object.keys(v);
+    if (keys.length <= cap) continue;
+    keys.sort((a, b) => String((v[a] && v[a].at) || '').localeCompare(String((v[b] && v[b].at) || '')));
+    const drop = keys.slice(0, keys.length - cap);
+    for (let i = 0; i < drop.length; i += 300) {
+      const chunk = {}; for (const k of drop.slice(i, i + 300)) chunk[k] = null;
+      await window._fb.dbMod.update(_node(node), chunk);
+    }
+    report[node] = drop.length;
+  }
+  try { localStorage.setItem(HOUSEKEEP_KEY, String(Date.now())); } catch {}
+  console.log('sync2 housekeeping:', JSON.stringify(report));
+  return report;
+}
 // --- Order edits sync (v1.89) ----------------------------------------------
 // Each edit is its own cloud entry (workspace2/orderEdits/<id>), written/removed
 // one at a time like Part Needed cards. Deletes also leave a tombstone
@@ -15284,6 +15414,7 @@ function _attachListenersV2() {
   // and lagging echoes share the old version and are ignored; the import bumps
   // the version once at the end, so everyone adopts the full new list atomically.
   onNode('orders', v => {
+    if (v.__ctl && v.__ctl.pending) return;  // an upload is in progress (or was cut off) — keep our last complete list
     const rev = _revOf(v);
     if (rev <= _appliedRev.orders) return;   // stale / partial / our own already-applied
     _appliedRev.orders = rev;
@@ -15291,6 +15422,7 @@ function _attachListenersV2() {
       state.orders = Object.keys(v).filter(k => k !== '__ctl').map(k => v[k]);
       _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || []));
     });
+    try { _persistPendingSync(); } catch {}
   });
   onNode('library', v => {
     const rev = _revOf(v);
@@ -15301,6 +15433,7 @@ function _attachListenersV2() {
       state.library = lib;
       _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {}));
     });
+    try { _persistPendingSync(); } catch {}
   });
   onNode('invEvents', v => {
     const before = _canon(state.invEvents);
@@ -15324,27 +15457,45 @@ function _attachListenersV2() {
     const prevById = {};
     for (const e of (state.partsNeeded || [])) if (e && e.id != null) prevById[e.id] = e;
     const tomb = state.deletedNeeds || {};
+    // v1.90: keep THIS device's copy of a card only if it has a change that hasn't
+    // been uploaded yet; otherwise the cloud copy wins. (The old rule kept any local
+    // placement, so moving a card back to Unassigned/FDM was undone by every other
+    // open device.) On the first snapshot after opening, "not uploaded yet" comes
+    // from the list saved when the app last closed. Resolved stays resolved.
+    const firstSnap = !_pnFirstSnapDone;
+    const bootDirty = new Set(firstSnap ? ((_bootPending && _bootPending.needs) || []) : []);
+    _pnFirstSnapDone = true;
     const byId = new Map();
     for (const e of incoming) {
       if (!e || e.id == null || tomb[e.id]) continue;
+      const id = String(e.id);
       let m = e;
       const prev = prevById[e.id];
       if (prev) {
+        const unpushed = firstSnap ? bootDirty.has(id)
+          : (_lastPushedNeedSig[id] !== undefined && _pnSig(prev) !== _lastPushedNeedSig[id]);
+        if (unpushed && _pnSig(prev) !== _pnSig(e)) m = prev;
         if (prev.resolvedAt && !m.resolvedAt) m = Object.assign({}, m, { resolvedAt: prev.resolvedAt });
-        if (prev.placedMachine && !m.placedMachine && !m.resolvedAt) m = Object.assign({}, m, { placedMachine: prev.placedMachine, placedAt: prev.placedAt || m.placedAt, placedQueue: m.placedQueue || prev.placedQueue });
-        else if (prev.placedAt && !m.placedAt && !m.resolvedAt) m = Object.assign({}, m, { placedAt: prev.placedAt, placedQueue: m.placedQueue || prev.placedQueue });
+        if (e.resolvedAt && !m.resolvedAt) m = Object.assign({}, m, { resolvedAt: e.resolvedAt });
       }
-      byId.set(String(e.id), m);
+      byId.set(id, m);
     }
-    // keep local-only cards (added here, not yet in cloud), unless tombstoned
+    // Keep local-only cards only if they were never in the cloud (made here and
+    // not uploaded yet). A card the cloud HAD and no longer has was removed on
+    // another device — drop it. (Tombstones still win either way.)
     for (const e of (state.partsNeeded || [])) {
-      if (e && e.id != null && !byId.has(String(e.id)) && !tomb[e.id]) byId.set(String(e.id), e);
+      if (!e || e.id == null || byId.has(String(e.id)) || tomb[e.id]) continue;
+      const id = String(e.id);
+      const neverInCloud = firstSnap
+        ? (!_bootPending || bootDirty.has(id))
+        : (_lastPushedNeedSig[id] === undefined);
+      if (neverInCloud) byId.set(id, e);
     }
     state.partsNeeded = Array.from(byId.values());
     // Mark what the CLOUD holds as pushed; anything we kept/progressed beyond
     // cloud will differ and re-push on the next cycle.
-    _lastPushedNeeds = {};
-    for (const e of incoming) if (e && e.id != null) _lastPushedNeeds[String(e.id)] = JSON.stringify(e);
+    _lastPushedNeeds = {}; _lastPushedNeedSig = {};
+    for (const e of incoming) if (e && e.id != null) _setPushedNeed(String(e.id), e);
     if (_canon(state.partsNeeded) !== before) _afterCloudApply();
   });
   // Order edits: per-id merge. Registered directly (not via onNode) because the
@@ -15426,7 +15577,22 @@ function cloudSyncPush() {
   clearTimeout(_syncPushTimer);
   _syncPushTimer = setTimeout(_doSyncPush, 250);
 }
+// v1.91: only ONE upload runs at a time. A save during an upload just asks for
+// one more pass when it finishes (instead of starting a second overlapping
+// upload), and a failure keeps ONE retry timer (it used to add a new endless
+// retry loop on every save while the error lasted — battery drain).
+let _v2PushInFlight = false, _v2PushAgain = false, _v2PushRetry = null;
 async function _doSyncPush() {
+  if (!_fbReady || !_fbUser || _staleBuild || !_syncReadyV2) return;
+  if (_v2PushInFlight) { _v2PushAgain = true; return; }
+  _v2PushInFlight = true;
+  try { await _doSyncPushInner(); }
+  finally {
+    _v2PushInFlight = false;
+    if (_v2PushAgain) { _v2PushAgain = false; setTimeout(_doSyncPush, 50); }
+  }
+}
+async function _doSyncPushInner() {
   if (!_fbReady || !_fbUser || _staleBuild || !_syncReadyV2) return;
   try {
     // --- Gather every pending write FIRST, so we know the total up front and can
@@ -15442,10 +15608,10 @@ async function _doSyncPush() {
     const needPend = [];
     for (const id of Object.keys(curNeeds)) {
       const j = JSON.stringify(curNeeds[id]);
-      if (_lastPushedNeeds[id] !== j) needPend.push([fbEncodeKey(id), transformKeys(curNeeds[id], fbEncodeKey), () => { _lastPushedNeeds[id] = j; }]);
+      if (_lastPushedNeeds[id] !== j) { const n = curNeeds[id]; needPend.push([fbEncodeKey(id), transformKeys(n, fbEncodeKey), () => { _lastPushedNeeds[id] = j; _lastPushedNeedSig[id] = _pnSig(n); }]); }
     }
     for (const id of Object.keys(_lastPushedNeeds)) {
-      if (!(id in curNeeds)) needPend.push([fbEncodeKey(id), null, () => { delete _lastPushedNeeds[id]; }]);
+      if (!(id in curNeeds)) needPend.push([fbEncodeKey(id), null, () => { _clearPushedNeed(id); }]);
     }
     const editPend = [];
     {
@@ -15525,7 +15691,10 @@ async function _doSyncPush() {
       const byId = {};
       for (const o of (state.orders || [])) { const id = o && (o.id || o.orderId); if (id != null) byId[fbEncodeKey(String(id))] = transformKeys(o, fbEncodeKey); }
       let staleKeys = []; let cloudRev = 0;
-      try { const cur = await window._fb.get(_node('orders')); if (cur.exists()) { const cv = cur.val(); cloudRev = (cv.__ctl && Number(cv.__ctl.rev)) || 0; for (const k in cv) if (k !== '__ctl' && !(k in byId)) staleKeys.push(k); } } catch {}
+      // v1.91: if we can't read the cloud (offline), DON'T write blind — a failed
+      // read used to mean "assume nothing newer" and could overwrite newer orders
+      // on reconnect. Throwing here retries the whole upload once we're back.
+      { const cur = await window._fb.get(_node('orders')); if (cur.exists()) { const cv = cur.val(); cloudRev = (cv.__ctl && Number(cv.__ctl.rev)) || 0; for (const k in cv) if (k !== '__ctl' && !(k in byId)) staleKeys.push(k); } }
       // GUARD: if the cloud is ahead of what we've adopted, another device changed
       // orders since we last synced. Do NOT overwrite with our (possibly stale)
       // copy — skip; the listener will deliver the newer version and we adopt it.
@@ -15533,6 +15702,11 @@ async function _doSyncPush() {
       if (cloudRev > _appliedRev.orders) {
         console.warn('sync2: orders push skipped — behind cloud (rev', cloudRev, '> applied', _appliedRev.orders, ')');
       } else {
+        // v1.90: flag the list as "being written" first. Other devices ignore the
+        // orders node while this flag is up, so a cut-off upload (phone locked,
+        // page closed, signal lost) can't hand them a half-old/half-new list. The
+        // version bump at the end replaces __ctl and clears the flag.
+        await window._fb.set(_node('orders/__ctl/pending'), { by: _deviceId, at: new Date().toISOString() });
         const upd = {}; for (const k in byId) upd[k] = byId[k]; for (const k of staleKeys) upd[k] = null;
         const okeys = Object.keys(upd);
         for (let i = 0; i < okeys.length; i += CHUNK) {
@@ -15542,6 +15716,7 @@ async function _doSyncPush() {
         }
         await _writeNodeRev('orders', 'orders');   // bump version ONCE, after all chunks → atomic adoption
         _lastPushedOrdersSig = oSig;
+        try { _persistPendingSync(); } catch {}
       }
     }
     // "Am I behind on this whole-node?" — true if the cloud's version is newer
@@ -15551,11 +15726,13 @@ async function _doSyncPush() {
       // max(applied,0) so a missing/unversioned node (rev 0) never counts as
       // "behind" — otherwise a brand-new node (e.g. settings) would be skipped
       // forever because its rev 0 looks greater than the initial applied -1.
-      try { const s = await window._fb.get(_node(path + '/__ctl')); const r = (s.exists() && Number(s.val().rev)) || 0; return r > Math.max(_appliedRev[kind], 0); } catch { return false; }
+      // Can't check (offline)? Treat as "behind" and skip — never overwrite blind.
+      // The change stays pending and uploads on the next pass once we're online.
+      try { const s = await window._fb.get(_node(path + '/__ctl')); const r = (s.exists() && Number(s.val().rev)) || 0; return r > Math.max(_appliedRev[kind], 0); } catch { return true; }
     };
     if (libraryChanged) {
       if (await _behind('library', 'library')) { console.warn('sync2: library push skipped — behind cloud'); }
-      else { await window._fb.set(_node('library'), transformKeys(state.library || {}, fbEncodeKey)); await _writeNodeRev('library', 'library'); _lastPushedLibrarySig = lSig; tick(1); }
+      else { await window._fb.set(_node('library'), transformKeys(state.library || {}, fbEncodeKey)); await _writeNodeRev('library', 'library'); _lastPushedLibrarySig = lSig; tick(1); try { _persistPendingSync(); } catch {} }
     }
     await _batch(_node('invEvents'), invPend);
     await _batch(_node('partsNeeded'), needPend);
@@ -15599,6 +15776,7 @@ async function _doSyncPush() {
       else { await window._fb.set(_node('settings'), transformKeys(_settingsFromState(), fbEncodeKey)); await _writeNodeRev('settings', 'settings'); _lastPushedSettingsSig = sSig; tick(1); }
     }
 
+    try { _persistPendingSync(); } catch {}
     if (showBar) syncProgress(totalItems, totalItems, true);
     setUnsyncedFlag(false);
     cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online');
@@ -15606,13 +15784,15 @@ async function _doSyncPush() {
     console.error('sync2 push failed:', e);
     syncProgress(0, 0, false, true);
     setUnsyncedFlag(true);
-    setTimeout(() => { if (_fbReady && _fbUser) _doSyncPush(); }, 4000);
+    clearTimeout(_v2PushRetry);
+    _v2PushRetry = setTimeout(() => { _v2PushRetry = null; if (_fbReady && _fbUser) _doSyncPush(); }, 4000);
   }
 }
 
 async function initSyncV2() {
   try {
     bootStatus('Syncing…');
+    _bootPending = _readPendingSync();
     await _migrateIfNeeded();
     // Seed the "already pushed" trackers from what is ACTUALLY IN THE CLOUD, not
     // from local state. If a previous session created Done/inventory events (or
@@ -15633,7 +15813,7 @@ async function initSyncV2() {
       { const v = _snapVal(cE); if (v) for (const k in v) { const e = v[k]; if (e && e.id != null) _pushedInvEventIds.add(String(e.id)); } }
       const _seedLog = (s) => { const v = _snapVal(s); if (!v) return; for (const k in v) { const x = v[k]; const kk = x && (x.uid || x.id); if (kk) _pushedLogKeys.add(String(kk)); } };
       _seedLog(cC); _seedLog(cIH); _seedLog(cSH);
-      { const v = _snapVal(cPN); if (v) for (const k in v) { const n = transformKeys(v[k], fbDecodeKey); if (n && n.id != null) _lastPushedNeeds[String(n.id)] = JSON.stringify(n); } }
+      { const v = _snapVal(cPN); if (v) for (const k in v) { const n = transformKeys(v[k], fbDecodeKey); if (n && n.id != null) _setPushedNeed(String(n.id), n); } }
     } catch (e) {
       console.warn('sync2 seed-from-cloud failed; listeners will reconcile:', e);
     }
@@ -15647,7 +15827,14 @@ async function initSyncV2() {
         const s = await window._fb.get(_node(node));
         if (s && s.exists()) {
           const cloud = transformKeys(s.val(), fbDecodeKey) || {};
-          state[field] = cloud;
+          // Re-apply this device's changes that hadn't uploaded when it last closed
+          // (they stay different from the baseline below, so they upload now).
+          const mine = JSON.parse(JSON.stringify(cloud));
+          for (const [f, k, val] of ((_bootPending && _bootPending.maps) || [])) {
+            if (f !== field) continue;
+            if (val === null) delete mine[k]; else mine[k] = val;
+          }
+          state[field] = mine;
           _lastPushedMaps[field] = JSON.parse(JSON.stringify(cloud));
         } else {
           _lastPushedMaps[field] = {};   // first run → boot flush bootstraps this node
@@ -15664,6 +15851,11 @@ async function initSyncV2() {
           _appliedRev.settings = _revOf(s);
         }
         _lastPushedSettingsSig = _settingsSig();
+        // v1.90: tell older devices right away that a newer build exists, so they
+        // lock + update now instead of after the first count/move on this one.
+        if ((Number(s.appBuild) || 0) < APP_BUILD) {
+          try { await window._fb.set(_node('settings/appBuild'), APP_BUILD); await window._fb.set(_node('meta/appBuild'), APP_BUILD); } catch {}
+        }
       } else {
         // Settings node doesn't exist yet → force the boot flush to create it,
         // so thresholds/priority start syncing immediately instead of only after
@@ -15692,9 +15884,37 @@ async function initSyncV2() {
     }
     _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || []));
     _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {}));
+    // v1.90: if this device changed orders/library and closed before the upload
+    // finished (or an import upload was cut off), and nobody has uploaded a newer
+    // version since, keep our copy and finish the upload instead of adopting the
+    // older (or half-written) cloud copy.
+    try {
+      const bp = _bootPending;
+      if (bp) {
+        const [oc, lc] = await Promise.all([window._fb.get(_node('orders/__ctl')), window._fb.get(_node('library/__ctl'))]);
+        const oRev = (oc && oc.exists() && Number(oc.val().rev)) || 0;
+        const lRev = (lc && lc.exists() && Number(lc.val().rev)) || 0;
+        if (typeof bp.ordersSig === 'string' && bp.ordersSig && bp.ordersSig !== _lastPushedOrdersSig && oRev === bp.ordersRev) {
+          _appliedRev.orders = oRev; _lastPushedOrdersSig = '';   // boot flush re-uploads our full list
+          console.log('sync2: finishing an orders upload that was cut off');
+        }
+        if (typeof bp.librarySig === 'string' && bp.librarySig && bp.librarySig !== _lastPushedLibrarySig && lRev === bp.libraryRev) {
+          _appliedRev.library = lRev; _lastPushedLibrarySig = '';
+          console.log('sync2: finishing a library upload that was cut off');
+        }
+      }
+    } catch (e) { console.warn('sync2 pending-upload check failed:', e); }
     _lastPushedMetaSig = _metaSig();
     _attachListenersV2();
     _syncReadyV2 = true;
+    // v1.91: show when the connection drops, and upload as soon as it's back.
+    try {
+      window._fb.onValue(window._fb.ref(_fbDb, '.info/connected'), (snap) => {
+        const up = !!(snap && snap.val && snap.val());
+        if (up) { cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online'); cloudSyncPush(); }
+        else cloudStatus('offline', 'Offline — changes upload when back online');
+      });
+    } catch {}
     cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online');
     // Flush any local events that never reached the cloud (an interrupted sync
     // from a previous session). Trackers were seeded from cloud above, so this
@@ -15702,6 +15922,8 @@ async function initSyncV2() {
     // land first, and it runs with no user action — so closing the app mid-sync
     // self-heals on the next open.
     setTimeout(() => { if (_fbReady && _fbUser && _syncReadyV2 && !_staleBuild) _doSyncPush(); }, 1500);
+    // v1.91: once a day, one full-access desktop trims dead data from the cloud.
+    setTimeout(() => { _housekeepCloud().catch(e => console.warn('housekeeping skipped:', e)); }, 20000);
   } catch (e) {
     console.error('initSyncV2 failed:', e);
     cloudStatus('offline', 'Sync error — data saved locally');
