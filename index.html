@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 91;
+const APP_BUILD = 92;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -7061,7 +7061,11 @@ function _reconcileDerived(obj) {
   for (const n of (Array.isArray(obj.partsNeeded) ? obj.partsNeeded : [])) {
     if (n && n.id != null) needById[n.id] = n;
   }
-  const gone = (id) => { const n = needById[id]; return !n || !!n.resolvedAt || !!tomb[id]; };
+  // v1.92: only a need that is RESOLVED or DELETED (tombstoned) clears its Paint
+  // card / column. "Not in my list" no longer counts: a device that opens with an
+  // out-of-date list (a phone not used for a day) doesn't know about newer requests
+  // yet, and treating them as gone wiped every newer Paint card on every device.
+  const gone = (id) => { const n = needById[id]; return !!tomb[id] || (!!n && !!n.resolvedAt); };
   if (obj.paintParts && typeof obj.paintParts === 'object') {
     for (const pn of Object.keys(obj.paintParts)) {
       const info = obj.paintParts[pn];
@@ -15122,6 +15126,33 @@ function _persistPendingSync() {
     localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(rec));
   } catch (e) { /* storage full — best effort */ }
 }
+// --- Paint repair (v1.92) ----------------------------------------------------
+// A Part Needed card that is open and placed in Paint must have a Paint entry, or
+// it is invisible (not in the sidebar, not in Paint). Older builds could drop the
+// entry (see _reconcileDerived). After this device has the current list, put any
+// missing entries back. Values come only from the card itself, so every device
+// computes the same thing; a part name already in Paint is never overwritten.
+function _repairPaintFromNeeds() {
+  if (!_syncReadyV2 || _staleBuild) return 0;
+  if (!state.paintParts) state.paintParts = {};
+  const tomb = state.deletedNeeds || {};
+  const haveNeed = new Set(Object.values(state.paintParts).map(i => i && i.fromNeedId).filter(Boolean).map(String));
+  let added = 0;
+  for (const n of (state.partsNeeded || [])) {
+    if (!n || n.id == null || n.resolvedAt || tomb[n.id] || n.placedQueue !== 'paint') continue;
+    if (haveNeed.has(String(n.id))) continue;
+    if (state.paintParts[n.partName]) continue;          // that name already has a Paint card
+    state.paintParts[n.partName] = { at: n.placedAt || n.addedAt || new Date().toISOString(), fromMachine: n.placedMachine || null, fromNeedId: n.id };
+    haveNeed.add(String(n.id));
+    added++;
+  }
+  if (added) {
+    console.log('sync2: restored ' + added + ' Paint card(s)');
+    save();
+    try { renderQueue(); if (typeof renderPaintMobile === 'function') renderPaintMobile(); renderSidebarCounts(); } catch {}
+  }
+  return added;
+}
 // --- Daily cloud housekeeping (v1.91) ---------------------------------------
 // The cloud only ever grew: resolved Part Needed cards (invisible, ~1,700),
 // history logs, and inventory events already replaced by a later count. Every
@@ -15497,6 +15528,7 @@ function _attachListenersV2() {
     _lastPushedNeeds = {}; _lastPushedNeedSig = {};
     for (const e of incoming) if (e && e.id != null) _setPushedNeed(String(e.id), e);
     if (_canon(state.partsNeeded) !== before) _afterCloudApply();
+    if (firstSnap) setTimeout(() => { try { _repairPaintFromNeeds(); } catch (e) { console.warn('paint repair:', e); } }, 0);
   });
   // Order edits: per-id merge. Registered directly (not via onNode) because the
   // node disappears when the last edit is deleted, and that must apply too.
