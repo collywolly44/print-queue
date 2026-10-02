@@ -1255,7 +1255,7 @@ body {
 /* Stats page */
 .stats-page-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -1753,14 +1753,14 @@ body {
 }
 .top10-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
   background: var(--line);
 }
 .top10-row {
   background: var(--panel);
   display: grid;
-  grid-template-columns: 36px 1fr auto;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
@@ -5802,7 +5802,7 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="danger-card" style="margin-bottom:16px;border-color:rgba(240,168,48,0.3);">
         <div class="danger-title" style="color:var(--amber);margin-bottom:8px;">Auto-save history</div>
         <div class="danger-text">
-          The app keeps up to 5 automatic snapshots as you work — roughly 20 minutes, 2 hours, 8 hours, 24 hours, and 72 hours back. Older ones are discarded automatically. If you ever break something, restore from a recent snapshot here. Snapshots live in this browser only — download a backup for off-device safety.
+          The app keeps up to 2 automatic snapshots as you work — roughly 20 minutes and 2 hours back. Older ones are discarded automatically. If you ever break something, restore from a recent snapshot here. Snapshots live in this browser only — download a backup for off-device safety.
         </div>
         <button class="btn" id="btn-show-snapshots">View snapshots</button>
         <div id="snapshot-list" hidden style="margin-top:14px;"></div>
@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 86;
+const APP_BUILD = 87;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6199,6 +6199,7 @@ function applyOrderEdits(newOrders) {
           customer: edit.customer || '',
           item: edit.item || '',
           orderId: edit.orderId || '',
+          _addEditId: edit.id || '',   // lets Undo remove exactly this row
         };
         newOrders.push(newRow);
         touched.add(newRow);
@@ -6232,6 +6233,39 @@ function recordOrderEdit(edit) {
     : '';
   state.orderEdits.push(edit);
   save();
+}
+
+// Reverse an edit's effect on the CURRENT state.orders so Undo shows right away
+// (instead of waiting for the next CSV import). Uses the "before" data stored on
+// the edit when it was made. Returns false for older edits made before that data
+// was recorded — those still fully correct themselves on the next import.
+function _undoEditEffect(edit) {
+  if (!edit) return false;
+  if (edit.kind === 'qty') {
+    if (typeof edit.oldQty !== 'number') return false;
+    for (const row of state.orders) if (_editMatches(edit, row, edit.sku)) row.qty = edit.oldQty;
+    return true;
+  }
+  if (edit.kind === 'remove') {
+    if (!Array.isArray(edit.removedRows)) return false;
+    for (const r of edit.removedRows) {
+      if (r && !state.orders.some(o => o.id === r.id)) state.orders.push({ ...r });
+    }
+    return true;
+  }
+  if (edit.kind === 'swap') {
+    if (typeof edit.oldItem !== 'string') return false;
+    for (const row of state.orders) {
+      if (_editMatches(edit, row, edit.newSku)) { row.sku = edit.oldSku; row.item = edit.oldItem; }
+    }
+    return true;
+  }
+  if (edit.kind === 'add') {
+    const before = state.orders.length;
+    state.orders = state.orders.filter(o => !(edit.id && o._addEditId === edit.id));
+    return state.orders.length < before;
+  }
+  return false;
 }
 
 function removeOrderEdit(editId) {
@@ -8221,7 +8255,10 @@ function libraryRows() {
 // RENDERERS
 // ============================================================
 function daysBetween(a, b) {
-  return Math.floor((b - a) / 86400000);
+  // Count calendar days: floor the start to local midnight so something created
+  // earlier today reads 0d (it used to read -1d against today's midnight).
+  const a0 = new Date(a); a0.setHours(0, 0, 0, 0);
+  return Math.floor((b - a0) / 86400000);
 }
 
 function renderQueue(type) {
@@ -10315,6 +10352,30 @@ function renderOrders() {
   container.innerHTML = html;
 }
 
+// True while renderInventory is swapping the table's HTML. Removing a focused
+// stock box fires its blur handler mid-swap; that commit is deferred so it
+// can't start a nested render (which threw "node to be removed is no longer a child").
+let _invRendering = false;
+// Set when a stock box was saved while focus moved to ANOTHER control in the same
+// table (next stock box, a +1 button, a dropdown). We patch just that row instead
+// of redrawing, so the control you just tapped isn't swapped out from under you.
+// The next full render (any button, Enter, leaving the table) clears it.
+let _invDirty = false;
+function _patchInvRow(row, part) {
+  const n = Number(state.inventory[part] || 0);
+  const demand = Number(demandByPart()[part] || 0);
+  const input = row.querySelector('.inv-stock');
+  if (input) { input.classList.remove('empty-flag'); input.placeholder = ''; }
+  row.removeAttribute('data-uncounted');
+  const covered = demand === 0 ? (n > 0 ? 'extra' : 'idle')
+    : n >= demand ? 'covered' : n > 0 ? 'partial' : 'short';
+  const label = covered === 'covered' ? 'Covered' : covered === 'partial' ? 'Partial'
+    : covered === 'short' ? 'Short' : covered === 'extra' ? 'Extra' : 'No demand';
+  const cls = covered === 'covered' ? 'status-defined' : covered === 'short' ? 'status-needs'
+    : covered === 'partial' ? 'inv-status-partial' : 'status-unused';
+  const badge = row.querySelector('.status-badge');
+  if (badge) { badge.className = 'status-badge ' + cls; badge.textContent = label; }
+}
 function renderInventory() {
   // Perf: skip when the inventory view isn't visible. switchView will call
   // renderInventory explicitly when the user navigates in.
@@ -10500,32 +10561,45 @@ function renderInventory() {
       </div>`;
   });
   html += '</div>';
-  container.innerHTML = html;
+  _invDirty = false;
+  _invRendering = true;
+  try { container.innerHTML = html; } finally { _invRendering = false; }
 
   // Wire up inputs and step buttons. Any numeric entry marks the part as counted.
   container.querySelectorAll('.lib-row[data-part]').forEach(row => {
     const part = row.dataset.part;
     const input = row.querySelector('.inv-stock');
-    let saveTimer;
-    const commit = (val) => {
+    // nextEl = where focus is going. If it's another control in this table, don't
+    // redraw (that would replace the box/button you just tapped) — patch the row.
+    const staysInTable = (nextEl) => !!(nextEl && container.contains(nextEl));
+    const commit = (val, nextEl) => {
       const raw = String(val ?? '').trim();
-      if (raw === '') return; // empty doesn't mark counted; the user hasn't entered anything
       const n = Math.max(0, Math.floor(Number(raw) || 0));
       const before = Number(state.inventory[part] || 0);
+      // Empty box, or nothing changed — skip (no duplicate event / ledger row),
+      // but flush a pending redraw once focus has left the table.
+      if (raw === '' || (n === before && state.countedParts && state.countedParts[part])) {
+        if (_invDirty && !staysInTable(nextEl)) renderInventory();
+        return;
+      }
       _invSetEvent(part, n, 'inventory-edit');
       markCounted(part); // auto-mark counted on any numeric entry
       logInventoryChange(part, before, n, 'inventory-edit');
       save();
       renderQueue();
-      renderInventory();
+      if (staysInTable(nextEl)) { _invDirty = true; _patchInvRow(row, part); }
+      else renderInventory();
     };
-    input.addEventListener('input', () => {
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => commit(input.value), 350);
+    // Save when you press Enter or leave the box (tap elsewhere / iOS "Done").
+    // NOT on a typing pause: the old 350ms auto-save redrew the table mid-entry,
+    // stole focus, and turned a slowly-typed "15" into 1.
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(input.value, null); }
     });
-    input.addEventListener('blur', () => {
-      clearTimeout(saveTimer);
-      commit(input.value);
+    input.addEventListener('blur', (e) => {
+      const v = input.value;
+      if (_invRendering) { setTimeout(() => commit(v, null), 0); return; }
+      commit(v, e.relatedTarget);
     });
     row.querySelectorAll('[data-step]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -11769,12 +11843,15 @@ function renderEditActiveList() {
   root.innerHTML = html;
   root.querySelectorAll('[data-undo]').forEach(btn => {
     btn.addEventListener('click', () => {
+      const edit = (state.orderEdits || []).find(x => x.id === btn.dataset.undo);
+      const immediate = _undoEditEffect(edit);
       removeOrderEdit(btn.dataset.undo);
       reapplyOrderEditsToState();
+      save();
       renderEditOrders();
       renderQueue();
       renderSidebarCounts();
-      toast('Edit undone');
+      toast(immediate ? 'Edit undone' : 'Edit undone — the queue fully updates on your next CSV import');
     });
   });
 }
@@ -11916,6 +11993,7 @@ function doSwapSku(row, newSku, newItem) {
     orderId: row.orderId || '',
     customer: row.customer || '',
     oldSku: row.sku,
+    oldItem: row.item || '',
     newSku,
     newItem: newItem || '',
   });
@@ -11940,6 +12018,7 @@ function openQtyModal(rowId) {
     customer: row.customer || '',
     sku: row.sku,
     newQty: n,
+    oldQty: Number(row.qty) || 1,
   });
   reapplyOrderEditsToState();
   renderEditOrders();
@@ -11952,11 +12031,13 @@ function doRemoveLine(rowId) {
   const row = state.orders.find(o => o.id === rowId);
   if (!row) return;
   if (!confirm(`Remove "${row.item}" (${row.sku}) from this order?`)) return;
+  const _rmEdit = { orderId: row.orderId || '', customer: row.customer || '' };
   recordOrderEdit({
     kind: 'remove',
     orderId: row.orderId || '',
     customer: row.customer || '',
     sku: row.sku,
+    removedRows: state.orders.filter(o => _editMatches(_rmEdit, o, row.sku)).map(o => ({ ...o })),
   });
   reapplyOrderEditsToState();
   renderEditOrders();
@@ -14183,6 +14264,7 @@ importZone.addEventListener('click', e => {
 importZone.querySelector('button').addEventListener('click', e => { e.stopPropagation(); csvInput.click(); });
 csvInput.addEventListener('change', () => {
   if (csvInput.files[0]) handleFile(csvInput.files[0]);
+  csvInput.value = '';   // so choosing the same file again still fires 'change'
 });
 importZone.addEventListener('dragover', e => { e.preventDefault(); importZone.classList.add('dragover'); });
 importZone.addEventListener('dragleave', () => importZone.classList.remove('dragover'));
@@ -14528,6 +14610,7 @@ document.getElementById('restore-input').addEventListener('change', e => {
     } catch { toast('Invalid backup file', 'error'); }
   };
   reader.readAsText(f);
+  e.target.value = '';   // so choosing the same file again still fires 'change'
 });
 
 // Auto-save snapshots UI
