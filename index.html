@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 87;
+const APP_BUILD = 89;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6117,6 +6117,7 @@ const state = {
   overdueStandard: 18,     // days — standard orders past this age get prioritized
   overdueVehicle: 28,      // days — vehicle orders past this age get prioritized
   orderEdits: [],          // manual edits applied AFTER every CSV import to keep ShipStation reality
+  deletedEdits: {},        // tombstones: orderEdits id -> ISO delete time (synced, so a deleted/undone edit stays deleted on every device)
 };
 
 // ============================================================
@@ -6131,11 +6132,23 @@ const state = {
 // Matching: orderId + sku (or oldSku for swap). If orderId is empty, we fall
 // back to customer name + sku, since CSVs vary in whether Order # is present.
 
+// During a CSV import: the set of Order #s present in the new file. Lets an edit
+// follow its line when ShipStation renumbers/combines the order (see below).
+let _editOrderIdsPresent = null;
 function _editMatches(edit, row, useSku) {
   // useSku is either edit.sku or edit.oldSku depending on kind
   const wantSku = useSku;
   if (edit.orderId && row.orderId) {
-    return edit.orderId === row.orderId && row.sku === wantSku;
+    if (row.sku !== wantSku) return false;
+    if (edit.orderId === row.orderId) return true;
+    // ShipStation renumbered or combined the order: the edit's Order # is gone
+    // from this CSV. Same customer + same line date + same SKU is still the same
+    // line, so keep applying the edit (otherwise a swapped line reverts and gets
+    // counted as shipped). Only used while importing, and only when the original
+    // Order # no longer exists.
+    return !!(_editOrderIdsPresent && !_editOrderIdsPresent.has(edit.orderId)
+      && edit.rowDay && edit.customer && row.customer === edit.customer
+      && String(row.date || '').slice(0, 10) === edit.rowDay);
   }
   // Fallback: customer + sku
   if (edit.customer && row.customer) {
@@ -6161,6 +6174,20 @@ function _rebuildStableId(row, idCounts) {
 function applyOrderEdits(newOrders) {
   const edits = state.orderEdits || [];
   if (edits.length === 0) return;
+  _editOrderIdsPresent = new Set(newOrders.map(r => r.orderId).filter(Boolean));
+  try { _applyOrderEditsInner(newOrders, edits); } finally { _editOrderIdsPresent = null; }
+}
+// Older edits didn't record their line's date; fill it in from the order it
+// currently applies to so renumbered/combined orders can still be matched.
+function _backfillEditRowDays() {
+  for (const e of (state.orderEdits || [])) {
+    if (!e || e.rowDay || (e.kind !== 'swap' && e.kind !== 'qty')) continue;
+    const sku = e.kind === 'swap' ? e.newSku : e.sku;
+    const row = (state.orders || []).find(o => _editMatches(e, o, sku));
+    if (row && row.date) e.rowDay = String(row.date).slice(0, 10);
+  }
+}
+function _applyOrderEditsInner(newOrders, edits) {
   // Track which rows have been touched by edits — only those need their IDs
   // regenerated. Non-edited rows MUST keep their original CSV-derived IDs so
   // shipping detection works correctly across imports.
@@ -6231,6 +6258,7 @@ function recordOrderEdit(edit) {
   edit.who = (typeof _fbUser !== 'undefined' && _fbUser && _fbUser.email)
     ? displayName(_fbUser.email)
     : '';
+  edit.sv = 2;   // made on a build that syncs order edits → always eligible to sync
   state.orderEdits.push(edit);
   save();
 }
@@ -6268,8 +6296,16 @@ function _undoEditEffect(edit) {
   return false;
 }
 
+// Record that these edits were deleted, so the delete reaches every device and
+// no device can bring them back.
+function _tombstoneEdits(ids) {
+  if (!state.deletedEdits) state.deletedEdits = {};
+  const now = new Date().toISOString();
+  for (const id of ids) if (id) state.deletedEdits[id] = now;
+}
 function removeOrderEdit(editId) {
   if (!Array.isArray(state.orderEdits)) return;
+  _tombstoneEdits([editId]);
   state.orderEdits = state.orderEdits.filter(e => e.id !== editId);
   save();
 }
@@ -6295,83 +6331,74 @@ function reapplyOrderEditsToState() {
 //
 // Returns the number of customer-orders that got cleaned up (for a toast).
 function cleanupFulfilledCustomOrders() {
-  const addEdits = (state.orderEdits || []).filter(e => e && e.kind === 'add');
+  // Only real CUSTOM orders (made with "+ Add custom order") auto-close when stock
+  // covers them. "+ Add line to this order" on a ShipStation order is NOT a custom
+  // order — it ships with that order on a CSV import. Older edits have no flag and
+  // are treated as custom (that's what they all were before v1.88).
+  const addEdits = (state.orderEdits || []).filter(e => e && e.kind === 'add' && e.custom !== false);
   if (addEdits.length === 0) return 0;
-  // Group add edits by (customer, orderId) — that's a single customer's custom order
-  const grouper = (e) => `${e.customer || ''}||${e.orderId || ''}`;
+  const gkey = (cust, oid) => `${cust || ''}||${oid || ''}`;
   const groups = new Map();
   for (const e of addEdits) {
-    const k = grouper(e);
+    const k = gkey(e.customer, e.orderId);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(e);
   }
   let cleaned = 0;
-  // Take a working copy of inventory to simulate FIFO across shared parts
+  // Working copy of stock. ShipStation orders get first claim on it.
   const remainingStock = { ...state.inventory };
-  // Also account for CSV-order demand first — those orders have priority over
-  // custom ones for inventory consumption (they came from ShipStation).
-  // Sort state.orders by date ascending, subtract each order's parts from
-  // remainingStock in FIFO order. Custom orders (those matching an add edit)
-  // are skipped here; we'll check them separately.
-  const editKeys = new Set(addEdits.map(e => `${e.customer || ''}||${e.orderId || ''}||${e.sku}`));
   const csvOrders = state.orders
-    .filter(o => !editKeys.has(`${o.customer || ''}||${o.orderId || ''}||${o.sku}`))
+    .filter(o => !groups.has(gkey(o.customer, o.orderId)))
     .slice()
     .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const partsOf = (sku) => {
+    const lib = state.library[sku];
+    return (lib && Array.isArray(lib.parts)) ? lib.parts : null;
+  };
   for (const o of csvOrders) {
-    const lib = state.library[o.sku];
-    if (!lib || !Array.isArray(lib.parts)) continue;
-    for (const p of lib.parts) {
+    const parts = partsOf(o.sku);
+    if (!parts) continue;
+    for (const p of parts) {
       const name = (typeof p === 'string') ? p : (p && p.name) || '';
       if (!name) continue;
       const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
-      const need = (Number(o.qty) || 0) * per;
-      const have = remainingStock[name] || 0;
-      remainingStock[name] = Math.max(0, have - need);
+      remainingStock[name] = Math.max(0, (remainingStock[name] || 0) - (Number(o.qty) || 0) * per);
     }
   }
-  // Now check each custom order group against remaining stock.
   for (const [key, edits] of groups.entries()) {
-    // Aggregate parts demand for this group
-    const demand = {};  // partName -> total qty needed
+    // Use the order's CURRENT lines (they already include any later qty change
+    // or SKU swap), not the numbers typed when the custom order was created.
+    const rows = state.orders.filter(o => gkey(o.customer, o.orderId) === key);
+    if (rows.length === 0) continue;
+    const demand = {};
     let allSkusHaveRecipe = true;
-    for (const e of edits) {
-      const lib = state.library[e.sku];
-      if (!lib || !Array.isArray(lib.parts) || lib.parts.length === 0) {
-        // No recipe — can't tell if fulfilled. Leave alone.
-        allSkusHaveRecipe = false;
-        break;
-      }
-      for (const p of lib.parts) {
+    for (const o of rows) {
+      const parts = partsOf(o.sku);
+      if (!parts || parts.length === 0) { allSkusHaveRecipe = false; break; }
+      for (const p of parts) {
         const name = (typeof p === 'string') ? p : (p && p.name) || '';
         if (!name) continue;
         const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
-        demand[name] = (demand[name] || 0) + (Number(e.qty) || 1) * per;
+        demand[name] = (demand[name] || 0) + (Number(o.qty) || 1) * per;
       }
     }
     if (!allSkusHaveRecipe) continue;
-    // Fully covered?
     let covered = true;
     for (const [name, need] of Object.entries(demand)) {
       if ((remainingStock[name] || 0) < need) { covered = false; break; }
     }
     if (!covered) continue;
-    // FULFILLED! Consume the inventory (so subsequent groups see it as gone),
-    // remove the edits from state.orderEdits, and drop the rows from state.orders.
+    // FULFILLED: take the stock, log it, and remove the order + all its edits.
     for (const [name, need] of Object.entries(demand)) {
       remainingStock[name] = (remainingStock[name] || 0) - need;
       const before = Number(state.inventory[name] || 0);
       _invDepositEvent(name, -need, 'custom-order-fulfilled');
       const after = Number(state.inventory[name] || 0);
-      // Log this deduction so the user can trace it in inventory history
       logInventoryChange(name, before, after, 'custom-order-fulfilled');
     }
-    // Log each edit as a completed order so it shows up in History
     const nowIso = new Date().toISOString();
-    for (const e of edits) {
-      const lib = state.library[e.sku];
-      const parts = (lib && lib.parts) ? lib.parts : [];
-      for (const p of parts) {
+    for (const o of rows) {
+      for (const p of (partsOf(o.sku) || [])) {
         const name = (typeof p === 'string') ? p : (p && p.name) || '';
         if (!name) continue;
         const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
@@ -6379,31 +6406,23 @@ function cleanupFulfilledCustomOrders() {
           uid: _uniqueId(),
           at: nowIso,
           partName: name,
-          qty: (Number(e.qty) || 1) * per,
-          sku: e.sku,
-          customer: e.customer || '',
-          originalOrderDate: e.date || nowIso,
+          qty: (Number(o.qty) || 1) * per,
+          sku: o.sku,
+          customer: o.customer || '',
+          originalOrderDate: o.date || nowIso,
           kind: 'print',
           printType: (typeof p === 'string') ? 'resin' : (p.type === 'fdm' ? 'fdm' : 'resin'),
-          // These parts were pulled from existing inventory to close a custom
-          // order — nothing was actually printed. Keep them in History for
-          // traceability, but exclude them from productivity numbers.
+          // Pulled from stock to close a custom order — nothing was printed.
+          // Kept for History, excluded from productivity numbers.
           synthetic: true,
         });
       }
     }
-    // Remove the edits (mutates state.orderEdits in place)
-    const editIds = new Set(edits.map(e => e.id));
-    state.orderEdits = state.orderEdits.filter(e => !editIds.has(e.id));
-    // Drop the matching rows from state.orders
-    state.orders = state.orders.filter(o => {
-      const rowKey = `${o.customer || ''}||${o.orderId || ''}||${o.sku}`;
-      return !editKeys.has(rowKey) || !edits.some(e =>
-        (e.customer || '') === (o.customer || '') &&
-        (e.orderId || '') === (o.orderId || '') &&
-        e.sku === o.sku
-      );
-    });
+    // Remove every edit for this order (the adds AND any later qty/swap/remove
+    // edits on it), so nothing is left behind to re-create or alter it.
+    _tombstoneEdits(state.orderEdits.filter(e => e && gkey(e.customer, e.orderId) === key).map(e => e.id));
+    state.orderEdits = state.orderEdits.filter(e => !(e && gkey(e.customer, e.orderId) === key));
+    state.orders = state.orders.filter(o => gkey(o.customer, o.orderId) !== key);
     cleaned++;
   }
   return cleaned;
@@ -6546,13 +6565,11 @@ function _compactInvEvents(events) {
     if (String(e.at) === String(ls.at) && String(e.id) <= String(ls.id)) return false;
     return true;
   });
-  const CAP = 4000;
-  if (kept.length <= CAP) return kept;
-  // Still huge: keep all baselines + the newest events up to the cap.
-  const baselines = kept.filter(e => latestSet[e.part] && e.id === latestSet[e.part].id);
-  const rest = kept.filter(e => !(latestSet[e.part] && e.id === latestSet[e.part].id));
-  const room = Math.max(0, CAP - baselines.length);
-  return baselines.concat(rest.slice(rest.length - room));
+  // No size cap. The old 4000-event cap dropped the oldest deltas that still
+  // counted, which silently changed stock numbers once the log got long (and the
+  // cloud copy re-added them anyway). Only superseded events are removed above —
+  // those can never change a count. A manual count of a part clears its history.
+  return kept;
 }
 function _invEventsEqual(a, b) {
   a = a || []; b = b || [];
@@ -6637,7 +6654,6 @@ function _bumpList(list, coll) {
 function bumpEntryRevs() {
   _bumpList(state.partsNeeded, 'pn');
   if (state.priority) { _bumpList(state.priority.resin, 'pr'); _bumpList(state.priority.fdm, 'pf'); }
-  _bumpList(state.orderEdits, 'oe');
 }
 
 // Fast non-crypto hash (cyrb53) for cheap content signatures.
@@ -6700,6 +6716,7 @@ function save() {
     overdueStandard: state.overdueStandard,
     overdueVehicle: state.overdueVehicle,
     orderEdits: state.orderEdits,
+    deletedEdits: state.deletedEdits || {},
     _ordersTs: state._ordersTs, _ordersSig: state._ordersSig,
     _libraryTs: state._libraryTs, _librarySig: state._librarySig,
     _inventoryTs: state._inventoryTs, _inventorySig: state._inventorySig,
@@ -7563,7 +7580,9 @@ function load() {
     state.inventoryHistory = Array.isArray(blob.inventoryHistory) ? blob.inventoryHistory : [];
     if (typeof blob.overdueStandard === 'number') state.overdueStandard = blob.overdueStandard;
     if (typeof blob.overdueVehicle === 'number') state.overdueVehicle = blob.overdueVehicle;
-    state.orderEdits = Array.isArray(blob.orderEdits) ? blob.orderEdits : [];
+    state.deletedEdits = (blob.deletedEdits && typeof blob.deletedEdits === 'object') ? blob.deletedEdits : {};
+    state.orderEdits = (Array.isArray(blob.orderEdits) ? blob.orderEdits : []).filter(e => !(e && state.deletedEdits[e.id]));
+    try { _backfillEditRowDays(); } catch {}
     // Migrate priority: was array of {id,name}, now {resin:[], fdm:[]}
     if (Array.isArray(blob.priority)) {
       state.priority = { resin: blob.priority.map(p => ({...p, type: 'resin'})), fdm: [] };
@@ -8677,7 +8696,11 @@ function renderKanban(filtered, allVisible) {
   // Group regular rows by part name. Parts currently waiting in Paint are
   // EXCLUDED from regular printer columns — they live in the Paint row only
   // until the user hits Done from there.
-  const paintSet = new Set(Object.keys(state.paintParts || {}));
+  // Only a REAL printed plate in Paint hides that part's order cards. A Part
+  // Needed in Paint is one extra piece — customer orders for the same part
+  // must stay on the board.
+  const paintSet = new Set(Object.entries(state.paintParts || {})
+    .filter(([, info]) => !(info && info.fromNeedId)).map(([p]) => p));
   const byPart = new Map();
   for (const r of orders) {
     if (paintSet.has(r.part)) continue;  // hidden from kanban while in Paint
@@ -9216,6 +9239,16 @@ function wirePaintDropZone() {
     let partName = null;
     let sourceMachine = null;
     let needId = null;
+    // Paint holds one card per part name. Refuse a drop that would replace a
+    // different card already there (e.g. a Part Needed landing on a real printed
+    // plate, which would then never be credited to inventory).
+    const paintTaken = (pn, nid) => {
+      const ex = state.paintParts && state.paintParts[pn];
+      if (!ex) return false;
+      if (nid && ex.fromNeedId === nid) return true;          // already there — no-op
+      toast(`"${pn}" already has a card in Paint — finish that one first`, 'error');
+      return true;
+    };
 
     if (fallback.startsWith('need:') || fallback.startsWith('__need__')) {
       // Part Needed → Paint. Two possible sources:
@@ -9227,6 +9260,7 @@ function wirePaintDropZone() {
       const need = (state.partsNeeded || []).find(n => n.id === needId);
       if (!need) return;
       partName = need.partName;
+      if (paintTaken(partName, needId)) return;
       if (need.placedMachine && MACHINES.includes(need.placedMachine)) {
         sourceMachine = need.placedMachine;
       }
@@ -9240,6 +9274,7 @@ function wirePaintDropZone() {
       // aren't in buildQueue's allRows. Extract part name directly in that case.
       if (key.startsWith('__group__')) {
         partName = key.slice('__group__'.length);
+        if (paintTaken(partName, null)) return;
         // Find a representative row to grab the source machine
         const manual = state.assignments[key];
         if (manual && MACHINES.includes(manual)) sourceMachine = manual;
@@ -9253,6 +9288,7 @@ function wirePaintDropZone() {
         const row = (currentQueue.allRows || []).find(r => r.key === key);
         if (!row) return;
         partName = row.part;
+        if (paintTaken(partName, null)) return;
         const manual = state.assignments[key];
         if (manual && MACHINES.includes(manual)) sourceMachine = manual;
         else {
@@ -11994,6 +12030,7 @@ function doSwapSku(row, newSku, newItem) {
     customer: row.customer || '',
     oldSku: row.sku,
     oldItem: row.item || '',
+    rowDay: String(row.date || '').slice(0, 10),
     newSku,
     newItem: newItem || '',
   });
@@ -12019,6 +12056,7 @@ function openQtyModal(rowId) {
     sku: row.sku,
     newQty: n,
     oldQty: Number(row.qty) || 1,
+    rowDay: String(row.date || '').slice(0, 10),
   });
   reapplyOrderEditsToState();
   renderEditOrders();
@@ -12037,6 +12075,7 @@ function doRemoveLine(rowId) {
     orderId: row.orderId || '',
     customer: row.customer || '',
     sku: row.sku,
+    rowDay: String(row.date || '').slice(0, 10),
     removedRows: state.orders.filter(o => _editMatches(_rmEdit, o, row.sku)).map(o => ({ ...o })),
   });
   reapplyOrderEditsToState();
@@ -12113,6 +12152,7 @@ function openAddLineModal(ctx) {
 function doAddLine(ctx, sku, item, qty) {
   recordOrderEdit({
     kind: 'add',
+    custom: false,           // extra line on a ShipStation order — ships with that order
     orderId: ctx.orderId || '',
     customer: ctx.customer || '',
     date: ctx.date || new Date().toISOString(),
@@ -12137,7 +12177,8 @@ function doAddLine(ctx, sku, item, qty) {
 function openCustomOrderModal() {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center;padding:24px;';
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const _td = new Date();
+  const todayIso = `${_td.getFullYear()}-${String(_td.getMonth() + 1).padStart(2, '0')}-${String(_td.getDate()).padStart(2, '0')}`;  // LOCAL date
   wrap.innerHTML = `
     <div style="background:var(--panel);border:1px solid var(--line-bright);border-radius:6px;padding:24px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;">
       <div style="font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:0.04em;color:var(--ink);margin-bottom:6px;">Add custom order</div>
@@ -12234,6 +12275,7 @@ function openCustomOrderModal() {
     for (const l of lines) {
       recordOrderEdit({
         kind: 'add',
+        custom: true,          // a real custom order (auto-closes when stock covers it)
         orderId: oid,
         customer: cust,
         date: dateIso,
@@ -14601,6 +14643,13 @@ document.getElementById('restore-input').addEventListener('change', e => {
         text: 'This replaces all current data with the backup contents.',
         onConfirm: () => {
           applyRestoreBlob(blob);
+          // Restored order edits are what you want now: let them sync, and lift any
+          // tombstone so they aren't dropped as "deleted".
+          for (const oe of (state.orderEdits || [])) {
+            if (!oe || !oe.id) continue;
+            oe.sv = oe.sv || 2;
+            if (state.deletedEdits) delete state.deletedEdits[oe.id];
+          }
           _reseedInventoryAfterRestore();  // make restored inventory win over cloud's newer events
           save();                          // persist + push the fresh 'set' events to the cloud
           toast('Restored from backup');
@@ -15019,6 +15068,37 @@ let _syncReadyV2 = false;
 let _pushedInvEventIds = new Set();
 let _pushedLogKeys = new Set();
 let _lastPushedNeeds = {};
+// --- Order edits sync (v1.89) ----------------------------------------------
+// Each edit is its own cloud entry (workspace2/orderEdits/<id>), written/removed
+// one at a time like Part Needed cards. Deletes also leave a tombstone
+// (state.deletedEdits, synced as a per-key map) so nothing can revive them.
+// Edits made before v1.89 lived on one device only: the first collin DESKTOP to
+// open v1.89 uploads its list once ("seeding"); after that the cloud list is the
+// truth and other devices drop their old local-only copies.
+let _lastPushedEdits = {};     // id -> JSON last seen in / pushed to the cloud
+let _oeSeeded = false;         // cloud already has the shared list
+let _oeSeeding = false;        // this device is uploading its legacy list now
+function _edJson(e) { return JSON.stringify(e); }
+function _mergeOrderEditsFromCloud(cloudArr) {
+  const tomb = state.deletedEdits || {};
+  const byId = new Map();
+  for (const e of cloudArr) if (e && e.id && !tomb[e.id]) byId.set(String(e.id), e);
+  for (const e of (state.orderEdits || [])) {
+    if (!e || !e.id || tomb[e.id]) continue;
+    const id = String(e.id);
+    const pushed = _lastPushedEdits[id];
+    if (byId.has(id)) {
+      if (pushed !== undefined && pushed !== _edJson(e)) byId.set(id, e);   // our un-pushed change wins
+      continue;
+    }
+    if (pushed !== undefined) continue;                 // was in the cloud, now removed elsewhere
+    if (e.sv || _oeSeeding || !_oeSeeded) byId.set(id, e);   // new here, or legacy kept until the list is shared
+  }
+  state.orderEdits = Array.from(byId.values())
+    .sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')) || String(a.id).localeCompare(String(b.id)));
+  _lastPushedEdits = {};
+  for (const e of cloudArr) if (e && e.id) _lastPushedEdits[String(e.id)] = _edJson(e);
+}
 let _lastPushedOrdersSig = '', _lastPushedLibrarySig = '', _lastPushedMetaSig = '';
 let _applyingCloud = false;
 let _syncPushTimer = null;
@@ -15051,9 +15131,9 @@ function _revOf(v) { return (v && v.__ctl && Number(v.__ctl.rev)) || 0; }
 const MAP_FIELDS = [
   ['countedParts', 'm_cp'], ['partLocations', 'm_pl'], ['assignments', 'm_asg'],
   ['paintParts', 'm_pp'], ['trackedParts', 'm_tp'], ['recountPrevLoc', 'm_rpl'],
-  ['deletedNeeds', 'm_dn'],
+  ['deletedNeeds', 'm_dn'], ['deletedEdits', 'm_de'],
 ];
-let _lastPushedMaps = { countedParts: {}, partLocations: {}, assignments: {}, paintParts: {}, trackedParts: {}, recountPrevLoc: {}, deletedNeeds: {} };
+let _lastPushedMaps = { countedParts: {}, partLocations: {}, assignments: {}, paintParts: {}, trackedParts: {}, recountPrevLoc: {}, deletedNeeds: {}, deletedEdits: {} };
 let _lastPushedSettingsSig = '';
 function _settingsFromState() {
   return {
@@ -15267,6 +15347,21 @@ function _attachListenersV2() {
     for (const e of incoming) if (e && e.id != null) _lastPushedNeeds[String(e.id)] = JSON.stringify(e);
     if (_canon(state.partsNeeded) !== before) _afterCloudApply();
   });
+  // Order edits: per-id merge. Registered directly (not via onNode) because the
+  // node disappears when the last edit is deleted, and that must apply too.
+  window._fb.onValue(_node('orderEdits'), (snap) => {
+    _applyingCloud = true;
+    try {
+      const before = _canon(state.orderEdits);
+      const v = snap.exists() ? transformKeys(snap.val(), fbDecodeKey) : {};
+      _mergeOrderEditsFromCloud(objVals(v));
+      if (_canon(state.orderEdits) !== before) {
+        _afterCloudApply();
+        try { if (state.view === 'sla-sorter' && typeof renderEditOrders === 'function') renderEditOrders(); } catch {}
+      }
+    } catch (e) { console.warn('sync2 apply orderEdits:', e); }
+    _applyingCloud = false;
+  });
   // History logs: union by id (append-only). A stale cloud snapshot can never
   // drop entries this device already has.
   const _mergeLog = (localArr, v) => {
@@ -15352,6 +15447,20 @@ async function _doSyncPush() {
     for (const id of Object.keys(_lastPushedNeeds)) {
       if (!(id in curNeeds)) needPend.push([fbEncodeKey(id), null, () => { delete _lastPushedNeeds[id]; }]);
     }
+    const editPend = [];
+    {
+      const cur = {}; for (const e of (state.orderEdits || [])) if (e && e.id) cur[String(e.id)] = e;
+      for (const id of Object.keys(cur)) {
+        const e = cur[id], j = _edJson(e);
+        if (_lastPushedEdits[id] === j) continue;
+        if (!(e.sv || (id in _lastPushedEdits) || _oeSeeding)) continue;   // legacy local-only: never upload except when seeding
+        const clean = JSON.parse(j);   // drops undefined values (Firebase rejects them)
+        editPend.push([fbEncodeKey(id), transformKeys(clean, fbEncodeKey), () => { _lastPushedEdits[id] = j; }]);
+      }
+      for (const id of Object.keys(_lastPushedEdits)) {
+        if (!(id in cur)) editPend.push([fbEncodeKey(id), null, () => { delete _lastPushedEdits[id]; }]);
+      }
+    }
     const logJobs = [];
     const mkLog = (arr, path) => {
       const pend = [];
@@ -15377,7 +15486,7 @@ async function _doSyncPush() {
     const metaChanged = mSig !== _lastPushedMetaSig;
 
     const logCount = logJobs.reduce((s, j) => s + j[1].length, 0);
-    const totalItems = invPend.length + needPend.length + logCount
+    const totalItems = invPend.length + needPend.length + editPend.length + logCount
       + (ordersChanged ? (state.orders || []).length : 0) + (libraryChanged ? 1 : 0) + (metaChanged ? 1 : 0);
 
     // Show the bar only for a BIG change so routine single edits don't flash it.
@@ -15450,6 +15559,12 @@ async function _doSyncPush() {
     }
     await _batch(_node('invEvents'), invPend);
     await _batch(_node('partsNeeded'), needPend);
+    await _batch(_node('orderEdits'), editPend);
+    if (_oeSeeding) {
+      await window._fb.set(_node('oeSeeded'), { at: new Date().toISOString(), by: _deviceId });
+      _oeSeeding = false; _oeSeeded = true;
+      console.log('sync2: order edits list uploaded (' + (state.orderEdits || []).length + ' edits)');
+    }
     for (const [node, pend] of logJobs) await _batch(node, pend);
     if (metaChanged) {
       // Back-compat only: keep the old whole-meta node for devices still on the
@@ -15557,6 +15672,23 @@ async function initSyncV2() {
       }
     } catch (e) {
       console.warn('sync2 settings seed failed; listeners will reconcile:', e);
+    }
+    // Order edits: adopt the shared cloud list (merged with anything made here and
+    // not yet uploaded). If no list has been shared yet, the first collin desktop
+    // uploads its own once.
+    try {
+      const [oe, sd] = await Promise.all([window._fb.get(_node('orderEdits')), window._fb.get(_node('oeSeeded'))]);
+      _oeSeeded = !!(sd && sd.exists());
+      const cv = (oe && oe.exists()) ? (transformKeys(oe.val(), fbDecodeKey) || {}) : {};
+      const cloudArr = Object.keys(cv).map(k => cv[k]);
+      const who = (_fbUser && _fbUser.email) ? displayName(_fbUser.email).toLowerCase() : '';
+      _oeSeeding = !_oeSeeded && who === 'collin' && document.body.classList.contains('mode-desktop');
+      _lastPushedEdits = {};
+      for (const e of cloudArr) if (e && e.id) _lastPushedEdits[String(e.id)] = _edJson(e);
+      _mergeOrderEditsFromCloud(cloudArr);
+    } catch (e) {
+      _oeSeeding = false;
+      console.warn('sync2 order-edits seed failed; listener will reconcile:', e);
     }
     _lastPushedOrdersSig = cheapHash(JSON.stringify(state.orders || []));
     _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {}));
