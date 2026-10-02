@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 92;
+const APP_BUILD = 93;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -9177,6 +9177,11 @@ function renderPaintRow(allKanbanRows) {
             originalOrderDate: need.addedAt || null,
             kind: 'need',
           });
+        } else if (!need) {
+          // v1.93: this device hasn't loaded that request yet. Mark it done for
+          // every device (tombstone) instead of only hiding the Paint card — the
+          // old way left it open, so it came back on the next open.
+          _closeUnknownNeed(fromNeedId, partName);
         }
         delete state.paintParts[partName];
         save();
@@ -9481,6 +9486,8 @@ function renderPaintMobile() {
               originalOrderDate: need.addedAt || null,
               kind: 'need',
             });
+          } else if (!need) {
+            _closeUnknownNeed(fromNeedId, partName);   // v1.93: see desktop Paint Done
           }
           delete state.paintParts[partName];
           save();
@@ -15125,6 +15132,17 @@ function _persistPendingSync() {
     };
     localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(rec));
   } catch (e) { /* storage full — best effort */ }
+}
+// v1.93: close a Part Needed request this device doesn't have loaded yet (its
+// Paint card was resolved here). A tombstone removes it on every device and can
+// never be undone by a sync, so it won't come back as an open card.
+function _closeUnknownNeed(needId, partName) {
+  if (!needId) return;
+  if (!state.deletedNeeds) state.deletedNeeds = {};
+  const now = new Date().toISOString();
+  state.deletedNeeds[needId] = now;
+  if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
+  state.completedOrders.push({ uid: _uniqueId(), at: now, partName, qty: 1, sku: '', customer: 'Part Needed (painted)', originalOrderDate: null, kind: 'need' });
 }
 // --- Paint repair (v1.92) ----------------------------------------------------
 // A Part Needed card that is open and placed in Paint must have a Paint entry, or
