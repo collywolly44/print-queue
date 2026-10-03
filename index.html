@@ -6053,7 +6053,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 93;
+const APP_BUILD = 94;
 const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -15532,13 +15532,13 @@ function _attachListenersV2() {
     // Keep local-only cards only if they were never in the cloud (made here and
     // not uploaded yet). A card the cloud HAD and no longer has was removed on
     // another device — drop it. (Tombstones still win either way.)
+    // v1.94: keep every local card the cloud doesn't have unless it was deleted
+    // (tombstoned). Real deletes always leave a tombstone; a card that's merely
+    // missing from the cloud was lost (e.g. wiped by an out-of-date device), and
+    // this puts it back.
     for (const e of (state.partsNeeded || [])) {
       if (!e || e.id == null || byId.has(String(e.id)) || tomb[e.id]) continue;
-      const id = String(e.id);
-      const neverInCloud = firstSnap
-        ? (!_bootPending || bootDirty.has(id))
-        : (_lastPushedNeedSig[id] === undefined);
-      if (neverInCloud) byId.set(id, e);
+      byId.set(String(e.id), e);
     }
     state.partsNeeded = Array.from(byId.values());
     // Mark what the CLOUD holds as pushed; anything we kept/progressed beyond
@@ -15584,6 +15584,16 @@ function _attachListenersV2() {
     onNode(node, v => {
       const before = _canon(state[field]);
       _mergeMapField(field, v || {});
+      // v1.94: a delete that arrives as a tombstone removes the item here right away
+      // (so this device can't upload it again).
+      if (field === 'deletedNeeds' && Array.isArray(state.partsNeeded)) {
+        const t = state.deletedNeeds || {};
+        if (state.partsNeeded.some(n => n && t[n.id])) state.partsNeeded = state.partsNeeded.filter(n => !(n && t[n.id]));
+      }
+      if (field === 'deletedEdits' && Array.isArray(state.orderEdits)) {
+        const t = state.deletedEdits || {};
+        if (state.orderEdits.some(e => e && t[e.id])) state.orderEdits = state.orderEdits.filter(e => !(e && t[e.id]));
+      }
       if (_canon(state[field]) !== before) _afterCloudApply();
     });
   }
@@ -15656,12 +15666,22 @@ async function _doSyncPushInner() {
     }
     const curNeeds = {}; for (const n of (state.partsNeeded || [])) if (n && n.id != null) curNeeds[String(n.id)] = n;
     const needPend = [];
+    // v1.94: don't upload ANY Part Needed changes until this device has merged the
+    // current cloud list. A device that had been closed for days used to upload its
+    // old list right after opening — deleting every newer request and re-opening
+    // resolved ones on every device.
+    if (_pnFirstSnapDone) {
+    const _tombN = state.deletedNeeds || {};
     for (const id of Object.keys(curNeeds)) {
+      if (_tombN[id]) continue;   // deleted — never upload it again
       const j = JSON.stringify(curNeeds[id]);
       if (_lastPushedNeeds[id] !== j) { const n = curNeeds[id]; needPend.push([fbEncodeKey(id), transformKeys(n, fbEncodeKey), () => { _lastPushedNeeds[id] = j; _lastPushedNeedSig[id] = _pnSig(n); }]); }
     }
+    // v1.94: a request is only ever removed from the cloud when it was really
+    // deleted here (tombstoned). "Not in my list" never deletes anything.
     for (const id of Object.keys(_lastPushedNeeds)) {
-      if (!(id in curNeeds)) needPend.push([fbEncodeKey(id), null, () => { _clearPushedNeed(id); }]);
+      if (!(id in curNeeds) && _tombN[id]) needPend.push([fbEncodeKey(id), null, () => { _clearPushedNeed(id); }]);
+    }
     }
     const editPend = [];
     {
@@ -15864,6 +15884,7 @@ async function initSyncV2() {
       const _seedLog = (s) => { const v = _snapVal(s); if (!v) return; for (const k in v) { const x = v[k]; const kk = x && (x.uid || x.id); if (kk) _pushedLogKeys.add(String(kk)); } };
       _seedLog(cC); _seedLog(cIH); _seedLog(cSH);
       { const v = _snapVal(cPN); if (v) for (const k in v) { const n = transformKeys(v[k], fbDecodeKey); if (n && n.id != null) _setPushedNeed(String(n.id), n); } }
+      if (!_snapVal(cPN)) _pnFirstSnapDone = true;   // v1.94: empty cloud list — nothing to wait for
     } catch (e) {
       console.warn('sync2 seed-from-cloud failed; listeners will reconcile:', e);
     }
