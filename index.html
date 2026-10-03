@@ -11,6 +11,7 @@
 <link rel="icon" type="image/png" href="icon.png">
 <link rel="apple-touch-icon" href="icon.png">
 <title>Print Queue · Workshop</title>
+<script>try{var _t=localStorage.getItem('pq_theme');if(_t)document.documentElement.setAttribute('data-theme',_t);}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -31,6 +32,63 @@
   --blue: #6ba6d9;
   --yellow-warn: #d4a84b;
 }
+
+/* ---------- Halloween theme (v1.96) ---------- */
+html[data-theme="halloween"] {
+  --bg: #120b18;
+  --panel: #1b1124;
+  --panel-2: #241631;
+  --line: #3a2350;
+  --line-bright: #5a3778;
+  --ink: #f3ead8;
+  --ink-dim: #b9a5cb;
+  --ink-faint: #806b96;
+  --amber: #ff7a1a;
+  --amber-bright: #ff9b45;
+  --red: #ff4d5e;
+  --green: #8fd44c;
+  --blue: #a985ff;
+  --yellow-warn: #ffb547;
+}
+html[data-theme="halloween"] body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(255,122,26,0.10), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 0% 100%, rgba(143,212,76,0.06), transparent 70%),
+    linear-gradient(rgba(169,133,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(169,133,255,0.035) 1px, transparent 1px);
+  background-size: auto, auto, 24px 24px, 24px 24px;
+  background-attachment: fixed;
+}
+/* cobweb in the top-right corner (decoration only, never blocks clicks) */
+html[data-theme="halloween"] body::after {
+  content: '';
+  position: fixed; top: 0; right: 0;
+  width: 220px; height: 220px;
+  pointer-events: none; z-index: 0; opacity: 0.16;
+  background: no-repeat top right / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' fill='none' stroke='%23f3ead8' stroke-width='1.2'%3E%3Cpath d='M200 0 L40 0 M200 0 L60 60 M200 0 L120 110 M200 0 L200 160 M200 0 L0 40'/%3E%3Cpath d='M170 0 Q178 22 200 30 M140 0 Q152 40 200 60 M105 0 Q122 60 200 95 M70 0 Q90 80 200 130 M40 0 Q60 100 200 160'/%3E%3C/svg%3E");
+}
+html[data-theme="halloween"] .brand-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  box-shadow: 0 0 14px rgba(255,122,26,0.75);
+}
+html[data-theme="halloween"] .brand-name::after {
+  content: ' \1F383'; font-size: 0.8em;
+}
+/* Theme picker (Settings) */
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.theme-card {
+  text-align: left; cursor: pointer; border-radius: 6px; padding: 12px;
+  background: var(--panel); border: 2px solid var(--line); color: var(--ink);
+  font-family: inherit; transition: border-color 0.1s;
+}
+.theme-card:hover { border-color: var(--line-bright); }
+.theme-card.selected { border-color: var(--amber); }
+.theme-card-name { font-weight: 700; font-size: 14px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center; }
+.theme-card-note { font-size: 11px; color: var(--ink-dim); margin-top: 2px; }
+.theme-check { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--amber); letter-spacing: 0.08em; }
+.theme-swatch { display: flex; height: 34px; border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); }
+.theme-swatch span { flex: 1; }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
@@ -5788,6 +5846,23 @@ body.mode-mobile .mobile-only { display: block; }
         </div>
       </div>
 
+      <div class="section-title">Theme</div>
+      <div class="danger-card" style="margin-bottom:16px;">
+        <div class="danger-text" style="margin-bottom:12px;">Pick a look for the app. It switches on <strong>every device</strong> — phones, PCs and the gridiron account.</div>
+        <div class="theme-grid" id="theme-grid">
+          <button class="theme-card" data-theme-pick="gridiron">
+            <div class="theme-swatch"><span style="background:#0f1419"></span><span style="background:#161c24"></span><span style="background:#f0a830"></span><span style="background:#6cbf7e"></span><span style="background:#e8eef5"></span></div>
+            <div class="theme-card-name">Gridiron <span class="theme-check"></span></div>
+            <div class="theme-card-note">The original dark workshop look</div>
+          </button>
+          <button class="theme-card" data-theme-pick="halloween">
+            <div class="theme-swatch"><span style="background:#120b18"></span><span style="background:#241631"></span><span style="background:#ff7a1a"></span><span style="background:#8fd44c"></span><span style="background:#a985ff"></span></div>
+            <div class="theme-card-name">Halloween &#x1F383; <span class="theme-check"></span></div>
+            <div class="theme-card-note">Pumpkin orange, witchy purple, slime green</div>
+          </button>
+        </div>
+      </div>
+
       <div class="section-title">Data Management</div>
       <div class="danger-card" style="margin-bottom:16px;">
         <div class="danger-title" style="color: var(--ink); margin-bottom:8px;">Backup</div>
@@ -6053,7 +6128,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 95;
+const APP_BUILD = 97;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6117,6 +6192,7 @@ const state = {
   overdueStandard: 18,     // days — standard orders past this age get prioritized
   overdueVehicle: 28,      // days — vehicle orders past this age get prioritized
   orderEdits: [],          // manual edits applied AFTER every CSV import to keep ShipStation reality
+  theme: 'gridiron',       // v1.96: app theme — synced, so every device shows the same one
   deletedEdits: {},        // tombstones: orderEdits id -> ISO delete time (synced, so a deleted/undone edit stays deleted on every device)
 };
 
@@ -6720,6 +6796,7 @@ function save() {
     overdueVehicle: state.overdueVehicle,
     orderEdits: state.orderEdits,
     deletedEdits: state.deletedEdits || {},
+    theme: state.theme || 'gridiron',
     _ordersTs: state._ordersTs, _ordersSig: state._ordersSig,
     _libraryTs: state._libraryTs, _librarySig: state._librarySig,
     _inventoryTs: state._inventoryTs, _inventorySig: state._inventorySig,
@@ -7605,6 +7682,7 @@ function load() {
     if (typeof blob.overdueStandard === 'number') state.overdueStandard = blob.overdueStandard;
     if (typeof blob.overdueVehicle === 'number') state.overdueVehicle = blob.overdueVehicle;
     state.deletedEdits = (blob.deletedEdits && typeof blob.deletedEdits === 'object') ? blob.deletedEdits : {};
+    if (typeof blob.theme === 'string') state.theme = blob.theme;
     state.orderEdits = (Array.isArray(blob.orderEdits) ? blob.orderEdits : []).filter(e => !(e && state.deletedEdits[e.id]));
     try { _backfillEditRowDays(); } catch {}
     // Migrate priority: was array of {id,name}, now {resin:[], fdm:[]}
@@ -10443,11 +10521,18 @@ function _patchInvRow(row, part) {
   const badge = row.querySelector('.status-badge');
   if (badge) { badge.className = 'status-badge ' + cls; badge.textContent = label; }
 }
-function renderInventory() {
+function renderInventory(opts) {
   // Perf: skip when the inventory view isn't visible. switchView will call
   // renderInventory explicitly when the user navigates in.
   const view = document.getElementById('view-inventory');
   if (view && view.classList.contains('hidden')) return;
+  // v1.97: phones (and gridiron) never show the inventory table — only the
+  // Count Parts / Part Needed landing. Skip building it unless the walkthrough
+  // needs the sort order (opts.force).
+  if (!(opts && opts.force) && (document.body.classList.contains('mode-mobile') || document.body.classList.contains('is-gridiron'))) {
+    if (typeof updateRecountButton === 'function') updateRecountButton();
+    return;
+  }
   // Build the union of: parts ever defined in any SKU + parts already in inventory + parts already counted
   const partsSet = new Set();
   for (const sku of Object.keys(state.library)) {
@@ -13165,6 +13250,7 @@ function applyAppMode(mode) {
   // Update the mode button label
   const btn = document.getElementById('cloud-mode');
   if (btn) btn.textContent = mode === 'mobile' ? '🖥️' : '📱';
+  if (mode === 'desktop' && typeof renderInventory === 'function' && state.view === 'inventory') { try { renderInventory(); } catch {} }
 }
 // Boot-time: apply stored mode if set, else auto-detect
 applyAppMode(getStoredMode() || autoDetectMode());
@@ -13595,7 +13681,7 @@ const WT = {
   // Uses the inventory snapshot order so parts are sorted oldest-order first.
   pickLocation(loc) {
     // Make sure the snapshot exists
-    renderInventory();
+    renderInventory({ force: true });
     const order = (state.invOrderSnapshot || []).slice();
     const filtered = order.filter(part => {
       // Only uncounted parts
@@ -15160,6 +15246,29 @@ function _closeUnknownNeed(needId, partName) {
   if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
   state.completedOrders.push({ uid: _uniqueId(), at: now, partName, qty: 1, sku: '', customer: 'Part Needed (painted)', originalOrderDate: null, kind: 'need' });
 }
+// --- Themes (v1.96) ------------------------------------------------------------
+const THEMES = { gridiron: 'Gridiron', halloween: 'Halloween' };
+const THEME_BAR_COLOR = { gridiron: '#0f1419', halloween: '#120b18' };
+function applyTheme(t) {
+  if (!THEMES[t]) t = 'gridiron';
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('pq_theme', t); } catch {}
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', THEME_BAR_COLOR[t]);
+  document.querySelectorAll('[data-theme-pick]').forEach(btn => {
+    const on = btn.dataset.themePick === t;
+    btn.classList.toggle('selected', on);
+    const chk = btn.querySelector('.theme-check'); if (chk) chk.textContent = on ? 'IN USE' : '';
+  });
+}
+function setTheme(t) {
+  if (!THEMES[t] || t === state.theme) { applyTheme(state.theme); return; }
+  state.theme = t;
+  applyTheme(t);
+  save();   // uploads with the shared settings → every device switches
+  toast(`Theme: ${THEMES[t]} — switching on all devices`);
+}
+document.querySelectorAll('[data-theme-pick]').forEach(btn => btn.addEventListener('click', () => setTheme(btn.dataset.themePick)));
 // --- Paint repair (v1.92) ----------------------------------------------------
 // A Part Needed card that is open and placed in Paint must have a Paint entry, or
 // it is invisible (not in the sidebar, not in Paint). Older builds could drop the
@@ -15402,12 +15511,13 @@ function _settingsFromState() {
     overdueStandard: state.overdueStandard || 18,
     overdueVehicle: state.overdueVehicle || 28,
     lastImport: state.lastImport || null,
+    theme: state.theme || 'gridiron',
     appBuild: APP_BUILD,
   };
 }
 function _settingsSig() {
   const s = _settingsFromState();
-  return cheapHash(JSON.stringify([s.priority, s.overdueStandard, s.overdueVehicle, s.lastImport]));
+  return cheapHash(JSON.stringify([s.priority, s.overdueStandard, s.overdueVehicle, s.lastImport, s.theme]));
 }
 // Overlay-merge a cloud map into local: adopt cloud, then re-apply any local key
 // that differs from what we last pushed (an un-pushed add/edit), and drop any
@@ -15688,8 +15798,9 @@ function _attachListenersV2() {
     const rev = _revOf(v);
     if (rev <= _appliedRev.settings) return;
     _appliedRev.settings = rev;
-    const _sb = () => _canon([state.priority, state.overdueStandard, state.overdueVehicle, state.lastImport]);
+    const _sb = () => _canon([state.priority, state.overdueStandard, state.overdueVehicle, state.lastImport, state.theme]);
     const before = _sb();
+    if (typeof v.theme === 'string' && v.theme !== state.theme) { state.theme = v.theme; applyTheme(state.theme); }
     if (v.priority) state.priority = v.priority;
     if (typeof v.overdueStandard === 'number') state.overdueStandard = v.overdueStandard;
     if (typeof v.overdueVehicle === 'number') state.overdueVehicle = v.overdueVehicle;
@@ -15698,15 +15809,32 @@ function _attachListenersV2() {
     if (_sb() !== before) _afterCloudApply();
   });
 }
+// v1.97: cloud updates arrive in bursts (a dozen pieces right after a refresh).
+// Redrawing every page after EACH piece froze phones for up to ~30s, so the
+// redraw now runs once per burst (within ~0.15s, at most ~0.6s later).
+let _cloudApplyTimer = null, _cloudApplyFirstAt = 0;
 function _afterCloudApply() {
   try { invalidateBuildQueueCache(); } catch {}
   _sidebarQueueCounts.resin = null; _sidebarQueueCounts.fdm = null;
-  // Persist the applied cloud data to localStorage so a reload reflects it.
-  // _applyingCloud is still true here, so save()'s cloudSyncPush() no-ops — no
-  // echo back to the cloud.
+  // Persist right away, exactly as before (_applyingCloud is still true here, so
+  // save()'s cloudSyncPush() no-ops — no echo back). Only the redraw is batched.
   try { save(); } catch (e) { console.warn('sync2 local persist:', e); }
+  const now = Date.now();
+  if (!_cloudApplyTimer) _cloudApplyFirstAt = now;
+  clearTimeout(_cloudApplyTimer);
+  const wait = Math.max(0, Math.min(150, _cloudApplyFirstAt + 600 - now));
+  _cloudApplyTimer = setTimeout(_flushCloudApply, wait);
+}
+function _flushCloudApply() {
+  clearTimeout(_cloudApplyTimer); _cloudApplyTimer = null;
+  if (_staleBuild) return;
+  try { invalidateBuildQueueCache(); } catch {}
+  _sidebarQueueCounts.resin = null; _sidebarQueueCounts.fdm = null;
   try {
-    renderQueue(); renderLibrary(); renderInventory(); renderOrders(); renderSidebarCounts();
+    // Gridiron phones only show the Inventory landing — the queues, sidebar and
+    // other pages are hidden, so don't spend the phone's CPU drawing them.
+    if (!_isGridironUser()) { renderQueue(); renderLibrary(); renderOrders(); renderSidebarCounts(); }
+    renderInventory();
     if (typeof renderHistory === 'function') renderHistory();
     if (typeof renderStats === 'function') renderStats();
     if (typeof renderImportStatus === 'function') renderImportStatus();
@@ -15759,7 +15887,9 @@ async function _doSyncPushInner() {
     for (const id of Object.keys(curNeeds)) {
       if (_tombN[id]) continue;   // deleted — never upload it again
       const j = JSON.stringify(curNeeds[id]);
-      if (_lastPushedNeeds[id] !== j) { const n = curNeeds[id]; needPend.push([fbEncodeKey(id), transformKeys(n, fbEncodeKey), () => { _lastPushedNeeds[id] = j; _lastPushedNeedSig[id] = _pnSig(n); }]); }
+      // v1.97: compare content only — the local _rev stamp alone (bumped the first
+      // time a card is seen after opening) used to re-upload every card on boot.
+      if (_lastPushedNeeds[id] !== j && (_lastPushedNeedSig[id] === undefined || _lastPushedNeedSig[id] !== _pnSig(curNeeds[id]))) { const n = curNeeds[id]; needPend.push([fbEncodeKey(id), transformKeys(n, fbEncodeKey), () => { _lastPushedNeeds[id] = j; _lastPushedNeedSig[id] = _pnSig(n); }]); }
     }
     // v1.94: a request is only ever removed from the cloud when it was really
     // deleted here (tombstoned). "Not in my list" never deletes anything.
@@ -16005,6 +16135,7 @@ async function initSyncV2() {
       if (sv && sv.exists()) {
         const s = transformKeys(sv.val(), fbDecodeKey) || {};
         if (!checkBuildGate({ _appBuild: s.appBuild || 0 })) {
+          if (typeof s.theme === 'string') { state.theme = s.theme; applyTheme(state.theme); }
           if (s.priority) state.priority = s.priority;
           if (typeof s.overdueStandard === 'number') state.overdueStandard = s.overdueStandard;
           if (typeof s.overdueVehicle === 'number') state.overdueVehicle = s.overdueVehicle;
@@ -16578,6 +16709,7 @@ async function doSignOut() {
 // BOOT
 // ============================================================
 load();
+applyTheme(state.theme);   // v1.96: this device's last theme until the cloud says otherwise
 migrateInventoryToEvents();   // event-source inventory (seeds from existing counts on first run)
 renderQueue();
 renderSidebarCounts();
