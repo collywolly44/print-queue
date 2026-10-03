@@ -5802,7 +5802,7 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="danger-card" style="margin-bottom:16px;border-color:rgba(240,168,48,0.3);">
         <div class="danger-title" style="color:var(--amber);margin-bottom:8px;">Auto-save history</div>
         <div class="danger-text">
-          The app keeps up to 2 automatic snapshots as you work — roughly 20 minutes and 2 hours back. Older ones are discarded automatically. If you ever break something, restore from a recent snapshot here. Snapshots live in this browser only — download a backup for off-device safety.
+          The app keeps 1 automatic snapshot, refreshed every 2 hours, so you can roll back a recent mistake. Restoring one first saves your current data as the new snapshot, so you can switch back. If you ever break something, restore from a recent snapshot here. Snapshots live in this browser only — download a backup for off-device safety.
         </div>
         <button class="btn" id="btn-show-snapshots">View snapshots</button>
         <div id="snapshot-list" hidden style="margin-top:14px;"></div>
@@ -6053,8 +6053,8 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 94;
-const MAX_SNAPSHOTS = 2;   // was 5 — snapshots were the main localStorage hog
+const APP_BUILD = 95;
+const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
 // Snapshot frequency: take a new snapshot at most every 20 minutes during normal
@@ -6746,9 +6746,10 @@ function save() {
   // entries are all that's practically useful, and a smaller blob also means
   // far less cloud download bandwidth.
   const _trim = (arr, keep) => (Array.isArray(arr) && arr.length > keep) ? arr.slice(-keep) : arr;
-  state.completedOrders  = _trim(state.completedOrders, 500);
-  state.inventoryHistory = _trim(state.inventoryHistory, 800);
-  state.shippedHistory   = _trim(state.shippedHistory, 300);
+  const _gi = _isGridironUser();   // v1.95: gridiron phones don't show History/Stats — keep only a few
+  state.completedOrders  = _trim(state.completedOrders, _gi ? 50 : 500);
+  state.inventoryHistory = _trim(state.inventoryHistory, _gi ? 50 : 800);
+  state.shippedHistory   = _trim(state.shippedHistory, _gi ? 20 : 300);
   blob.completedOrders   = state.completedOrders;
   blob.inventoryHistory  = state.inventoryHistory;
   blob.shippedHistory    = state.shippedHistory;
@@ -7467,7 +7468,14 @@ function thinSnapshots(snaps) {
 //   - Skip taking a new snapshot if the last one was within SNAPSHOT_MIN_INTERVAL_MS
 //     AND the data is "small" (essentially identical) — but always record if
 //     a major shape change happened (e.g. library shrunk meaningfully).
+// v1.95: the gridiron account only counts stock and sends Part Needed requests —
+// it can't restore snapshots or view History, so it keeps neither on the phone.
+function _isGridironUser() {
+  try { return !!(typeof _fbUser !== 'undefined' && _fbUser && _fbUser.email && displayName(_fbUser.email).toLowerCase() === 'gridiron'); } catch { return false; }
+}
+const SNAPSHOT_REFRESH_MS = 2 * 3600 * 1000;   // v1.95: one restore point, refreshed every 2 hours
 function recordSnapshot(blob, force) {
+  if (_isGridironUser()) { try { localStorage.removeItem(SNAPSHOT_KEY); } catch {} return; }
   try {
     const snaps = loadSnapshots();
     const now = Date.now();
@@ -7480,6 +7488,14 @@ function recordSnapshot(blob, force) {
     delete leanData.completedOrders;
     delete leanData.inventoryHistory;
     delete leanData.shippedHistory;
+    // v1.95 light snapshot: stock as plain counts (not the change log — a restore
+    // rebuilds the log from these numbers), and only open / recently resolved
+    // Part Needed cards. Backups you download still contain everything.
+    delete leanData.invEvents;
+    delete leanData.deletedNeeds;
+    delete leanData.deletedEdits;
+    const _wk = Date.now() - 7 * 864e5;
+    leanData.partsNeeded = (blob.partsNeeded || []).filter(n => n && (!n.resolvedAt || Date.parse(n.resolvedAt) > _wk));
     const newSnap = {
       at: now,
       label: snapshotLabel(blob),
@@ -7491,7 +7507,7 @@ function recordSnapshot(blob, force) {
       const sinceLast = now - last.at;
       // Always take a snapshot if a destructive change happened (lots of data removed).
       const isDestructive = looksDestructive(last.data, blob);
-      if (!force && !isDestructive && sinceLast < SNAPSHOT_MIN_INTERVAL_MS) {
+      if (!force && sinceLast < SNAPSHOT_REFRESH_MS) {
         // Skip — too soon and nothing alarming.
         return;
       }
@@ -15171,6 +15187,13 @@ function _repairPaintFromNeeds() {
   }
   return added;
 }
+// Order-independent comparison of two stock maps (key order differs with event order).
+function _sameStock(a, b) {
+  const ka = Object.keys(a).filter(k => a[k]), kb = Object.keys(b).filter(k => b[k]);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) if (a[k] !== b[k]) return false;
+  return true;
+}
 // --- Daily cloud housekeeping (v1.91) ---------------------------------------
 // The cloud only ever grew: resolved Part Needed cards (invisible, ~1,700),
 // history logs, and inventory events already replaced by a later count. Every
@@ -15189,6 +15212,15 @@ async function _housekeepCloud() {
   if (who !== 'collin' || !document.body.classList.contains('mode-desktop')) return;
   let last = 0; try { last = Number(localStorage.getItem(HOUSEKEEP_KEY)) || 0; } catch {}
   if (Date.now() - last < 23 * 3600 * 1000) return;
+  // v1.95: only run on a device that is fully caught up — its Part Needed list has
+  // been merged with the cloud and it holds the newest complete order list. An
+  // out-of-date PC simply skips (another day / device will do it).
+  if (!_pnFirstSnapDone) return;
+  try {
+    const oc = await window._fb.get(_node('orders/__ctl'));
+    const ov = oc && oc.exists() ? oc.val() : {};
+    if (ov.pending || (Number(ov.rev) || 0) > Math.max(_appliedRev.orders, 0)) return;
+  } catch { return; }
   // Shared once-a-day lock so two desktops don't both run it.
   const lockSnap = await window._fb.get(_node('housekeepAt'));
   const cloudLast = lockSnap && lockSnap.exists() ? Date.parse(lockSnap.val()) || 0 : 0;
@@ -15214,9 +15246,9 @@ async function _housekeepCloud() {
       const v = s.val();
       const all = Object.keys(v).map(k => ({ key: k, e: transformKeys(v[k], fbDecodeKey) })).filter(x => x.e && x.e.id);
       const keep = new Set(_compactInvEvents(all.map(x => x.e)).map(e => String(e.id)));
-      const before = JSON.stringify(foldInvEvents(all.map(x => x.e)));
-      const after = JSON.stringify(foldInvEvents(all.map(x => x.e).filter(e => keep.has(String(e.id)))));
-      if (before === after) {   // belt and braces: only prune if every count is identical
+      const before = foldInvEvents(all.map(x => x.e));
+      const after = foldInvEvents(all.map(x => x.e).filter(e => keep.has(String(e.id))));
+      if (_sameStock(before, after)) {   // belt and braces: only prune if every count is identical
         const upd = {};
         for (const x of all) if (!keep.has(String(x.e.id))) upd[x.key] = null;
         const keys = Object.keys(upd);
@@ -15226,6 +15258,56 @@ async function _housekeepCloud() {
         }
         report.events = keys.length;
       } else console.warn('housekeeping: event prune skipped (counts would differ)');
+    }
+  }
+  // 2b) v1.95: roll up stock changes older than 14 days into ONE starting count per
+  // part ("checkpoint"), so the log stops growing forever. Every count is verified
+  // to come out identical before anything is written.
+  {
+    const s2 = await window._fb.get(_node('invEvents'));
+    if (s2 && s2.exists()) {
+      const v = s2.val();
+      const all = Object.keys(v).map(k => ({ key: k, e: transformKeys(v[k], fbDecodeKey) })).filter(x => x.e && x.e.id && x.e.part);
+      const C = new Date(Date.now() - 14 * 864e5).toISOString();
+      const byPart = {};
+      for (const x of all) (byPart[x.e.part] = byPart[x.e.part] || []).push(x);
+      const newSets = [], dropKeys = [];
+      for (const part of Object.keys(byPart)) {
+        const old = byPart[part].filter(x => String(x.e.at) < C);
+        if (old.length < 2) continue;                       // nothing to roll up
+        const value = foldInvEvents(old.map(x => x.e))[part] || 0;
+        const maxAt = old.map(x => String(x.e.at)).sort().pop();
+        const at = new Date(Date.parse(maxAt) + 1).toISOString();
+        newSets.push({ id: 'ckpt:' + part + ':' + C.slice(0, 10), part, op: 'set', amt: value, at, reason: 'checkpoint' });
+        for (const x of old) dropKeys.push(x.key);
+      }
+      if (newSets.length) {
+        const dropSet = new Set(dropKeys);
+        const kept = all.filter(x => !dropSet.has(x.key)).map(x => x.e).concat(newSets);
+        if (_sameStock(foldInvEvents(all.map(x => x.e)), foldInvEvents(kept))) {
+          const add = {}; for (const e of newSets) add[fbEncodeKey(e.id)] = transformKeys(e, fbEncodeKey);
+          const ak = Object.keys(add);
+          for (let i = 0; i < ak.length; i += 300) { const c = {}; for (const k of ak.slice(i, i + 300)) c[k] = add[k]; await window._fb.dbMod.update(_node('invEvents'), c); }
+          for (let i = 0; i < dropKeys.length; i += 300) { const c = {}; for (const k of dropKeys.slice(i, i + 300)) c[k] = null; await window._fb.dbMod.update(_node('invEvents'), c); }
+          report.rolledUp = dropKeys.length; report.checkpoints = newSets.length;
+        } else console.warn('housekeeping: roll-up skipped (counts would differ)');
+      }
+    }
+  }
+  // 2c) v1.95: order edits for customers with no open orders at all, made 60+ days
+  // ago — their orders are long gone. Tombstoned so they're removed everywhere.
+  {
+    const cut = Date.now() - 60 * 864e5;
+    const openCust = new Set((state.orders || []).map(o => (o.customer || '').trim().toLowerCase()));
+    const openIds = new Set((state.orders || []).map(o => o.orderId).filter(Boolean));
+    const stale = (state.orderEdits || []).filter(e => e && e.id && Date.parse(e.at || 0) < cut
+      && !(e.orderId && openIds.has(e.orderId)) && !openCust.has((e.customer || '').trim().toLowerCase()));
+    if (stale.length) {
+      _tombstoneEdits(stale.map(e => e.id));
+      const ids = new Set(stale.map(e => e.id));
+      state.orderEdits = state.orderEdits.filter(e => !ids.has(e.id));
+      report.orderEdits = stale.length;
+      save();
     }
   }
   // 3) history logs beyond a generous cap (oldest first)
@@ -15571,9 +15653,11 @@ function _attachListenersV2() {
     for (const x of (localArr || [])) { const k = x && (x.uid || x.id); if (k && !byId.has(String(k))) byId.set(String(k), x); }
     return Array.from(byId.values());
   };
-  onNode('completed', v => { state.completedOrders = _mergeLog(state.completedOrders, v); });
-  onNode('invHistory', v => { state.inventoryHistory = _mergeLog(state.inventoryHistory, v); });
-  onNode('shipped', v => { state.shippedHistory = _mergeLog(state.shippedHistory, v); });
+  if (!_isGridironUser()) {   // v1.95: gridiron phones skip downloading the History logs
+    onNode('completed', v => { state.completedOrders = _mergeLog(state.completedOrders, v); });
+    onNode('invHistory', v => { state.inventoryHistory = _mergeLog(state.inventoryHistory, v); });
+    onNode('shipped', v => { state.shippedHistory = _mergeLog(state.shippedHistory, v); });
+  }
   // OLD meta node: now used ONLY for the build gate and for back-compat with
   // devices still on the pre-split build. The real settings data lives in the
   // per-key map nodes + the settings node below, which are authoritative here.
@@ -15872,13 +15956,19 @@ async function initSyncV2() {
     // means the boot flush below resends exactly the ones that didn't make it —
     // so an interrupted sync always finishes on the next open.
     try {
+      const _skipLogs = _isGridironUser();
       const [cE, cC, cIH, cSH, cPN] = await Promise.all([
         window._fb.get(_node('invEvents')),
-        window._fb.get(_node('completed')),
-        window._fb.get(_node('invHistory')),
-        window._fb.get(_node('shipped')),
+        _skipLogs ? null : window._fb.get(_node('completed')),
+        _skipLogs ? null : window._fb.get(_node('invHistory')),
+        _skipLogs ? null : window._fb.get(_node('shipped')),
         window._fb.get(_node('partsNeeded')),
       ]);
+      if (_skipLogs) {
+        // Only its own entries are kept; mark them uploaded-or-not as before by key
+        // (re-sending an entry with the same key just overwrites it — harmless).
+        try { localStorage.removeItem(SNAPSHOT_KEY); } catch {}
+      }
       const _snapVal = (s) => (s && s.exists()) ? s.val() : null;
       { const v = _snapVal(cE); if (v) for (const k in v) { const e = v[k]; if (e && e.id != null) _pushedInvEventIds.add(String(e.id)); } }
       const _seedLog = (s) => { const v = _snapVal(s); if (!v) return; for (const k in v) { const x = v[k]; const kk = x && (x.uid || x.id); if (kk) _pushedLogKeys.add(String(kk)); } };
