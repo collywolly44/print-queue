@@ -33,48 +33,105 @@
   --yellow-warn: #d4a84b;
 }
 
-/* ---------- Halloween theme (v1.96) ---------- */
+/* ---------- Themes (v1.99) ----------
+   Every theme only swaps the colour tokens above, so all pages follow along. */
+/* Halloween: plain charcoal, white text, pumpkin orange — with a small pumpkin
+   and a faint cobweb as the only decorations. */
 html[data-theme="halloween"] {
-  --bg: #120b18;
-  --panel: #1b1124;
-  --panel-2: #241631;
-  --line: #3a2350;
-  --line-bright: #5a3778;
-  --ink: #f3ead8;
-  --ink-dim: #b9a5cb;
-  --ink-faint: #806b96;
+  --bg: #121212;
+  --panel: #1a1a1a;
+  --panel-2: #222222;
+  --line: #2f2f2f;
+  --line-bright: #454545;
+  --ink: #ffffff;
+  --ink-dim: #cfcfcf;
+  --ink-faint: #8f8f8f;
   --amber: #ff7a1a;
-  --amber-bright: #ff9b45;
-  --red: #ff4d5e;
-  --green: #8fd44c;
-  --blue: #a985ff;
+  --amber-bright: #ff9640;
+  --red: #ff5a4f;
+  --green: #7ccf5a;
+  --blue: #a77bff;
   --yellow-warn: #ffb547;
+  --hw-purple: #9b6bff;
 }
-html[data-theme="halloween"] body {
-  background-color: var(--bg);
-  background-image:
-    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(255,122,26,0.10), transparent 70%),
-    radial-gradient(ellipse 50% 40% at 0% 100%, rgba(143,212,76,0.06), transparent 70%),
-    linear-gradient(rgba(169,133,255,0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(169,133,255,0.035) 1px, transparent 1px);
-  background-size: auto, auto, 24px 24px, 24px 24px;
-  background-attachment: fixed;
-}
-/* cobweb in the top-right corner (decoration only, never blocks clicks) */
+/* a few purple accents: section markers, the selected page in the menu, the
+   menu counters, the brand dot and the cobweb */
+html[data-theme="halloween"] .section-title::before { background: var(--hw-purple); }
+html[data-theme="halloween"] .nav-item.active { border-left-color: var(--hw-purple); }
+html[data-theme="halloween"] .nav-item.active .nav-item-num { color: var(--hw-purple); }
+html[data-theme="halloween"] .brand-dot { background: var(--hw-purple); box-shadow: 0 0 10px rgba(155,107,255,0.6); }
+html[data-theme="halloween"] .page-title { text-shadow: 0 0 18px rgba(155,107,255,0.25); }
 html[data-theme="halloween"] body::after {
   content: '';
   position: fixed; top: 0; right: 0;
-  width: 220px; height: 220px;
-  pointer-events: none; z-index: 0; opacity: 0.16;
-  background: no-repeat top right / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' fill='none' stroke='%23f3ead8' stroke-width='1.2'%3E%3Cpath d='M200 0 L40 0 M200 0 L60 60 M200 0 L120 110 M200 0 L200 160 M200 0 L0 40'/%3E%3Cpath d='M170 0 Q178 22 200 30 M140 0 Q152 40 200 60 M105 0 Q122 60 200 95 M70 0 Q90 80 200 130 M40 0 Q60 100 200 160'/%3E%3C/svg%3E");
+  width: 180px; height: 180px;
+  pointer-events: none; z-index: 0; opacity: 0.18;
+  background: no-repeat top right / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' fill='none' stroke='%239b6bff' stroke-width='1.2'%3E%3Cpath d='M200 0 L40 0 M200 0 L60 60 M200 0 L120 110 M200 0 L200 160 M200 0 L0 40'/%3E%3Cpath d='M170 0 Q178 22 200 30 M140 0 Q152 40 200 60 M105 0 Q122 60 200 95 M70 0 Q90 80 200 130 M40 0 Q60 100 200 160'/%3E%3C/svg%3E");
 }
-html[data-theme="halloween"] .brand-dot {
-  width: 12px; height: 12px; border-radius: 50%;
-  box-shadow: 0 0 14px rgba(255,122,26,0.75);
+html[data-theme="halloween"] .brand-name::after { content: ' \1F383'; font-size: 0.8em; }
+
+/* Midnight: deep navy with a sky-blue accent. */
+html[data-theme="midnight"] {
+  --bg: #0b1220;
+  --panel: #111a2c;
+  --panel-2: #172238;
+  --line: #24314a;
+  --line-bright: #33456a;
+  --ink: #eef3fb;
+  --ink-dim: #9fb0cc;
+  --ink-faint: #64779a;
+  --amber: #5aa9ff;
+  --amber-bright: #82bfff;
+  --red: #ff6b6b;
+  --green: #5fd3a0;
+  --blue: #b39dff;
+  --yellow-warn: #f2c14e;
 }
-html[data-theme="halloween"] .brand-name::after {
-  content: ' \1F383'; font-size: 0.8em;
+
+/* Olive Drab: field-green and khaki. */
+html[data-theme="olive"] {
+  --bg: #12140e;
+  --panel: #191c13;
+  --panel-2: #20241a;
+  --line: #2f3424;
+  --line-bright: #464d36;
+  --ink: #eef0e4;
+  --ink-dim: #a9ae94;
+  --ink-faint: #737a5e;
+  --amber: #d2b26a;
+  --amber-bright: #e3c785;
+  --red: #e0664f;
+  --green: #9cc55a;
+  --blue: #7fb0c9;
+  --yellow-warn: #d9b44a;
 }
+
+/* Daylight: light background, dark text — for bright rooms. */
+html[data-theme="daylight"] {
+  color-scheme: light;
+  --bg: #eef0f3;
+  --panel: #ffffff;
+  --panel-2: #f6f7f9;
+  --line: #d9dde3;
+  --line-bright: #bcc3cd;
+  --ink: #161b22;
+  --ink-dim: #4f5b6b;
+  --ink-faint: #8792a2;
+  --amber: #d0700f;
+  --amber-bright: #e5862a;
+  --red: #c9372c;
+  --green: #23874a;
+  --blue: #2563b0;
+  --yellow-warn: #a87300;
+}
+html[data-theme="daylight"] body {
+  background-image:
+    linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px);
+}
+html[data-theme="daylight"] #sync-progress-label { background: rgba(255,255,255,0.95); border-color: var(--line); }
+html[data-theme="daylight"] .offline-box { background: rgba(255,255,255,0.97); }
+html[data-theme="daylight"] .paint-row-title, html[data-theme="daylight"] .paint-row-count { color: #7a3aa6; }
 /* Theme picker (Settings) */
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 8px; }
 .theme-card {
@@ -4151,6 +4208,14 @@ body.is-gridiron .inv-count-btn {
 }
 body.is-gridiron #btn-recount-mobile { display: block; }
 body.is-gridiron .manual-stock-box { display: none !important; }
+/* v1.99 Count Parts button: quiet grey when everything is counted, outlined in
+   the accent colour (with how many) when parts need counting. */
+.inv-count-btn.inv-count-quiet {
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink-faint); font-weight: 700;
+}
+.inv-count-btn.inv-count-quiet.has-uncounted {
+  background: var(--panel); border: 2px solid var(--amber); color: var(--amber);
+}
 /* Recount button: greyed out by default, red outline when parts await recount */
 .inv-recount-btn {
   background: var(--panel); border: 1px solid var(--line); color: var(--ink-faint);
@@ -5566,7 +5631,7 @@ body.mode-mobile .mobile-only { display: block; }
              side-by-side buttons ("Count Parts" + "Recount"); on other accounts
              the count button stays the original large "Uncounted Parts". -->
         <div class="inv-count-row" id="inv-count-row">
-          <button class="btn btn-primary inv-mobile-btn inv-count-btn" id="btn-walkthrough-mobile">Uncounted Parts</button>
+          <button class="btn inv-mobile-btn inv-count-btn inv-count-quiet" id="btn-walkthrough-mobile">Uncounted Parts</button>
           <button class="btn inv-count-btn inv-recount-btn" id="btn-recount-mobile" hidden disabled>Recount</button>
         </div>
 
@@ -5856,9 +5921,24 @@ body.mode-mobile .mobile-only { display: block; }
             <div class="theme-card-note">The original dark workshop look</div>
           </button>
           <button class="theme-card" data-theme-pick="halloween">
-            <div class="theme-swatch"><span style="background:#120b18"></span><span style="background:#241631"></span><span style="background:#ff7a1a"></span><span style="background:#8fd44c"></span><span style="background:#a985ff"></span></div>
+            <div class="theme-swatch"><span style="background:#121212"></span><span style="background:#222222"></span><span style="background:#ff7a1a"></span><span style="background:#9b6bff"></span><span style="background:#ffffff"></span></div>
             <div class="theme-card-name">Halloween &#x1F383; <span class="theme-check"></span></div>
-            <div class="theme-card-note">Pumpkin orange, witchy purple, slime green</div>
+            <div class="theme-card-note">Charcoal, white text, pumpkin orange, a touch of purple</div>
+          </button>
+          <button class="theme-card" data-theme-pick="midnight">
+            <div class="theme-swatch"><span style="background:#0b1220"></span><span style="background:#172238"></span><span style="background:#5aa9ff"></span><span style="background:#5fd3a0"></span><span style="background:#eef3fb"></span></div>
+            <div class="theme-card-name">Midnight <span class="theme-check"></span></div>
+            <div class="theme-card-note">Deep navy with a blue accent</div>
+          </button>
+          <button class="theme-card" data-theme-pick="olive">
+            <div class="theme-swatch"><span style="background:#12140e"></span><span style="background:#20241a"></span><span style="background:#d2b26a"></span><span style="background:#9cc55a"></span><span style="background:#eef0e4"></span></div>
+            <div class="theme-card-name">Olive Drab <span class="theme-check"></span></div>
+            <div class="theme-card-note">Field green and khaki</div>
+          </button>
+          <button class="theme-card" data-theme-pick="daylight">
+            <div class="theme-swatch"><span style="background:#eef0f3"></span><span style="background:#ffffff"></span><span style="background:#d0700f"></span><span style="background:#23874a"></span><span style="background:#161b22"></span></div>
+            <div class="theme-card-name">Daylight <span class="theme-check"></span></div>
+            <div class="theme-card-note">Light background, dark text</div>
           </button>
         </div>
       </div>
@@ -6128,7 +6208,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 98;
+const APP_BUILD = 99;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -13925,7 +14005,17 @@ document.getElementById('btn-recount-mobile').addEventListener('click', () => {
 // Enable/label the Recount button based on how many parts are flagged for recount
 // (parts whose location is 'recount'). Greyed + disabled when none; red-outlined
 // and clickable when there are.
+function updateCountButton() {
+  const btn = document.getElementById('btn-walkthrough-mobile');
+  if (!btn) return;
+  let n = 0;
+  try { n = WT.uncountedCountsByLocation().all; } catch {}
+  const base = document.body.classList.contains('is-gridiron') ? 'Count Parts' : 'Uncounted Parts';
+  btn.classList.toggle('has-uncounted', n > 0);
+  btn.textContent = n > 0 ? base + ' (' + n + ')' : base;
+}
 function updateRecountButton() {
+  try { updateCountButton(); } catch {}
   const btn = document.getElementById('btn-recount-mobile');
   if (!btn) return;
   let n = 0;
@@ -14398,6 +14488,7 @@ function applyAccountLockdown() {
   const rcBtn = document.getElementById('btn-recount-mobile');
   if (cntBtn) cntBtn.textContent = isGridiron ? 'Count Parts' : 'Uncounted Parts';
   if (rcBtn) rcBtn.hidden = !isGridiron;
+  try { updateCountButton(); } catch {}
   if (isGridiron) updateRecountButton();
   if (isGridiron && state.view !== 'inventory') {
     switchView('inventory');
@@ -15281,8 +15372,8 @@ function _closeUnknownNeed(needId, partName) {
   state.completedOrders.push({ uid: _uniqueId(), at: now, partName, qty: 1, sku: '', customer: 'Part Needed (painted)', originalOrderDate: null, kind: 'need' });
 }
 // --- Themes (v1.96) ------------------------------------------------------------
-const THEMES = { gridiron: 'Gridiron', halloween: 'Halloween' };
-const THEME_BAR_COLOR = { gridiron: '#0f1419', halloween: '#120b18' };
+const THEMES = { gridiron: 'Gridiron', halloween: 'Halloween', midnight: 'Midnight', olive: 'Olive Drab', daylight: 'Daylight' };
+const THEME_BAR_COLOR = { gridiron: '#0f1419', halloween: '#121212', midnight: '#0b1220', olive: '#12140e', daylight: '#eef0f3' };
 function applyTheme(t) {
   if (!THEMES[t]) t = 'gridiron';
   document.documentElement.setAttribute('data-theme', t);
