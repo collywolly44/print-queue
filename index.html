@@ -6128,7 +6128,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 97;
+const APP_BUILD = 98;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -10745,8 +10745,42 @@ function renderInventory(opts) {
     // Save when you press Enter or leave the box (tap elsewhere / iOS "Done").
     // NOT on a typing pause: the old 350ms auto-save redrew the table mid-entry,
     // stole focus, and turned a slowly-typed "15" into 1.
+    // v1.98: the up/down arrow keys and the little arrows inside the box now
+    // save ONE step immediately (like the −1/+1 buttons) instead of waiting for
+    // you to leave the box. Scrolling the mouse wheel over the box no longer
+    // changes it (it used to quietly add extra steps before the value was saved).
+    let shown = input.value === '' ? null : Number(input.value);
+    const applyStep = (step) => {
+      const before = Number(state.inventory[part] || 0);
+      const next = Math.max(0, before + step);
+      const delta = next - before;
+      if (delta !== 0) {
+        _invDepositEvent(part, delta, 'inventory-edit');
+        logInventoryChange(part, before, next, 'inventory-edit');
+      }
+      markCounted(part);
+      input.value = next; shown = next;
+      save();
+      renderQueue();
+      _invDirty = true; _patchInvRow(row, part);   // keep focus in this box
+    };
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); commit(input.value, null); }
+      if (e.key === 'Enter') { e.preventDefault(); commit(input.value, null); return; }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const typed = String(input.value).trim();
+        // A number you typed but haven't saved yet is saved first.
+        if (typed !== '' && shown !== null && Number(typed) !== shown) { commit(typed, input); shown = Number(state.inventory[part] || 0); }
+        applyStep(e.key === 'ArrowUp' ? 1 : -1);
+      }
+    });
+    input.addEventListener('wheel', () => { if (document.activeElement === input) input.blur(); }, { passive: true });
+    input.addEventListener('input', (e) => {
+      // Typing fires an InputEvent; the box's own little arrows fire a plain Event.
+      if (typeof InputEvent !== 'undefined' && e instanceof InputEvent) return;
+      if (shown === null) return;
+      const step = Number(input.value) - shown;
+      if (step === 1 || step === -1) applyStep(step);
     });
     input.addEventListener('blur', (e) => {
       const v = input.value;
@@ -15834,7 +15868,11 @@ function _flushCloudApply() {
     // Gridiron phones only show the Inventory landing — the queues, sidebar and
     // other pages are hidden, so don't spend the phone's CPU drawing them.
     if (!_isGridironUser()) { renderQueue(); renderLibrary(); renderOrders(); renderSidebarCounts(); }
-    renderInventory();
+    // v1.98: don't rebuild the inventory table under a box you're editing — it
+    // redraws when you leave the table.
+    const _ae = document.activeElement, _ic = document.getElementById('inventory-container');
+    if (_ae && _ic && _ic.contains(_ae) && _ae.tagName === 'INPUT') _invDirty = true;
+    else renderInventory();
     if (typeof renderHistory === 'function') renderHistory();
     if (typeof renderStats === 'function') renderStats();
     if (typeof renderImportStatus === 'function') renderImportStatus();
