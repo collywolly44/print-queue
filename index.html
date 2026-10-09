@@ -972,6 +972,16 @@ body {
 .kanban-card.aged-1 { border-left: 3px solid var(--yellow-warn); }
 .kanban-card.aged-2 { border-left: 3px solid var(--red); }
 .kanban-card.removing { animation: slideOut 0.22s ease forwards; }
+/* v1.100: stock counted recently — thin green edge on the right + a small tag */
+.kanban-card.count-fresh { box-shadow: inset -3px 0 0 var(--green); }
+.queue-row.count-fresh { box-shadow: inset -3px 0 0 var(--green); }
+.count-fresh-tag {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700;
+  color: var(--green); background: rgba(108,191,126,0.12);
+  border-radius: 3px; padding: 1px 5px; margin-left: 6px; white-space: nowrap;
+  vertical-align: middle; cursor: help; flex: none;
+}
+.kanban-card-bottom .count-fresh-tag { margin-left: auto; margin-right: 6px; }
 .kanban-card-top {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 8px;
@@ -6208,7 +6218,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 99;
+const APP_BUILD = 100;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -7854,10 +7864,17 @@ function setPartLocation(partName, location) {
 // — it also LEAVES the Recount pile: we restore the location it was in before
 // it was flagged (or clear it if it had none). recountPrevLoc is stamped by the
 // FDM Recount button when it moves a part into the 'recount' location.
-function markCounted(partName) {
+// v1.100: countedParts[part] is true, or the time of the last REAL count (an
+// ISO string — still truthy, so every "is it counted?" check works unchanged).
+// Only typing/entering an actual number records a time ({ counted: true });
+// Done, the arrows and SKU adjustments keep whatever time was there.
+function markCounted(partName, opts) {
   if (!partName) return;
   if (!state.countedParts) state.countedParts = {};
-  state.countedParts[partName] = true;
+  const prevMark = state.countedParts[partName];
+  state.countedParts[partName] = (opts && opts.counted) ? new Date().toISOString()
+    : (typeof prevMark === 'string' ? prevMark : true);
+  _countFreshMap = null;
   if (state.partLocations && state.partLocations[partName] === 'recount') {
     const prev = state.recountPrevLoc && state.recountPrevLoc[partName];
     if (prev && LOCATIONS.includes(prev)) state.partLocations[partName] = prev;
@@ -8167,7 +8184,39 @@ document.addEventListener('click', (e) => {
 // cache the last result and reuse when the underlying data hasn't changed.
 // The cache is invalidated whenever save() runs (any state mutation).
 let _buildQueueCache = { key: null, byType: {} };
-function invalidateBuildQueueCache() { _buildQueueCache = { key: null, byType: {} }; }
+function invalidateBuildQueueCache() { _buildQueueCache = { key: null, byType: {} }; _countFreshMap = null; }
+
+// v1.100: "recently counted" — so a queue card can show its stock was checked
+// lately and the count is likely right. Uses the count time saved with the part,
+// or for counts made before v1.100, the latest real count in the stock log.
+const COUNT_FRESH_DAYS = 30;
+const _REAL_COUNT_REASONS = { walkthrough: 1, 'inventory-edit': 1, 'manual-stock': 1 };
+let _countFreshMap = null;
+function _lastCountedMap() {
+  if (_countFreshMap) return _countFreshMap;
+  const m = {};
+  for (const e of (state.invEvents || [])) {
+    if (!e || e.op !== 'set' || !_REAL_COUNT_REASONS[e.reason] || !e.at) continue;
+    if (!m[e.part] || e.at > m[e.part]) m[e.part] = e.at;
+  }
+  const cp = state.countedParts || {};
+  for (const p of Object.keys(cp)) {
+    const v = cp[p];
+    if (!v) { delete m[p]; continue; }            // not counted (e.g. flagged for recount)
+    if (typeof v === 'string' && (!m[p] || v > m[p])) m[p] = v;
+  }
+  for (const p of Object.keys(m)) if (!cp[p]) delete m[p];
+  return (_countFreshMap = m);
+}
+function countFreshTag(part) {
+  const at = _lastCountedMap()[part];
+  if (!at) return null;
+  const days = Math.floor((Date.now() - Date.parse(at)) / 86400000);
+  if (!(days >= 0) || days > COUNT_FRESH_DAYS) return null;
+  const label = days === 0 ? 'today' : days + 'd';
+  const title = 'Stock counted ' + (days === 0 ? 'today' : days === 1 ? '1 day ago' : days + ' days ago') + ' — count is likely accurate';
+  return { cls: ' count-fresh', html: `<span class="count-fresh-tag" title="${title}">✓ ${label}</span>` };
+}
 
 // Total UNITS of work in a built queue — the number of parts you actually
 // have to print, not the number of queue rows. An order for 5 of a part is
@@ -8729,14 +8778,15 @@ function renderQueue(type) {
     } else {
       skuText = r.sku;
     }
+    const fresh = countFreshTag(r.part);
     html += `
-      <div class="queue-row ${rowClass}${needRowClass}" data-key="${escapeAttr(r.key)}">
+      <div class="queue-row ${rowClass}${needRowClass}${fresh ? fresh.cls : ''}" data-key="${escapeAttr(r.key)}">
         <div class="qcell qcell-num"><span class="qnum">${i+1}</span>${r._isNeed ? '' : `<button class="btn-recount" title="Flag for recount — moves this part to the Recount pile to be re-verified. Does NOT change the stock number.">⟳</button>`}</div>
         <div class="qcell qcell-date">${dateStr}</div>
         <div class="qcell qcell-age ${agedClass}"><span class="badge">${age}d</span></div>
         ${ordersCell}
         <div class="qcell qcell-sku">${escapeHtml(skuText)}</div>
-        <div class="qcell qcell-part">${escapeHtml(r.part)}</div>
+        <div class="qcell qcell-part">${escapeHtml(r.part)}${fresh ? fresh.html : ''}</div>
         <div class="qcell qcell-qty">${qtyHtml}</div>
         <div class="qcell qcell-action"><button class="btn-done">Done</button></div>
       </div>`;
@@ -9047,8 +9097,9 @@ function renderKanban(filtered, allVisible) {
         } else {
           skuText = r.sku;
         }
+        const fresh = countFreshTag(r.part);
         html += `
-          <div class="kanban-card ${agedClass}${needClass}" draggable="true" data-key="${escapeAttr(r.key)}">
+          <div class="kanban-card ${agedClass}${needClass}${fresh ? fresh.cls : ''}" draggable="true" data-key="${escapeAttr(r.key)}">
             ${needTag}
             ${slaBadge}
             <div class="kanban-card-top">
@@ -9061,6 +9112,7 @@ function renderKanban(filtered, allVisible) {
             </div>
             <div class="kanban-card-bottom">
               <div class="kanban-card-sku" title="${escapeAttr(skuText)}">${escapeHtml(skuText)}</div>
+              ${fresh ? fresh.html : ''}
               <button class="kanban-done">Done</button>
             </div>
           </div>`;
@@ -10811,11 +10863,22 @@ function renderInventory(opts) {
       // Empty box, or nothing changed — skip (no duplicate event / ledger row),
       // but flush a pending redraw once focus has left the table.
       if (raw === '' || (n === before && state.countedParts && state.countedParts[part])) {
+        // v1.100: typing the SAME number is a recount that confirms the stock —
+        // record when it was checked (no stock change, no ledger row).
+        if (raw !== '' && typedHere) {
+          typedHere = false;
+          markCounted(part, { counted: true });
+          save(); renderQueue();
+          if (staysInTable(nextEl)) { _invDirty = true; _patchInvRow(row, part); }
+          else renderInventory();
+          return;
+        }
         if (_invDirty && !staysInTable(nextEl)) renderInventory();
         return;
       }
+      typedHere = false;
       _invSetEvent(part, n, 'inventory-edit');
-      markCounted(part); // auto-mark counted on any numeric entry
+      markCounted(part, { counted: true }); // a typed number is a real count
       logInventoryChange(part, before, n, 'inventory-edit');
       save();
       renderQueue();
@@ -10830,6 +10893,8 @@ function renderInventory(opts) {
     // you to leave the box. Scrolling the mouse wheel over the box no longer
     // changes it (it used to quietly add extra steps before the value was saved).
     let shown = input.value === '' ? null : Number(input.value);
+    let typedHere = false;   // v1.100: a number was typed (not just arrow steps)
+    input.addEventListener('input', (e) => { if (typeof InputEvent !== 'undefined' && e instanceof InputEvent) typedHere = true; });
     const applyStep = (step) => {
       const before = Number(state.inventory[part] || 0);
       const next = Math.max(0, before + step);
@@ -13935,7 +14000,7 @@ const WT = {
     const n = Math.max(0, Math.floor(Number(this.pendingValue) || 0));
     const before = Number(state.inventory[part] || 0);
     _invSetEvent(part, n, 'walkthrough');
-    markCounted(part);
+    markCounted(part, { counted: true });
     logInventoryChange(part, before, n, 'walkthrough');
     save();
     this.next();
@@ -14264,7 +14329,7 @@ const MS = {
     const n = Math.max(0, Math.floor(Number(raw) || 0));
     const before = Number(state.inventory[partName] || 0);
     _invSetEvent(partName, n, 'manual-stock');
-    markCounted(partName);
+    markCounted(partName, { counted: true });
     logInventoryChange(partName, before, n, 'manual-stock');
     save();
     renderQueue();
