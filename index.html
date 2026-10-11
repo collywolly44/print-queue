@@ -132,6 +132,87 @@ html[data-theme="daylight"] body {
 html[data-theme="daylight"] #sync-progress-label { background: rgba(255,255,255,0.95); border-color: var(--line); }
 html[data-theme="daylight"] .offline-box { background: rgba(255,255,255,0.97); }
 html[data-theme="daylight"] .paint-row-title, html[data-theme="daylight"] .paint-row-count { color: #7a3aa6; }
+/* ---------- Stats page (v1.101) ---------- */
+.sx { display: flex; flex-direction: column; gap: 16px; }
+.sx-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.sx-kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px 12px; min-width: 0; }
+.sx-kpi-label { font-size: 12px; color: var(--ink-dim); }
+.sx-kpi-value { font-family: Inter, sans-serif; font-weight: 700; font-size: 30px; line-height: 1.15; color: var(--ink); margin-top: 4px; }
+.sx-kpi-sub { font-size: 12px; color: var(--ink-dim); margin-top: 4px; }
+.sx-kpi-sub b { color: var(--ink); font-weight: 600; }
+.sx-kpi.warn .sx-kpi-value { color: var(--red); }
+.sx-kpi.good .sx-kpi-value { color: var(--green); }
+.sx-row { display: grid; gap: 16px; align-items: start; }
+.sx-row-2 { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+.sx-row-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .sx-row-2, .sx-row-3 { grid-template-columns: minmax(0, 1fr); } }
+.sx-card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px 16px; min-width: 0; }
+.sx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; font-weight: 700; font-size: 14px; color: var(--ink); }
+.sx-note { font-weight: 400; font-size: 12px; color: var(--ink-faint); text-align: right; }
+.sx-empty { color: var(--ink-faint); font-size: 13px; padding: 10px 0; }
+/* daily chart */
+.sx-chart { position: relative; }
+.sx-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.sx-chart .ax { font: 11px 'JetBrains Mono', monospace; fill: var(--ink-faint); }
+.sx-chart .grid { stroke: var(--line); stroke-width: 1; }
+.sx-chart .bar { fill: var(--amber); opacity: 0.55; }
+.sx-chart .bar.today { opacity: 1; }
+.sx-chart .bar.hl { opacity: 0.85; }
+.sx-chart .nodata { fill: var(--line); }
+.sx-chart .val { font: 600 11px Inter, sans-serif; fill: var(--ink); }
+.sx-chart .hit { fill: transparent; cursor: default; }
+.sx-tip { position: absolute; pointer-events: none; background: var(--panel-2); border: 1px solid var(--line-bright); border-radius: 5px; padding: 7px 10px; font-size: 12px; color: var(--ink); white-space: nowrap; box-shadow: 0 6px 18px rgba(0,0,0,0.25); display: none; z-index: 3; }
+.sx-tip .t { font-weight: 700; margin-bottom: 2px; }
+.sx-tip .r { color: var(--ink-dim); }
+/* horizontal bar lists */
+.sx-list { display: flex; flex-direction: column; gap: 9px; }
+.sx-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; }
+.sx-item-name { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-item-val { font: 600 13px Inter, sans-serif; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+.sx-item-val small { font-weight: 400; color: var(--ink-faint); font-size: 11px; margin-left: 4px; }
+.sx-item-bar { grid-column: 1 / -1; height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.sx-item-bar > i { display: block; height: 100%; background: var(--amber); border-radius: 0 3px 3px 0; }
+.sx-item-sub { grid-column: 1 / -1; font: 11px 'JetBrains Mono', monospace; color: var(--ink-faint); margin-top: -1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* age buckets */
+.sx-age .sx-item-bar { height: 10px; }
+.sx-age .sx-item-bar > i { background: var(--ink-faint); }
+.sx-age .late .sx-item-bar > i { background: var(--red); }
+.sx-age .late .sx-item-name::after { content: ' · late'; color: var(--red); font-size: 11px; font-weight: 600; }
+/* waiting longest */
+.sx-old { display: flex; flex-direction: column; }
+.sx-old-row { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+.sx-old-row:first-child { border-top: none; padding-top: 0; }
+.sx-old-age { font: 700 15px Inter, sans-serif; color: var(--red); }
+.sx-old-age small { display: block; font: 400 10px 'JetBrains Mono', monospace; color: var(--ink-faint); }
+.sx-old-cust { font-size: 13px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-old-need { font-size: 12px; color: var(--ink-dim); margin-top: 2px; }
+.sx-old-need .ok { color: var(--green); font-weight: 600; }
+.sx-old-need .bad { color: var(--yellow-warn); font-weight: 600; }
+/* needs attention */
+.sx-attn { display: flex; flex-direction: column; gap: 10px; }
+.sx-attn-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: start; }
+.sx-attn-n { font: 700 20px Inter, sans-serif; color: var(--ink); text-align: right; line-height: 1.2; }
+.sx-attn-row.hot .sx-attn-n { color: var(--yellow-warn); }
+.sx-attn-row.ok .sx-attn-n { color: var(--green); }
+.sx-attn-t { font-size: 13px; color: var(--ink); font-weight: 600; }
+.sx-attn-d { font-size: 12px; color: var(--ink-dim); margin-top: 1px; }
+.sx-attn-d a { color: var(--amber); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+/* parts in demand (v1.102) */
+.sx-dem-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.sx-dem-q { flex: 1 1 260px; min-width: 200px; }
+.sx-dem-cov { font-size: 12px; color: var(--ink-dim); display: inline-flex; gap: 6px; align-items: center; margin-left: 4px; cursor: pointer; }
+.sx-dem-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sx-dem-table th { text-align: right; font-weight: 600; font-size: 11px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .05em; padding: 6px 10px; border-bottom: 1px solid var(--line-bright); white-space: nowrap; }
+.sx-dem-table th:first-child, .sx-dem-table td:first-child { text-align: left; }
+.sx-dem-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; color: var(--ink-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sx-dem-table td:first-child { color: var(--ink); white-space: normal; }
+.sx-dem-table td.need { color: var(--ink); font-weight: 700; }
+.sx-dem-table td.need.zero { color: var(--green); font-weight: 600; }
+.sx-dem-table tr:hover td { background: var(--panel-2); }
+.sx-dem-type { font: 600 10px 'JetBrains Mono', monospace; color: var(--ink-dim); border: 1px solid var(--line-bright); border-radius: 3px; padding: 1px 5px; }
+.sx-dem-flag { font: 600 10px 'JetBrains Mono', monospace; color: var(--yellow-warn); margin-left: 6px; }
+.sx-dem-more { margin-top: 12px; text-align: center; }
+@media (max-width: 700px) { .sx-dem-table .opt { display: none; } }
 /* Theme picker (Settings) */
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 8px; }
 .theme-card {
@@ -1976,7 +2057,15 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.lib-card-actions { display: flex; gap: 8px; }
+.lib-card-actions { display: flex; gap: 8px; align-items: center; }
+/* v1.102: product drop-downs */
+.lib-card-head { cursor: pointer; user-select: none; }
+.lib-card-head:hover { background: var(--line); }
+.lib-card:not(.open) .lib-card-head { border-bottom: none; }
+.lib-card:not(.open) .lib-parts-list, .lib-card:not(.open) .lib-card-foot { display: none; }
+.lib-parts-summary { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-dim); white-space: nowrap; margin-right: 6px; }
+.lib-chev { display: inline-block; color: var(--ink-dim); font-size: 14px; transition: transform .15s; margin-left: 4px; }
+.lib-card.open .lib-chev { transform: rotate(180deg); }
 
 .lib-parts-list { padding: 12px 18px; display: flex; flex-direction: column; gap: 8px; }
 .lib-empty-parts {
@@ -5390,7 +5479,7 @@ body.mode-mobile .mobile-only { display: block; }
         <span>Stats</span>
       </div>
       <div class="nav-item" data-view="library" data-mobile="hide">
-        <span>Parts Library</span>
+        <span>Products</span>
         <span class="nav-item-num" id="nav-library-count">0</span>
       </div>
       <div class="nav-item" data-view="sla-sorter" data-mobile="hide">
@@ -5518,64 +5607,56 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="page-header">
         <div>
           <h1 class="page-title">Stats</h1>
-          <div class="page-sub">Print pace, queue health, and demand — resin and FDM.</div>
+          <div class="page-sub">Print pace · backlog · what needs attention</div>
         </div>
       </div>
 
-      <div class="stats-page-grid">
-        <div class="stats-card">
-          <div class="stats-card-head">◈ Print productivity (FDM)</div>
-          <div class="productivity-row">
-            <div class="productivity-label">Printed today</div>
-            <div class="productivity-value" id="st-prod-today">0</div>
+      <div class="sx">
+        <div class="sx-kpis" id="sx-kpis"></div>
+        <div class="sx-row sx-row-2">
+          <div class="sx-card">
+            <div class="sx-head"><span>Printed per day</span><span class="sx-note" id="sx-daily-note">last 14 days · units marked Done</span></div>
+            <div class="sx-chart" id="sx-daily"></div>
           </div>
-          <div class="productivity-row">
-            <div class="productivity-label">Daily average</div>
-            <div class="productivity-value muted" id="st-prod-avg">0</div>
-          </div>
-          <div class="productivity-sub" id="st-prod-sub">All FDM parts · last 7 days</div>
-          <div class="productivity-row" style="border-top:1px solid var(--line-bright);">
-            <div class="productivity-label">Time to clear</div>
-            <div class="productivity-value" id="st-prod-eta">—</div>
-          </div>
-          <div class="productivity-sub" id="st-prod-eta-sub">At current pace</div>
-        </div>
-
-        <div class="stats-card">
-          <div class="stats-card-head">FDM queue</div>
-          <div class="stats stats-vertical">
-            <div class="stat"><div class="stat-label">Parts to print</div><div class="stat-value" data-st="fdm-parts">0</div></div>
-            <div class="stat"><div class="stat-label">Distinct parts</div><div class="stat-value muted" data-st="fdm-rows">0</div></div>
-            <div class="stat"><div class="stat-label">Distinct orders</div><div class="stat-value" data-st="fdm-orders">0</div></div>
-            <div class="stat"><div class="stat-label">Aged 7+ days</div><div class="stat-value alert" data-st="fdm-aged">0</div></div>
-            <div class="stat"><div class="stat-label">Undefined SKUs</div><div class="stat-value warn" data-st="fdm-undef">0</div></div>
+          <div class="sx-card">
+            <div class="sx-head"><span>How old are open orders</span><span class="sx-note">by oldest item</span></div>
+            <div id="sx-age"></div>
           </div>
         </div>
-
-        <div class="stats-card">
-          <div class="stats-card-head">Resin queue</div>
-          <div class="stats stats-vertical">
-            <div class="stat"><div class="stat-label">Parts to print</div><div class="stat-value" data-st="resin-parts">0</div></div>
-            <div class="stat"><div class="stat-label">Distinct parts</div><div class="stat-value muted" data-st="resin-rows">0</div></div>
-            <div class="stat"><div class="stat-label">Distinct orders</div><div class="stat-value" data-st="resin-orders">0</div></div>
-            <div class="stat"><div class="stat-label">Aged 7+ days</div><div class="stat-value alert" data-st="resin-aged">0</div></div>
-            <div class="stat"><div class="stat-label">Undefined SKUs</div><div class="stat-value warn" data-st="resin-undef">0</div></div>
+        <div class="sx-row sx-row-2">
+          <div class="sx-card">
+            <div class="sx-head"><span>Waiting longest</span><span class="sx-note">oldest open orders · what they still need</span></div>
+            <div id="sx-oldest"></div>
+          </div>
+          <div class="sx-card">
+            <div class="sx-head"><span>Needs attention</span></div>
+            <div id="sx-attn"></div>
           </div>
         </div>
-      </div>
-
-      <div class="stats-page-grid">
-        <div class="stats-card">
-          <div class="stats-card-head">★ Top 10 FDM by demand</div>
-          <div id="st-top10-fdm"></div>
+        <div class="sx-row sx-row-3">
+          <div class="sx-card">
+            <div class="sx-head"><span>Most needed · FDM</span><span class="sx-note">units still to print</span></div>
+            <div id="sx-top-fdm"></div>
+          </div>
+          <div class="sx-card">
+            <div class="sx-head"><span>Most needed · Resin</span><span class="sx-note">units still to print</span></div>
+            <div id="sx-top-resin"></div>
+          </div>
+          <div class="sx-card">
+            <div class="sx-head"><span>Most ordered products</span><span class="sx-note">across open orders</span></div>
+            <div id="sx-top-sku"></div>
+          </div>
         </div>
-        <div class="stats-card">
-          <div class="stats-card-head">★ Top 10 resin by demand</div>
-          <div id="st-top10-resin"></div>
-        </div>
-        <div class="stats-card">
-          <div class="stats-card-head">⇧ Top 10 shipped products</div>
-          <div id="st-top10-shipped"></div>
+        <div class="sx-card">
+          <div class="sx-head"><span>Parts in demand</span><span class="sx-note" id="sx-dem-note"></span></div>
+          <div class="sx-dem-tools">
+            <input type="text" class="search sx-dem-q" id="sx-dem-q" placeholder="Search parts…" autocomplete="off">
+            <button class="filter-chip active" data-dem-type="all">All</button>
+            <button class="filter-chip" data-dem-type="fdm">FDM</button>
+            <button class="filter-chip" data-dem-type="resin">Resin</button>
+            <label class="sx-dem-cov"><input type="checkbox" id="sx-dem-covered"> Include parts already covered by stock</label>
+          </div>
+          <div id="sx-dem"></div>
         </div>
       </div>
     </section>
@@ -5584,12 +5665,12 @@ body.mode-mobile .mobile-only { display: block; }
     <section id="view-library" class="hidden">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Parts Library</h1>
+          <h1 class="page-title">Products</h1>
           <div class="page-sub">Define parts once · reused across all orders</div>
         </div>
         <div class="page-actions">
           <button class="btn btn-ghost" id="btn-resort-library" title="Re-sort by priority (needs parts first, oldest order first)">Re-sort by priority</button>
-          <button class="btn btn-ghost" id="btn-export-library">Export Library</button>
+          <button class="btn btn-ghost" id="btn-export-library">Export Products</button>
         </div>
       </div>
 
@@ -5956,7 +6037,7 @@ body.mode-mobile .mobile-only { display: block; }
       <div class="section-title">Data Management</div>
       <div class="danger-card" style="margin-bottom:16px;">
         <div class="danger-title" style="color: var(--ink); margin-bottom:8px;">Backup</div>
-        <div class="danger-text">Download a full backup of all orders, parts library, and printed history as JSON. Save the file somewhere safe (Dropbox, Google Drive, USB).</div>
+        <div class="danger-text">Download a full backup of all orders, products, and printed history as JSON. Save the file somewhere safe (Dropbox, Google Drive, USB).</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
           <button class="btn" id="btn-backup">Download backup</button>
           <button class="btn" id="btn-restore">Restore from backup</button>
@@ -6218,7 +6299,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 100;
+const APP_BUILD = 102;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -8592,7 +8673,7 @@ function renderQueue(type) {
             : fullyCovered
               ? 'Inventory has enough stock to cover every open order. Nothing new to print right now.'
               : all.length === 0
-                ? `No ${typeLabel} parts to print. Tag parts as ${typeLabel} in Parts Library.`
+                ? `No ${typeLabel} parts to print. Tag parts as ${typeLabel} in Products.`
                 : 'Try adjusting your search or age filter.'
         }</div>
       </div>`;
@@ -10005,6 +10086,7 @@ function _openNextPlateConfirm() {
 // you add its first part (most SKUs need several) — its badge flips to Defined
 // but it won't vanish mid-edit. Rebuilt each time the filter is (re)selected.
 let _needsStickySkus = null;
+const _libOpen = new Set();   // v1.102: products whose parts list is open (this device only)
 function renderLibrary() {
   // Perf: skip when Library view is hidden. switchView calls this on nav-in.
   const view = document.getElementById('view-library');
@@ -10111,15 +10193,21 @@ function renderLibrary() {
       });
     }
 
+    // v1.102: each product is a drop-down — click the header to show its parts.
+    const nParts = r.parts.length;
+    const nPcs = r.parts.reduce((a, p) => a + ((typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1))), 0);
+    const partsSummary = nParts === 0 ? 'No parts yet' : `${nParts} part${nParts === 1 ? '' : 's'}${nPcs !== nParts ? ` · ${nPcs} pcs` : ''}`;
     html += `
-      <div class="lib-card" data-sku="${escapeAttr(r.sku)}">
-        <div class="lib-card-head">
+      <div class="lib-card${_libOpen.has(r.sku) ? ' open' : ''}" data-sku="${escapeAttr(r.sku)}">
+        <div class="lib-card-head" title="Click to show or hide the parts in this product">
           <div class="lib-card-status"><span class="status-badge status-${r.status}">${statusLabel}</span></div>
           <div class="lib-card-id">
             <div class="lib-sku">${escapeHtml(r.sku)}</div>
             <div class="lib-name">${escapeHtml(r.name)}</div>
           </div>
           <div class="lib-card-actions">
+            <span class="lib-parts-summary">${partsSummary}</span>
+            <span class="lib-chev" aria-hidden="true">▾</span>
             <button class="btn btn-sm btn-danger" data-action="del-sku">Delete SKU</button>
           </div>
         </div>
@@ -10159,6 +10247,14 @@ function wireLibraryCards(container) {
     if (card.dataset.wired === '1') return;
     card.dataset.wired = '1';
     const sku = card.dataset.sku;
+    // v1.102: header click opens/closes the parts list (buttons and fields inside it still work as before)
+    const head = card.querySelector('.lib-card-head');
+    if (head) head.addEventListener('click', (e) => {
+      if (e.target.closest('button, input, select, textarea, a, label')) return;
+      const open = !card.classList.contains('open');
+      card.classList.toggle('open', open);
+      if (open) _libOpen.add(sku); else _libOpen.delete(sku);
+    });
 
     const ensureLibEntry = () => {
       if (!state.library[sku]) {
@@ -10575,6 +10671,7 @@ function addSkuPrompt() {
     return;
   }
   state.library[trimmed] = { name: '', parts: [], notes: '' };
+  _libOpen.add(trimmed);   // open the new product so parts can be added right away
   save();
   renderLibrary();
   renderSidebarCounts();
@@ -10750,7 +10847,7 @@ function renderInventory(opts) {
       <div class="empty">
         <div class="empty-mark">[ ∅ ]</div>
         <div class="empty-title">No parts yet</div>
-        <div class="empty-sub">Define parts for your SKUs in Parts Library, then come back here to enter stock counts.</div>
+        <div class="empty-sub">Define parts for your SKUs in Products, then come back here to enter stock counts.</div>
       </div>`;
     return;
   }
@@ -11460,66 +11557,275 @@ function _statsTop10Html(built) {
 function renderStats() {
   const view = document.getElementById('view-stats');
   if (view && view.classList.contains('hidden')) return;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const todayMs = today.getTime();
-  const setSt = (key, val) => { const el = document.querySelector(`[data-st="${key}"]`); if (el) el.textContent = val; };
+  try { _renderStatsV2(); } catch (e) { console.warn('stats:', e); }
+  // These two render into the Settings page; keep them updated as before.
+  try { renderImportTopShipped(); } catch {}
+  try { renderLastImportChanges(); } catch {}
+}
 
-  // Per-queue stats + top 10 by demand
-  for (const type of ['resin', 'fdm']) {
-    const built = buildQueue(type);
-    const all = built.visible;
-    setSt(`${type}-parts`, queueUnitCount(built).toLocaleString());
-    const distinctParts = new Set();
-    for (const r of all) { if (!r._isNeed && r.part) distinctParts.add(r.part); }
-    setSt(`${type}-rows`, distinctParts.size.toLocaleString());
-    setSt(`${type}-orders`, new Set(all.map(r => r.orderId)).size);
-    setSt(`${type}-aged`, all.filter(r => (todayMs - new Date(r.date).getTime()) / 86400000 >= 7).length);
-    const undef = new Set();
-    for (const o of state.orders) { const lib = state.library[o.sku]; if (partNames(lib).length === 0) undef.add(o.sku); }
-    setSt(`${type}-undef`, undef.size);
-    const cont = document.getElementById(`st-top10-${type}`);
-    if (cont) cont.innerHTML = _statsTop10Html(built);
+// v1.101 Stats page. Read-only: it only reads state and draws; nothing is saved.
+// v1.102: searchable "Parts in demand" table (filters are this device only, not saved).
+let _statsDemRows = [];
+const _statsDem = { q: '', type: 'all', covered: false, shown: 60, wired: false };
+function _renderDemandTable() {
+  const el = document.getElementById('sx-dem');
+  if (!el) return;
+  if (!_statsDem.wired) {
+    _statsDem.wired = true;
+    const qi = document.getElementById('sx-dem-q');
+    if (qi) qi.addEventListener('input', () => { _statsDem.q = qi.value; _statsDem.shown = 60; _renderDemandTable(); });
+    document.querySelectorAll('[data-dem-type]').forEach(b => b.addEventListener('click', () => {
+      _statsDem.type = b.dataset.demType; _statsDem.shown = 60;
+      document.querySelectorAll('[data-dem-type]').forEach(x => x.classList.toggle('active', x === b));
+      _renderDemandTable();
+    }));
+    const cv = document.getElementById('sx-dem-covered');
+    if (cv) cv.addEventListener('change', () => { _statsDem.covered = cv.checked; _statsDem.shown = 60; _renderDemandTable(); });
   }
+  const words = _statsDem.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = _statsDemRows.filter(r =>
+    (_statsDem.type === 'all' || r.type === _statsDem.type) &&
+    (_statsDem.covered || r.need > 0) &&
+    words.every(w => r.key.includes(w))
+  ).sort((a, b) => b.need - a.need || b.demand - a.demand || a.part.localeCompare(b.part));
+  const fmt = n => Math.round(n).toLocaleString();
+  const totalNeed = rows.reduce((a, r) => a + r.need, 0);
+  const totalPlates = rows.reduce((a, r) => a + (r.yield > 0 && r.need > 0 ? Math.ceil(r.need / r.yield) : 0), 0);
+  const note = document.getElementById('sx-dem-note');
+  if (note) note.textContent = `${fmt(rows.length)} part${rows.length === 1 ? '' : 's'} · ${fmt(totalNeed)} units to print · ~${fmt(totalPlates)} plates`;
+  if (!rows.length) { el.innerHTML = `<div class="sx-empty">${_statsDemRows.length ? 'No parts match.' : 'No parts in demand.'}</div>`; return; }
+  const shown = rows.slice(0, _statsDem.shown);
+  el.innerHTML = `<table class="sx-dem-table"><thead><tr><th>Part</th><th class="opt">Type</th><th>To print</th><th class="opt">Ordered</th><th class="opt">In stock</th><th>Plates</th></tr></thead><tbody>` +
+    shown.map(r => `<tr><td>${escapeHtml(r.part)}${r.counted ? '' : '<span class="sx-dem-flag" title="Not counted yet — this part is hidden from the queues until it is counted">NOT COUNTED</span>'}</td><td class="opt"><span class="sx-dem-type">${r.type === 'fdm' ? 'FDM' : 'RESIN'}</span></td><td class="need${r.need ? '' : ' zero'}">${r.need ? fmt(r.need) : 'covered'}</td><td class="opt">${fmt(r.demand)}</td><td class="opt">${fmt(r.stock)}</td><td>${r.yield > 0 && r.need > 0 ? fmt(Math.ceil(r.need / r.yield)) : '—'}</td></tr>`).join('') +
+    `</tbody></table>` + (rows.length > shown.length ? `<div class="sx-dem-more"><button class="btn" id="sx-dem-more">Show more (${fmt(shown.length)} of ${fmt(rows.length)})</button></div>` : '');
+  const more = document.getElementById('sx-dem-more');
+  if (more) more.addEventListener('click', () => { _statsDem.shown += 100; _renderDemandTable(); });
+}
+function _statsShortName(name) {
+  let n = String(name || '').replace(/\s+/g, ' ').trim();
+  n = n.split(/ (?:great|perfect|ideal) for | for G\.?I\.? ?Joe| For G\.?I\.? ?Joe| fits /i)[0];
+  return n.length > 70 ? n.slice(0, 68) + '…' : n;
+}
+function _renderStatsV2() {
+  const DAY = 86400000;
+  const now = Date.now();
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  const todayMs = midnight.getTime();
+  const fmt = n => Math.round(n).toLocaleString();
+  const esc = escapeHtml;
+  // Part type (fdm/resin) and plate yield from the Parts Library
+  const meta = {};
+  for (const lib of Object.values(state.library || {})) for (const p of (lib && lib.parts) || []) {
+    if (p && typeof p === 'object' && p.name && !meta[p.name]) meta[p.name] = { type: p.type === 'fdm' ? 'fdm' : 'resin', yield: Number(p.yield) || 0 };
+  }
+  const built = { fdm: buildQueue('fdm'), resin: buildQueue('resin') };
+  const units = { fdm: queueUnitCount(built.fdm), resin: queueUnitCount(built.resin) };
 
-  // FDM print productivity — ALL FDM parts, last 7 days.
-  const fdmParts = new Set();
-  for (const sku of Object.keys(state.library)) {
-    const lib = state.library[sku];
-    if (!lib || !Array.isArray(lib.parts)) continue;
-    for (const p of lib.parts) if (p && typeof p !== 'string' && p.type === 'fdm' && p.name) fdmParts.add(p.name);
+  // ---- printed per day (Done deposits in the stock log)
+  const NDAYS = 14;
+  const days = [];
+  for (let i = NDAYS - 1; i >= 0; i--) { const d = new Date(todayMs - i * DAY); days.push({ t: d.getTime(), fdm: 0, resin: 0 }); }
+  let firstPrint = Infinity;
+  for (const e of (state.invEvents || [])) {
+    if (!e || e.reason !== 'print' || !(e.amt > 0)) continue;
+    const t = Date.parse(e.at); if (!(t > 0)) continue;
+    if (t < firstPrint) firstPrint = t;
+    const d0 = new Date(t); d0.setHours(0, 0, 0, 0);
+    const idx = Math.round((d0.getTime() - days[0].t) / DAY);
+    if (idx < 0 || idx >= NDAYS) continue;
+    const ty = (meta[e.part] || {}).type || 'resin';
+    days[idx][ty] += e.amt;
   }
-  const win = new Date(today.getTime() - 6 * 86400000);  // 7-day window incl. today
-  let printedToday = 0, printed7 = 0, earliest = null;
-  for (const c of (state.completedOrders || [])) {
-    if (c.kind !== 'print' || c.synthetic) continue;
-    const ptype = c.printType || (fdmParts.has(c.partName) ? 'fdm' : 'resin');
-    if (ptype !== 'fdm') continue;
-    const at = new Date(c.at); if (isNaN(at.getTime())) continue;
-    const qty = (typeof c.qtyToDemand === 'number') ? c.qtyToDemand : (Number(c.qty) || 0);
-    if (at >= today) printedToday += qty;
-    if (at >= win) { printed7 += qty; if (!earliest || at < earliest) earliest = at; }
-  }
-  let days = 7;
-  if (earliest) { const e = new Date(earliest); e.setHours(0, 0, 0, 0); days = Math.min(7, Math.max(1, Math.floor((todayMs - e.getTime()) / 86400000) + 1)); }
-  const dailyAvg = printed7 / days;
-  const setId = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  setId('st-prod-today', printedToday.toLocaleString());
-  setId('st-prod-avg', dailyAvg >= 10 ? Math.round(dailyAvg) : dailyAvg.toFixed(1));
-  setId('st-prod-sub', `All FDM parts · ${days === 1 ? 'today only' : 'last ' + days + ' days'}`);
-  let backlog = 0;
-  try { backlog = queueUnitCount(buildQueue('fdm')); } catch {}
-  if (backlog === 0) { setId('st-prod-eta', 'Clear ✓'); setId('st-prod-eta-sub', 'Nothing pending'); }
-  else if (dailyAvg <= 0) { setId('st-prod-eta', '—'); setId('st-prod-eta-sub', `${backlog.toLocaleString()} units · need recent prints to estimate`); }
-  else {
-    const d = Math.ceil(backlog / dailyAvg);
-    setId('st-prod-eta', d === 1 ? '1 day' : `${d} days`);
-    const done = new Date(todayMs + d * 86400000);
-    setId('st-prod-eta-sub', `${backlog.toLocaleString()} units · clears ~${done.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d > 300 ? 'numeric' : undefined })}`);
-  }
+  const firstDay = isFinite(firstPrint) ? new Date(firstPrint).setHours(0, 0, 0, 0) : Infinity;
+  for (const d of days) d.nodata = d.t < firstDay;
+  const today = days[NDAYS - 1];
+  const last7 = days.slice(NDAYS - 7).filter(d => !d.nodata);
+  const avg = t => last7.length ? last7.reduce((a, d) => a + (t ? d[t] : d.fdm + d.resin), 0) / last7.length : 0;
+  const avgAll = avg(), avgF = avg('fdm'), avgR = avg('resin');
+  const clear = (u, a) => { if (!u) return 'Clear ✓'; if (!(a > 0)) return 'no recent prints'; const d = Math.ceil(u / a); return `~${d} day${d === 1 ? '' : 's'} to clear`; };
 
-  // Top 10 shipped (moved here from the old Import page)
-  renderImportTopShipped();
-  renderLastImportChanges();
+  // ---- open orders (by order number) and their age
+  const orders = new Map();
+  for (const o of (state.orders || [])) {
+    const id = String(o.orderId || o.id);
+    const t = Date.parse(o.date) || now;
+    let g = orders.get(id);
+    if (!g) orders.set(id, g = { id, customer: o.customer, oldest: t, lines: [] });
+    if (t < g.oldest) g.oldest = t;
+    g.lines.push(o);
+  }
+  const ageDays = g => Math.floor((todayMs - new Date(g.oldest).setHours(0, 0, 0, 0)) / DAY);
+  const og = [...orders.values()];
+  const late30 = og.filter(g => ageDays(g) > 30).length, late60 = og.filter(g => ageDays(g) > 60).length;
+  const oldestDays = og.length ? Math.max(...og.map(ageDays)) : 0;
+
+  // ---- what each order line still needs printed (from the queues)
+  const remainingByLine = {};
+  for (const ty of ['fdm', 'resin']) for (const r of built[ty].visible) {
+    if (r._isNeed || !(r._remaining > 0)) continue;
+    (remainingByLine[r.orderId] = remainingByLine[r.orderId] || []).push([r.part, r._remaining]);
+  }
+  // Orders whose every item is covered by counted stock — they could be packed now
+  const counted = state.countedParts || {};
+  const readyOrders = og.filter(g => g.lines.every(l => {
+    const recipe = state.library[l.sku] ? partNames(state.library[l.sku]) : [];
+    return recipe.length && !remainingByLine[l.id] && recipe.every(p => counted[p]);
+  }));
+  const readyOld = readyOrders.filter(g => ageDays(g) > 30).length;
+
+  // ---- KPI tiles
+  const tile = (label, value, sub, cls) => `<div class="sx-kpi ${cls || ''}"><div class="sx-kpi-label">${label}</div><div class="sx-kpi-value">${value}</div><div class="sx-kpi-sub">${sub}</div></div>`;
+  const vsAvg = avgAll > 0 ? `7-day avg <b>${fmt(avgAll)}</b> / day` : 'no prints logged yet';
+  document.getElementById('sx-kpis').innerHTML =
+    tile('Printed today', fmt(today.fdm + today.resin), vsAvg) +
+    tile('FDM to print', fmt(units.fdm), clear(units.fdm, avgF)) +
+    tile('Resin to print', fmt(units.resin), clear(units.resin, avgR)) +
+    tile('Open orders', fmt(og.length), og.length ? `oldest <b>${oldestDays} days</b>` : 'none') +
+    tile('Over 30 days old', fmt(late30), `<b>${fmt(late60)}</b> over 60 days`, late30 ? 'warn' : '') +
+    tile('Ready to pack', fmt(readyOrders.length), readyOrders.length ? `all parts in stock${readyOld ? ` · <b>${fmt(readyOld)}</b> over 30 days` : ''}` : 'none fully in stock', readyOrders.length ? 'good' : '');
+
+  // ---- daily chart (one series; today emphasised; hover for the FDM / resin split)
+  (function drawDaily() {
+    const el = document.getElementById('sx-daily');
+    const W = 640, H = 210, padL = 38, padR = 8, padT = 18, padB = 24;
+    const max = Math.max(1, ...days.map(d => d.fdm + d.resin));
+    const step = Math.pow(10, Math.floor(Math.log10(max)));
+    const top = Math.ceil(max / step) * step;
+    const ticks = [0, top / 2, top];
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const slot = plotW / NDAYS, bw = Math.min(24, slot * 0.62);
+    const y = v => padT + plotH - (v / top) * plotH;
+    const short = v => v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'K' : String(Math.round(v));
+    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Units printed per day, last 14 days">`;
+    for (const t of ticks) svg += `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}"/><text class="ax" x="${padL - 6}" y="${y(t) + 4}" text-anchor="end">${short(t)}</text>`;
+    const bestIdx = days.reduce((bi, d, i) => (d.fdm + d.resin) > (days[bi].fdm + days[bi].resin) ? i : bi, 0);
+    days.forEach((d, i) => {
+      const cx = padL + slot * i + slot / 2, tot = d.fdm + d.resin;
+      const isToday = i === NDAYS - 1;
+      const label = new Date(d.t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      if (d.nodata) svg += `<rect class="nodata" x="${cx - bw / 2}" y="${y(0) - 2}" width="${bw}" height="2"/>`;
+      else if (tot > 0) {
+        const h = Math.max(2, y(0) - y(tot)), r = Math.min(4, bw / 2, h);
+        const x0 = cx - bw / 2, y0 = y(tot);
+        svg += `<path class="bar${isToday ? ' today' : ''}${i === bestIdx ? ' hl' : ''}" d="M${x0},${y0 + h} V${y0 + r} Q${x0},${y0} ${x0 + r},${y0} H${x0 + bw - r} Q${x0 + bw},${y0} ${x0 + bw},${y0 + r} V${y0 + h} Z"/>`;
+        if (isToday || i === bestIdx) svg += `<text class="val" x="${cx}" y="${y0 - 5}" text-anchor="middle">${fmt(tot)}</text>`;
+      }
+      if (i % 2 === (NDAYS - 1) % 2) svg += `<text class="ax" x="${cx}" y="${H - 6}" text-anchor="middle">${isToday ? 'Today' : label}</text>`;
+      svg += `<rect class="hit" data-i="${i}" x="${padL + slot * i}" y="${padT}" width="${slot}" height="${plotH + 4}"/>`;
+    });
+    svg += `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--line-bright)"/></svg><div class="sx-tip"></div>`;
+    el.innerHTML = svg;
+    const tip = el.querySelector('.sx-tip');
+    el.querySelectorAll('.hit').forEach(h => {
+      h.addEventListener('mouseenter', () => {
+        const d = days[+h.dataset.i];
+        const label = new Date(d.t).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        tip.innerHTML = d.nodata ? `<div class="t">${label}</div><div class="r">No print log for this day</div>`
+          : `<div class="t">${label} · ${fmt(d.fdm + d.resin)} units</div><div class="r">FDM ${fmt(d.fdm)} · Resin ${fmt(d.resin)}</div>`;
+        tip.style.display = 'block';
+        const box = el.getBoundingClientRect(), hb = h.getBoundingClientRect();
+        let left = hb.left - box.left + hb.width / 2 - tip.offsetWidth / 2;
+        left = Math.max(0, Math.min(box.width - tip.offsetWidth, left));
+        tip.style.left = left + 'px'; tip.style.top = '-6px';
+      });
+      h.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+    });
+    const shown = days.filter(d => !d.nodata).length;
+    document.getElementById('sx-daily-note').textContent = shown < NDAYS ? `last ${shown} days logged · units marked Done` : 'last 14 days · units marked Done';
+  })();
+
+  // ---- age buckets
+  const buckets = [['0–7 days', 0, 7], ['8–14 days', 8, 14], ['15–30 days', 15, 30], ['31–60 days', 31, 60], ['Over 60 days', 61, 1e9]];
+  const bc = buckets.map(([n, lo, hi]) => ({ n, c: og.filter(g => { const a = ageDays(g); return a >= lo && a <= hi; }).length, late: lo > 30 }));
+  const bmax = Math.max(1, ...bc.map(b => b.c));
+  document.getElementById('sx-age').innerHTML = og.length ? `<div class="sx-list sx-age">` + bc.map(b =>
+    `<div class="sx-item${b.late ? ' late' : ''}"><div class="sx-item-name">${b.n}</div><div class="sx-item-val">${fmt(b.c)}<small>${b.c === 1 ? 'order' : 'orders'}</small></div><div class="sx-item-bar"><i style="width:${b.c ? Math.max(2, b.c / bmax * 100) : 0}%"></i></div></div>`).join('') + `</div>`
+    : `<div class="sx-empty">No open orders.</div>`;
+
+  // ---- waiting longest: oldest orders and what they still need
+  const oldest = og.slice().sort((a, b) => a.oldest - b.oldest).slice(0, 6);
+  document.getElementById('sx-oldest').innerHTML = oldest.length ? `<div class="sx-old">` + oldest.map(g => {
+    const need = {}; let noRecipe = 0; const uncountedParts = new Set();
+    for (const l of g.lines) {
+      const recipe = state.library[l.sku] ? partNames(state.library[l.sku]) : [];
+      if (!recipe.length) noRecipe++;
+      for (const p of recipe) if (!(state.countedParts || {})[p]) uncountedParts.add(p);   // hidden from the queues until counted
+      for (const [p, q] of (remainingByLine[l.id] || [])) need[p] = (need[p] || 0) + q;
+    }
+    const parts = Object.entries(need).sort((a, b) => b[1] - a[1]);
+    let txt;
+    if (!noRecipe && uncountedParts.size && !parts.length) txt = `<span class="bad">Waiting on a count</span> · ${[...uncountedParts].slice(0, 2).map(esc).join(', ')}${uncountedParts.size > 2 ? ' +' + (uncountedParts.size - 2) + ' more' : ''} not counted`;
+    else if (noRecipe) txt = `<span class="bad">${noRecipe} item${noRecipe > 1 ? 's have' : ' has'} no recipe</span>` + (parts.length ? ` · plus ${parts.length} part${parts.length > 1 ? 's' : ''} to print` : '');
+    else if (!parts.length) txt = `<span class="ok">All parts in stock — ready to pack</span>`;
+    else if (uncountedParts.size) txt = 'Needs ' + parts.slice(0, 3).map(([p, q]) => `${esc(p)} ×${q}`).join(', ') + (parts.length > 3 ? ` <span style="color:var(--ink-faint)">+${parts.length - 3} more</span>` : '') + ` · <span class="bad">${uncountedParts.size} uncounted</span>`;
+    else txt = 'Needs ' + parts.slice(0, 3).map(([p, q]) => `${esc(p)} ×${q}`).join(', ') + (parts.length > 3 ? ` <span style="color:var(--ink-faint)">+${parts.length - 3} more</span>` : '');
+    const items = g.lines.length;
+    return `<div class="sx-old-row"><div class="sx-old-age">${ageDays(g)}d<small>${items} item${items > 1 ? 's' : ''}</small></div><div style="min-width:0"><div class="sx-old-cust">${esc(g.customer || 'Order ' + g.id)}</div><div class="sx-old-need">${txt}</div></div></div>`;
+  }).join('') + `</div>` : `<div class="sx-empty">No open orders.</div>`;
+
+  // ---- needs attention
+  const noRec = {};
+  for (const o of (state.orders || [])) if (!state.library[o.sku] || partNames(state.library[o.sku]).length === 0) {
+    const k = o.sku || '(no SKU)'; noRec[k] = noRec[k] || { n: 0, name: o.item }; noRec[k].n++;
+  }
+  const noRecList = Object.entries(noRec).sort((a, b) => b[1].n - a[1].n);
+  const noRecLines = noRecList.reduce((a, [, v]) => a + v.n, 0);
+  const li = state.lastImport || {};
+  const hitZero = (li.inventoryChanges || []).filter(c => Number(c.before) + Number(c.delta) < 0);
+  const openNeeds = (state.partsNeeded || []).filter(n => !n.resolvedAt && !(state.deletedNeeds || {})[n.id]).length;
+  let uncounted = 0; try { uncounted = WT.uncountedCountsByLocation().all; } catch {}
+  const attn = (n, title, detail, cls) => `<div class="sx-attn-row ${cls}"><div class="sx-attn-n">${fmt(n)}</div><div style="min-width:0"><div class="sx-attn-t">${title}</div><div class="sx-attn-d">${detail}</div></div></div>`;
+  document.getElementById('sx-attn').innerHTML = `<div class="sx-attn">` +
+    attn(noRecList.length, noRecList.length === 1 ? 'Product with no recipe' : 'Products with no recipe',
+      noRecList.length ? `${fmt(noRecLines)} order line${noRecLines === 1 ? '' : 's'} can't reach the print queues. Top: ${noRecList.slice(0, 3).map(([k]) => esc(_statsShortName(k))).join(', ')} · <a data-go="library">Products</a>` : 'Every ordered product has its parts set up.', noRecList.length ? 'hot' : 'ok') +
+    attn(hitZero.length, 'Parts that ran out on the last import',
+      hitZero.length ? `Shipping needed more than the stock count — worth a recount. e.g. ${hitZero.slice(0, 3).map(c => esc(c.part)).join(', ')}` : 'No part ran short on the last import.', hitZero.length ? 'hot' : 'ok') +
+    attn(openNeeds, 'Open Part Needed requests', openNeeds ? 'Waiting to be printed or resolved.' : 'Nothing waiting.', openNeeds ? '' : 'ok') +
+    attn(uncounted, 'Uncounted parts', uncounted ? 'Hidden from the queues until they are counted.' : 'Every part has a count.', uncounted ? 'hot' : 'ok') +
+    `</div>`;
+  document.querySelectorAll('#sx-attn [data-go]').forEach(a => a.addEventListener('click', () => switchView(a.dataset.go)));
+
+  // ---- most needed parts (units + estimated plates) and most ordered products
+  const partList = ty => {
+    const tot = {};
+    for (const r of built[ty].visible) { if (r._isNeed) continue; tot[r.part] = (tot[r.part] || 0) + (Number(r._remaining) || 0); }
+    const top = Object.entries(tot).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    if (!top.length) return `<div class="sx-empty">Nothing to print.</div>`;
+    const mx = top[0][1];
+    return `<div class="sx-list">` + top.map(([p, q]) => {
+      const y = (meta[p] || {}).yield || 0;
+      const plates = y > 0 ? Math.ceil(q / y) : null;
+      return `<div class="sx-item" title="${escapeAttr(p)}"><div class="sx-item-name">${esc(p)}</div><div class="sx-item-val">${fmt(q)}${plates ? `<small>${plates} plate${plates > 1 ? 's' : ''}</small>` : ''}</div><div class="sx-item-bar"><i style="width:${Math.max(2, q / mx * 100)}%"></i></div></div>`;
+    }).join('') + `</div>`;
+  };
+  document.getElementById('sx-top-fdm').innerHTML = partList('fdm');
+  document.getElementById('sx-top-resin').innerHTML = partList('resin');
+  const bySku = {};
+  for (const o of (state.orders || [])) {
+    const k = o.sku || o.item; if (!k) continue;
+    const g = bySku[k] = bySku[k] || { q: 0, orders: new Set(), name: (state.library[o.sku] && state.library[o.sku].name) || o.item || k };
+    g.q += Number(o.qty) || 1; g.orders.add(o.orderId);
+  }
+  // ---- parts in demand (searchable table below)
+  {
+    const demand = demandByPart();
+    const queueNeed = {};
+    for (const ty of ['fdm', 'resin']) for (const r of built[ty].visible) { if (r._isNeed) continue; queueNeed[r.part] = (queueNeed[r.part] || 0) + (Number(r._remaining) || 0); }
+    const cp = state.countedParts || {};
+    _statsDemRows = Object.entries(demand).filter(([, d]) => d > 0).map(([part, d]) => {
+      const stock = Number((state.inventory || {})[part] || 0);
+      const m = meta[part] || {};
+      const isCounted = !!cp[part];
+      const need = isCounted ? (queueNeed[part] || 0) : Math.max(0, d - stock);
+      return { part, type: m.type || 'resin', demand: d, stock, need, yield: m.yield || 0, counted: isCounted, key: part.toLowerCase() };
+    });
+    _renderDemandTable();
+  }
+  const topSku = Object.entries(bySku).sort((a, b) => b[1].q - a[1].q).slice(0, 10);
+  const smx = topSku.length ? topSku[0][1].q : 1;
+  document.getElementById('sx-top-sku').innerHTML = topSku.length ? `<div class="sx-list">` + topSku.map(([k, g]) =>
+    `<div class="sx-item" title="${escapeAttr(g.name)}"><div class="sx-item-name">${esc(_statsShortName(g.name))}</div><div class="sx-item-val">${fmt(g.q)}<small>${g.orders.size} order${g.orders.size > 1 ? 's' : ''}</small></div><div class="sx-item-bar"><i style="width:${Math.max(2, g.q / smx * 100)}%"></i></div><div class="sx-item-sub">SKU ${esc(k)}</div></div>`).join('') + `</div>`
+    : `<div class="sx-empty">No open orders.</div>`;
 }
 
 // ============================================================
@@ -12210,7 +12516,7 @@ function openSwapModal(rowId) {
       <div style="background:var(--bg);border:1px dashed var(--line-bright);border-radius:4px;padding:12px 14px;margin-bottom:14px;">
         <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">Create new SKU</div>
         <div style="font-size:11px;color:var(--ink-dim);margin-bottom:10px;line-height:1.4;">
-          New SKU not in your library yet? Type it here. The app will create an empty entry; add parts via Parts Library afterward.
+          New SKU not in your library yet? Type it here. The app will create an empty entry; add parts via Products afterward.
         </div>
         <div style="display:flex;gap:8px;align-items:stretch;">
           <input type="text" data-new-sku placeholder="New SKU code…" style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--line-bright);color:var(--ink);font-size:13px;padding:8px 10px;border-radius:4px;font-family:'JetBrains Mono',monospace;">
@@ -12259,7 +12565,7 @@ function openSwapModal(rowId) {
     }
     createBtn.disabled = false;
     createBtn.textContent = 'Create + Swap';
-    newSkuHint.textContent = 'Will create an empty library entry. Add parts via Parts Library.';
+    newSkuHint.textContent = 'Will create an empty product entry. Add parts via Products.';
     newSkuHint.style.color = 'var(--green)';
   };
   newSkuInput.addEventListener('input', updateCreateState);
@@ -13385,7 +13691,7 @@ function switchView(name) {
     if (container && !container._fastPath) {
       container._fastPath = true;  // mark as rendered-once so we know it's not first-load
     } else if (container && container.children.length === 0) {
-      container.innerHTML = '<div class="empty"><div class="empty-mark">…</div><div class="empty-sub">Loading parts library…</div></div>';
+      container.innerHTML = '<div class="empty"><div class="empty-mark">…</div><div class="empty-sub">Loading products…</div></div>';
     }
   }
   // requestAnimationFrame guarantees the DOM repaint with the view change
@@ -13690,7 +13996,7 @@ document.getElementById('btn-resort-inventory').addEventListener('click', () => 
     if (!selectedSku) return;
     const lib = state.library[selectedSku];
     if (!lib || !Array.isArray(lib.parts) || lib.parts.length === 0) {
-      partsList.innerHTML = `<div style="padding:8px;color:var(--ink-faint);font-size:12px;">No parts defined for this SKU. Add parts in Parts Library first.</div>`;
+      partsList.innerHTML = `<div style="padding:8px;color:var(--ink-faint);font-size:12px;">No parts defined for this SKU. Add parts in Products first.</div>`;
       addBtn.disabled = true;
       subBtn.disabled = true;
       return;
@@ -14633,7 +14939,7 @@ document.getElementById('btn-export-library').addEventListener('click', exportLi
 document.getElementById('btn-resort-library').addEventListener('click', () => {
   state.libOrderSnapshot = null;
   renderLibrary();
-  toast('Parts Library re-sorted by priority');
+  toast('Products re-sorted by priority');
 });
 document.getElementById('btn-backup').addEventListener('click', exportBackup);
 
