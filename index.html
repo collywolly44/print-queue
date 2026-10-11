@@ -11,7 +11,7 @@
 <link rel="icon" type="image/png" href="icon.png">
 <link rel="apple-touch-icon" href="icon.png">
 <title>Print Queue · Workshop</title>
-<script>try{var _t=localStorage.getItem('pq_theme');if(_t)document.documentElement.setAttribute('data-theme',_t);}catch(e){}</script>
+<script>try{var _t=localStorage.getItem('pq_theme');if(_t)document.documentElement.setAttribute('data-theme',_t);if(_t==='custom'){var _c=JSON.parse(localStorage.getItem('pq_theme_custom')||'null');if(_c){for(var _k in _c.vars)document.documentElement.style.setProperty(_k,_c.vars[_k]);if(_c.deco)document.documentElement.setAttribute('data-deco','halloween');}}}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -70,68 +70,32 @@ html[data-theme="halloween"] body::after {
 }
 html[data-theme="halloween"] .brand-name::after { content: ' \1F383'; font-size: 0.8em; }
 
-/* Midnight: deep navy with a sky-blue accent. */
-html[data-theme="midnight"] {
-  --bg: #0b1220;
-  --panel: #111a2c;
-  --panel-2: #172238;
-  --line: #24314a;
-  --line-bright: #33456a;
-  --ink: #eef3fb;
-  --ink-dim: #9fb0cc;
-  --ink-faint: #64779a;
-  --amber: #5aa9ff;
-  --amber-bright: #82bfff;
-  --red: #ff6b6b;
-  --green: #5fd3a0;
-  --blue: #b39dff;
-  --yellow-warn: #f2c14e;
+/* Custom theme (v1.104): colours come from the theme editor in Settings and are
+   set as variables on <html>; these rules add the second accent and the optional
+   Halloween decorations. */
+html[data-theme="custom"] .section-title::before { background: var(--accent2); }
+html[data-theme="custom"] .nav-item.active { border-left-color: var(--accent2); }
+html[data-theme="custom"] .nav-item.active .nav-item-num { color: var(--accent2); }
+html[data-theme="custom"] .brand-dot { background: var(--accent2); }
+html[data-theme="custom"][data-deco="halloween"] .brand-name::after { content: ' \1F383'; font-size: 0.8em; }
+html[data-theme="custom"][data-deco="halloween"] body::after {
+  content: ''; position: fixed; top: 0; right: 0; width: 180px; height: 180px;
+  pointer-events: none; z-index: 0; opacity: 0.22; background: var(--accent2);
+  -webkit-mask: no-repeat top right / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' fill='none' stroke='%23000' stroke-width='1.2'%3E%3Cpath d='M200 0 L40 0 M200 0 L60 60 M200 0 L120 110 M200 0 L200 160 M200 0 L0 40'/%3E%3Cpath d='M170 0 Q178 22 200 30 M140 0 Q152 40 200 60 M105 0 Q122 60 200 95 M70 0 Q90 80 200 130 M40 0 Q60 100 200 160'/%3E%3C/svg%3E");
+          mask: no-repeat top right / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' fill='none' stroke='%23000' stroke-width='1.2'%3E%3Cpath d='M200 0 L40 0 M200 0 L60 60 M200 0 L120 110 M200 0 L200 160 M200 0 L0 40'/%3E%3Cpath d='M170 0 Q178 22 200 30 M140 0 Q152 40 200 60 M105 0 Q122 60 200 95 M70 0 Q90 80 200 130 M40 0 Q60 100 200 160'/%3E%3C/svg%3E");
 }
-
-/* Olive Drab: field-green and khaki. */
-html[data-theme="olive"] {
-  --bg: #12140e;
-  --panel: #191c13;
-  --panel-2: #20241a;
-  --line: #2f3424;
-  --line-bright: #464d36;
-  --ink: #eef0e4;
-  --ink-dim: #a9ae94;
-  --ink-faint: #737a5e;
-  --amber: #d2b26a;
-  --amber-bright: #e3c785;
-  --red: #e0664f;
-  --green: #9cc55a;
-  --blue: #7fb0c9;
-  --yellow-warn: #d9b44a;
-}
-
-/* Daylight: light background, dark text — for bright rooms. */
-html[data-theme="daylight"] {
-  color-scheme: light;
-  --bg: #eef0f3;
-  --panel: #ffffff;
-  --panel-2: #f6f7f9;
-  --line: #d9dde3;
-  --line-bright: #bcc3cd;
-  --ink: #161b22;
-  --ink-dim: #4f5b6b;
-  --ink-faint: #8792a2;
-  --amber: #d0700f;
-  --amber-bright: #e5862a;
-  --red: #c9372c;
-  --green: #23874a;
-  --blue: #2563b0;
-  --yellow-warn: #a87300;
-}
-html[data-theme="daylight"] body {
-  background-image:
-    linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px);
-}
-html[data-theme="daylight"] #sync-progress-label { background: rgba(255,255,255,0.95); border-color: var(--line); }
-html[data-theme="daylight"] .offline-box { background: rgba(255,255,255,0.97); }
-html[data-theme="daylight"] .paint-row-title, html[data-theme="daylight"] .paint-row-count { color: #7a3aa6; }
+/* theme editor */
+.theme-edit { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+.theme-edit-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.theme-edit-head b { font-size: 14px; margin-right: 6px; }
+.theme-edit-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.theme-color { display: flex; align-items: center; gap: 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 8px 10px; cursor: pointer; }
+.theme-color input[type=color] { width: 34px; height: 28px; border: none; padding: 0; background: none; cursor: pointer; flex: none; }
+.theme-color span { font-size: 13px; color: var(--ink); }
+.theme-color small { display: block; font-size: 11px; color: var(--ink-faint); }
+.theme-edit-foot { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.theme-edit-foot label { font-size: 13px; color: var(--ink); display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.theme-edit-note { font-size: 12px; color: var(--amber); }
 /* ---------- Stats page (v1.101) ---------- */
 .sx { display: flex; flex-direction: column; gap: 16px; }
 .sx-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
@@ -1062,7 +1026,11 @@ body {
   border-radius: 3px; padding: 1px 5px; margin-left: 6px; white-space: nowrap;
   vertical-align: middle; cursor: help; flex: none;
 }
-.kanban-card-bottom .count-fresh-tag { margin-left: auto; margin-right: 6px; }
+.kanban-card-bottom .count-fresh-tag { margin-left: auto; margin-right: 0; }
+.kanban-card-bottom .kanban-recount { width: 24px; height: 24px; font-size: 13px; flex: none; margin-left: auto; }
+.kanban-card-bottom .count-fresh-tag + .kanban-recount { margin-left: 0; }
+.kanban-card-bottom { gap: 6px; }
+.kanban-card-sku { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kanban-card-top {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 8px;
@@ -6004,11 +5972,11 @@ body.mode-mobile .mobile-only { display: block; }
 
       <div class="section-title">Theme</div>
       <div class="danger-card" style="margin-bottom:16px;">
-        <div class="danger-text" style="margin-bottom:12px;">Pick a look for the app. It switches on <strong>every device</strong> — phones, PCs and the gridiron account.</div>
+        <div class="danger-text" style="margin-bottom:12px;">Pick a look for the app, or make your own. It switches on <strong>every device</strong> — phones, PCs and the gridiron account.</div>
         <div class="theme-grid" id="theme-grid">
           <button class="theme-card" data-theme-pick="gridiron">
             <div class="theme-swatch"><span style="background:#0f1419"></span><span style="background:#161c24"></span><span style="background:#f0a830"></span><span style="background:#6cbf7e"></span><span style="background:#e8eef5"></span></div>
-            <div class="theme-card-name">Gridiron <span class="theme-check"></span></div>
+            <div class="theme-card-name">Classic <span class="theme-check"></span></div>
             <div class="theme-card-note">The original dark workshop look</div>
           </button>
           <button class="theme-card" data-theme-pick="halloween">
@@ -6016,21 +5984,27 @@ body.mode-mobile .mobile-only { display: block; }
             <div class="theme-card-name">Halloween &#x1F383; <span class="theme-check"></span></div>
             <div class="theme-card-note">Charcoal, white text, pumpkin orange, a touch of purple</div>
           </button>
-          <button class="theme-card" data-theme-pick="midnight">
-            <div class="theme-swatch"><span style="background:#0b1220"></span><span style="background:#172238"></span><span style="background:#5aa9ff"></span><span style="background:#5fd3a0"></span><span style="background:#eef3fb"></span></div>
-            <div class="theme-card-name">Midnight <span class="theme-check"></span></div>
-            <div class="theme-card-note">Deep navy with a blue accent</div>
+          <button class="theme-card" data-theme-pick="custom">
+            <div class="theme-swatch" id="theme-custom-swatch"></div>
+            <div class="theme-card-name">Custom <span class="theme-check"></span></div>
+            <div class="theme-card-note">Your own colours — set them below</div>
           </button>
-          <button class="theme-card" data-theme-pick="olive">
-            <div class="theme-swatch"><span style="background:#12140e"></span><span style="background:#20241a"></span><span style="background:#d2b26a"></span><span style="background:#9cc55a"></span><span style="background:#eef0e4"></span></div>
-            <div class="theme-card-name">Olive Drab <span class="theme-check"></span></div>
-            <div class="theme-card-note">Field green and khaki</div>
-          </button>
-          <button class="theme-card" data-theme-pick="daylight">
-            <div class="theme-swatch"><span style="background:#eef0f3"></span><span style="background:#ffffff"></span><span style="background:#d0700f"></span><span style="background:#23874a"></span><span style="background:#161b22"></span></div>
-            <div class="theme-card-name">Daylight <span class="theme-check"></span></div>
-            <div class="theme-card-note">Light background, dark text</div>
-          </button>
+        </div>
+        <div class="theme-edit" id="theme-edit">
+          <div class="theme-edit-head">
+            <b>Customize colours</b>
+            <span style="font-size:12px;color:var(--ink-dim);">Start from:</span>
+            <button class="btn btn-sm" data-theme-start="gridiron">Classic</button>
+            <button class="btn btn-sm" data-theme-start="halloween">Halloween</button>
+          </div>
+          <div class="theme-edit-grid" id="theme-edit-grid"></div>
+          <div class="theme-edit-foot">
+            <label><input type="checkbox" id="theme-edit-deco"> Halloween decorations (🎃 and cobweb)</label>
+            <span style="flex:1"></span>
+            <span class="theme-edit-note" id="theme-edit-note" hidden>Previewing on this device — not saved yet</span>
+            <button class="btn btn-sm" id="theme-edit-cancel" hidden>Cancel</button>
+            <button class="btn btn-sm btn-primary" id="theme-edit-save">Save &amp; use on all devices</button>
+          </div>
         </div>
       </div>
 
@@ -6299,7 +6273,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 102;
+const APP_BUILD = 104;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6364,6 +6338,7 @@ const state = {
   overdueVehicle: 28,      // days — vehicle orders past this age get prioritized
   orderEdits: [],          // manual edits applied AFTER every CSV import to keep ShipStation reality
   theme: 'gridiron',       // v1.96: app theme — synced, so every device shows the same one
+  themeCustom: null,       // v1.104: colours for the Custom theme (synced with the theme)
   deletedEdits: {},        // tombstones: orderEdits id -> ISO delete time (synced, so a deleted/undone edit stays deleted on every device)
 };
 
@@ -6849,6 +6824,18 @@ function migrateInventoryToEvents() {
   recomputeInventory();
 }
 
+// v1.104: a real count (walk-through, typed number, stock update) is logged even
+// when the number didn't change, so History shows the part was checked.
+function logCount(partName, before, after, reason) {
+  if ((Number(before) || 0) !== (Number(after) || 0)) return logInventoryChange(partName, before, after, reason);
+  if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
+  const n = Number(after) || 0;
+  state.inventoryHistory.push({
+    uid: _uniqueId(), at: new Date().toISOString(), partName,
+    delta: 0, before: n, after: n, reason: 'recount-ok',
+    who: (typeof _fbUser !== 'undefined' && _fbUser && _fbUser.email) ? displayName(_fbUser.email) : '',
+  });
+}
 function logInventoryChange(partName, before, after, reason) {
   if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
   const b = Number(before) || 0;
@@ -6968,6 +6955,7 @@ function save() {
     orderEdits: state.orderEdits,
     deletedEdits: state.deletedEdits || {},
     theme: state.theme || 'gridiron',
+    themeCustom: state.themeCustom || null,
     _ordersTs: state._ordersTs, _ordersSig: state._ordersSig,
     _libraryTs: state._libraryTs, _librarySig: state._librarySig,
     _inventoryTs: state._inventoryTs, _inventorySig: state._inventorySig,
@@ -7854,6 +7842,7 @@ function load() {
     if (typeof blob.overdueVehicle === 'number') state.overdueVehicle = blob.overdueVehicle;
     state.deletedEdits = (blob.deletedEdits && typeof blob.deletedEdits === 'object') ? blob.deletedEdits : {};
     if (typeof blob.theme === 'string') state.theme = blob.theme;
+    if (blob.themeCustom && typeof blob.themeCustom === 'object') state.themeCustom = blob.themeCustom;
     state.orderEdits = (Array.isArray(blob.orderEdits) ? blob.orderEdits : []).filter(e => !(e && state.deletedEdits[e.id]));
     try { _backfillEditRowDays(); } catch {}
     // Migrate priority: was array of {id,name}, now {resin:[], fdm:[]}
@@ -8896,40 +8885,7 @@ function renderQueue(type) {
       recountBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const c = visibleByKey.get(row.dataset.key);
-        const part = c && c.part;
-        if (!part) return;
-        const cur = Number(state.inventory[part] || 0);
-        confirmModal({
-          title: 'Flag for recount?',
-          text: `Move "${part}" to Uncounted so it gets re-verified. Its current stock (${cur}) is kept — nothing is zeroed. It'll drop out of the queue until you recount it.`,
-          onConfirm: () => {
-            if (state.countedParts && state.countedParts[part]) delete state.countedParts[part];
-            // Remember where it lived so it can return there after it's recounted.
-            if (!state.recountPrevLoc) state.recountPrevLoc = {};
-            const prevLoc = partLocation(part);
-            if (prevLoc !== 'recount') state.recountPrevLoc[part] = prevLoc;
-            // Move it into its own "Recount" location so it's separated from
-            // Gun Wall / Back Room and easy to walk as a dedicated pile.
-            setPartLocation(part, 'recount');
-            // Audit note in the inventory ledger (zero delta — stock unchanged).
-            // logInventoryChange skips no-ops, so push directly.
-            if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
-            state.inventoryHistory.push({
-              at: new Date().toISOString(),
-              partName: part,
-              delta: 0,
-              before: cur,
-              after: cur,
-              reason: 'recount-flag',
-              who: (typeof _fbUser !== 'undefined' && _fbUser && _fbUser.email) ? displayName(_fbUser.email) : '',
-            });
-            save();
-            renderQueue();
-            renderInventory();
-            renderSidebarCounts();
-            toast(`${part} flagged for recount — moved to Uncounted (stock kept: ${cur})`);
-          }
-        });
+        flagPartForRecount(c && c.part);
       });
     }
     btn.addEventListener('click', () => {
@@ -9194,6 +9150,7 @@ function renderKanban(filtered, allVisible) {
             <div class="kanban-card-bottom">
               <div class="kanban-card-sku" title="${escapeAttr(skuText)}">${escapeHtml(skuText)}</div>
               ${fresh ? fresh.html : ''}
+              ${r._isNeed ? '' : `<button class="btn-recount kanban-recount" title="Flag for recount — moves this part to the Recount pile to be re-verified. Does NOT change the stock number." draggable="false">⟳</button>`}
               <button class="kanban-done">Done</button>
             </div>
           </div>`;
@@ -9317,6 +9274,17 @@ function renderKanban(filtered, allVisible) {
       }
       save();
       renderQueue('resin');
+    });
+  });
+
+  // v1.103: recount button on resin cards (same action as the FDM queue's ⟳)
+  board.querySelectorAll('.kanban-recount').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const key = btn.closest('.kanban-card').dataset.key;
+      const c = finalRows.find(r => r.key === key) || allVisible.find(r => r.key === key);
+      flagPartForRecount(c && c.part);
     });
   });
 
@@ -10965,6 +10933,7 @@ function renderInventory(opts) {
         if (raw !== '' && typedHere) {
           typedHere = false;
           markCounted(part, { counted: true });
+          logCount(part, n, n, 'inventory-edit');
           save(); renderQueue();
           if (staysInTable(nextEl)) { _invDirty = true; _patchInvRow(row, part); }
           else renderInventory();
@@ -11149,6 +11118,7 @@ function renderInventoryHistory() {
     'csv-ship-short': 'Shipped (CSV) · stock ran out',
   'csv-ship-short': 'Shipped (CSV) · stock ran out',
   'recount-flag': 'Flagged for recount',
+    'recount-ok': 'Recounted · no change',
     'walkthrough': 'Walk-through',
     'manual-stock': 'Stock update',
     'inventory-edit': '+/- edit',
@@ -11605,6 +11575,42 @@ function _statsShortName(name) {
   let n = String(name || '').replace(/\s+/g, ' ').trim();
   n = n.split(/ (?:great|perfect|ideal) for | for G\.?I\.? ?Joe| For G\.?I\.? ?Joe| fits /i)[0];
   return n.length > 70 ? n.slice(0, 68) + '…' : n;
+}
+// Flag a part for recount (FDM queue rows and, since v1.103, resin kanban cards).
+function flagPartForRecount(part) {
+  if (!part) return;
+  const cur = Number(state.inventory[part] || 0);
+  confirmModal({
+    title: 'Flag for recount?',
+    text: `Move "${part}" to Uncounted so it gets re-verified. Its current stock (${cur}) is kept — nothing is zeroed. It'll drop out of the queue until you recount it.`,
+    onConfirm: () => {
+      if (state.countedParts && state.countedParts[part]) delete state.countedParts[part];
+      // Remember where it lived so it can return there after it's recounted.
+      if (!state.recountPrevLoc) state.recountPrevLoc = {};
+      const prevLoc = partLocation(part);
+      if (prevLoc !== 'recount') state.recountPrevLoc[part] = prevLoc;
+      // Move it into its own "Recount" location so it's separated from
+      // Gun Wall / Back Room and easy to walk as a dedicated pile.
+      setPartLocation(part, 'recount');
+      // Audit note in the inventory ledger (zero delta — stock unchanged).
+      // logInventoryChange skips no-ops, so push directly.
+      if (!Array.isArray(state.inventoryHistory)) state.inventoryHistory = [];
+      state.inventoryHistory.push({
+        at: new Date().toISOString(),
+        partName: part,
+        delta: 0,
+        before: cur,
+        after: cur,
+        reason: 'recount-flag',
+        who: (typeof _fbUser !== 'undefined' && _fbUser && _fbUser.email) ? displayName(_fbUser.email) : '',
+      });
+      save();
+      renderQueue();
+      renderInventory();
+      renderSidebarCounts();
+      toast(`${part} flagged for recount — moved to Uncounted (stock kept: ${cur})`);
+    }
+  });
 }
 function _renderStatsV2() {
   const DAY = 86400000;
@@ -12979,6 +12985,7 @@ const INV_REASON_LABEL = {
   'csv-ship': 'Shipped (CSV)',
   'csv-ship-short': 'Shipped (CSV) · stock ran out',
   'recount-flag': 'Flagged for recount',
+  'recount-ok': 'Recounted · no change',
   'walkthrough': 'Walk-through',
   'manual-stock': 'Stock update',
   'inventory-edit': '+/- edit',
@@ -13128,8 +13135,8 @@ function renderSidebarCounts() {
   let resinCount = _sidebarQueueCounts.resin;
   let fdmCount = _sidebarQueueCounts.fdm;
   if (resinCount === null || fdmCount === null) {
-    resinCount = buildQueue('resin').visible.length;
-    fdmCount = buildQueue('fdm').visible.length;
+    resinCount = queueUnitCount(buildQueue('resin'));   // v1.103: units, same as renderQueue
+    fdmCount = queueUnitCount(buildQueue('fdm'));
     _sidebarQueueCounts.resin = resinCount;
     _sidebarQueueCounts.fdm = fdmCount;
   }
@@ -14307,7 +14314,7 @@ const WT = {
     const before = Number(state.inventory[part] || 0);
     _invSetEvent(part, n, 'walkthrough');
     markCounted(part, { counted: true });
-    logInventoryChange(part, before, n, 'walkthrough');
+    logCount(part, before, n, 'walkthrough');
     save();
     this.next();
   },
@@ -14636,7 +14643,7 @@ const MS = {
     const before = Number(state.inventory[partName] || 0);
     _invSetEvent(partName, n, 'manual-stock');
     markCounted(partName, { counted: true });
-    logInventoryChange(partName, before, n, 'manual-stock');
+    logCount(partName, before, n, 'manual-stock');
     save();
     renderQueue();
     renderInventory();
@@ -15742,29 +15749,132 @@ function _closeUnknownNeed(needId, partName) {
   if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
   state.completedOrders.push({ uid: _uniqueId(), at: now, partName, qty: 1, sku: '', customer: 'Part Needed (painted)', originalOrderDate: null, kind: 'need' });
 }
-// --- Themes (v1.96) ------------------------------------------------------------
-const THEMES = { gridiron: 'Gridiron', halloween: 'Halloween', midnight: 'Midnight', olive: 'Olive Drab', daylight: 'Daylight' };
-const THEME_BAR_COLOR = { gridiron: '#0f1419', halloween: '#121212', midnight: '#0b1220', olive: '#12140e', daylight: '#eef0f3' };
+// --- Themes (v1.96, custom colours v1.104) -------------------------------------
+const THEMES = { gridiron: 'Classic', halloween: 'Halloween', custom: 'Custom' };
+const THEME_BAR_COLOR = { gridiron: '#0f1419', halloween: '#121212' };
+// The editable colours, with the two built-in looks as starting points.
+const THEME_FIELDS = [
+  ['bg', 'Background', 'page behind everything'],
+  ['panel', 'Cards', 'panels, cards and menu'],
+  ['line', 'Borders', 'lines between things'],
+  ['ink', 'Text', 'main words'],
+  ['accent', 'Accent', 'buttons and highlights'],
+  ['accent2', 'Second accent', 'menu marker, headings'],
+  ['green', 'Good', 'Done, counted, in stock'],
+  ['red', 'Alert', 'late, short, delete'],
+];
+const THEME_PRESETS = {
+  gridiron: { bg: '#0f1419', panel: '#161c24', line: '#2a3441', ink: '#e8eef5', accent: '#f0a830', accent2: '#f0a830', green: '#6cbf7e', red: '#e85d4a', deco: false },
+  halloween: { bg: '#121212', panel: '#1a1a1a', line: '#2f2f2f', ink: '#ffffff', accent: '#ff7a1a', accent2: '#9b6bff', green: '#7ccf5a', red: '#ff5a4f', deco: true },
+};
+const THEME_VAR_NAMES = ['--bg', '--panel', '--panel-2', '--line', '--line-bright', '--ink', '--ink-dim', '--ink-faint', '--amber', '--amber-bright', '--red', '--green', '--blue', '--yellow-warn', '--accent2'];
+function _hexRgb(h) { h = String(h || '').replace('#', ''); if (h.length === 3) h = h.split('').map(c => c + c).join(''); const n = parseInt(h, 16); return isNaN(n) ? [0, 0, 0] : [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function _mixHex(a, b, t) { const A = _hexRgb(a), B = _hexRgb(b); return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join(''); }
+function _validHex(h) { return /^#[0-9a-f]{6}$/i.test(String(h || '')); }
+function _customColors(c) {
+  const base = THEME_PRESETS.gridiron, out = {};
+  for (const [k] of THEME_FIELDS) out[k] = _validHex(c && c[k]) ? c[k] : base[k];
+  out.deco = !!(c && c.deco);
+  return out;
+}
+function _customVars(c) {
+  const lum = (() => { const [r, g, b] = _hexRgb(c.bg); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; })();
+  return {
+    '--bg': c.bg, '--panel': c.panel, '--panel-2': _mixHex(c.panel, c.ink, 0.05),
+    '--line': c.line, '--line-bright': _mixHex(c.line, c.ink, 0.15),
+    '--ink': c.ink, '--ink-dim': _mixHex(c.ink, c.bg, 0.32), '--ink-faint': _mixHex(c.ink, c.bg, 0.55),
+    '--amber': c.accent, '--amber-bright': _mixHex(c.accent, lum > 0.5 ? '#000000' : '#ffffff', 0.2),
+    '--red': c.red, '--green': c.green, '--blue': c.accent2,
+    '--yellow-warn': _mixHex(c.accent, c.red, 0.35), '--accent2': c.accent2,
+    'color-scheme': lum > 0.5 ? 'light' : 'dark',
+  };
+}
+function _applyThemeVars(t, colors) {
+  const root = document.documentElement;
+  for (const k of THEME_VAR_NAMES) root.style.removeProperty(k);
+  root.style.removeProperty('color-scheme');
+  root.removeAttribute('data-deco');
+  if (t !== 'custom') return null;
+  const c = _customColors(colors), vars = _customVars(c);
+  for (const k of Object.keys(vars)) root.style.setProperty(k, vars[k]);
+  if (c.deco) root.setAttribute('data-deco', 'halloween');
+  return { c, vars };
+}
+let _themePreview = null;   // colours being edited but not saved yet (this device only)
 function applyTheme(t) {
   if (!THEMES[t]) t = 'gridiron';
+  _themePreview = null;
   document.documentElement.setAttribute('data-theme', t);
-  try { localStorage.setItem('pq_theme', t); } catch {}
+  const res = _applyThemeVars(t, state.themeCustom);
+  try {
+    localStorage.setItem('pq_theme', t);
+    if (res) localStorage.setItem('pq_theme_custom', JSON.stringify({ vars: res.vars, deco: res.c.deco }));
+  } catch {}
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', THEME_BAR_COLOR[t]);
+  if (meta) meta.setAttribute('content', res ? res.c.bg : THEME_BAR_COLOR[t]);
   document.querySelectorAll('[data-theme-pick]').forEach(btn => {
     const on = btn.dataset.themePick === t;
     btn.classList.toggle('selected', on);
     const chk = btn.querySelector('.theme-check'); if (chk) chk.textContent = on ? 'IN USE' : '';
   });
+  _renderThemeEditor();
 }
 function setTheme(t) {
-  if (!THEMES[t] || t === state.theme) { applyTheme(state.theme); return; }
+  if (!THEMES[t] || (t === state.theme && !_themePreview)) { applyTheme(state.theme); return; }
+  if (t === 'custom' && !state.themeCustom) state.themeCustom = Object.assign({}, THEME_PRESETS[state.theme] || THEME_PRESETS.gridiron);
   state.theme = t;
   applyTheme(t);
   save();   // uploads with the shared settings → every device switches
   toast(`Theme: ${THEMES[t]} — switching on all devices`);
 }
+// ---- the colour editor (Settings) ----
+function _renderThemeEditor() {
+  const grid = document.getElementById('theme-edit-grid');
+  if (!grid) return;
+  const c = _customColors(_themePreview || state.themeCustom || THEME_PRESETS[state.theme] || THEME_PRESETS.gridiron);
+  grid.innerHTML = THEME_FIELDS.map(([k, label, note]) =>
+    `<label class="theme-color"><input type="color" data-theme-field="${k}" value="${c[k]}"><span>${label}<small>${note}</small></span></label>`).join('');
+  grid.querySelectorAll('[data-theme-field]').forEach(inp => inp.addEventListener('input', () => {
+    const next = Object.assign({}, _customColors(_themePreview || state.themeCustom || THEME_PRESETS[state.theme] || THEME_PRESETS.gridiron));
+    next[inp.dataset.themeField] = inp.value;
+    _previewCustom(next);
+  }));
+  const deco = document.getElementById('theme-edit-deco');
+  if (deco) deco.checked = !!c.deco;
+  const sw = document.getElementById('theme-custom-swatch');
+  if (sw) { const s = _customColors(state.themeCustom || THEME_PRESETS.gridiron); sw.innerHTML = [s.bg, s.panel, s.accent, s.accent2, s.ink].map(x => `<span style="background:${x}"></span>`).join(''); }
+  const dirty = !!_themePreview;
+  const note = document.getElementById('theme-edit-note'), cancel = document.getElementById('theme-edit-cancel');
+  if (note) note.hidden = !dirty;
+  if (cancel) cancel.hidden = !dirty;
+}
+function _previewCustom(colors) {
+  _themePreview = _customColors(colors);
+  document.documentElement.setAttribute('data-theme', 'custom');
+  _applyThemeVars('custom', _themePreview);
+  const note = document.getElementById('theme-edit-note'), cancel = document.getElementById('theme-edit-cancel');
+  if (note) note.hidden = false;
+  if (cancel) cancel.hidden = false;
+}
 document.querySelectorAll('[data-theme-pick]').forEach(btn => btn.addEventListener('click', () => setTheme(btn.dataset.themePick)));
+document.querySelectorAll('[data-theme-start]').forEach(btn => btn.addEventListener('click', () => {
+  _previewCustom(THEME_PRESETS[btn.dataset.themeStart]);
+  _renderThemeEditorKeepPreview();
+}));
+function _renderThemeEditorKeepPreview() { const p = _themePreview; _renderThemeEditor(); _themePreview = p; }
+document.getElementById('theme-edit-deco')?.addEventListener('change', (e) => {
+  const next = Object.assign({}, _customColors(_themePreview || state.themeCustom || THEME_PRESETS[state.theme] || THEME_PRESETS.gridiron), { deco: e.target.checked });
+  _previewCustom(next);
+});
+document.getElementById('theme-edit-cancel')?.addEventListener('click', () => applyTheme(state.theme));
+document.getElementById('theme-edit-save')?.addEventListener('click', () => {
+  const c = _customColors(_themePreview || state.themeCustom || THEME_PRESETS[state.theme] || THEME_PRESETS.gridiron);
+  state.themeCustom = c;
+  state.theme = 'custom';
+  applyTheme('custom');
+  save();
+  toast('Custom theme saved — switching on all devices');
+});
 // --- Paint repair (v1.92) ----------------------------------------------------
 // A Part Needed card that is open and placed in Paint must have a Paint entry, or
 // it is invisible (not in the sidebar, not in Paint). Older builds could drop the
@@ -16008,12 +16118,13 @@ function _settingsFromState() {
     overdueVehicle: state.overdueVehicle || 28,
     lastImport: state.lastImport || null,
     theme: state.theme || 'gridiron',
+    themeCustom: state.themeCustom || null,
     appBuild: APP_BUILD,
   };
 }
 function _settingsSig() {
   const s = _settingsFromState();
-  return cheapHash(JSON.stringify([s.priority, s.overdueStandard, s.overdueVehicle, s.lastImport, s.theme]));
+  return cheapHash(JSON.stringify([s.priority, s.overdueStandard, s.overdueVehicle, s.lastImport, s.theme, s.themeCustom || null]));
 }
 // Overlay-merge a cloud map into local: adopt cloud, then re-apply any local key
 // that differs from what we last pushed (an un-pushed add/edit), and drop any
@@ -16294,9 +16405,12 @@ function _attachListenersV2() {
     const rev = _revOf(v);
     if (rev <= _appliedRev.settings) return;
     _appliedRev.settings = rev;
-    const _sb = () => _canon([state.priority, state.overdueStandard, state.overdueVehicle, state.lastImport, state.theme]);
+    const _sb = () => _canon([state.priority, state.overdueStandard, state.overdueVehicle, state.lastImport, state.theme, state.themeCustom || null]);
     const before = _sb();
-    if (typeof v.theme === 'string' && v.theme !== state.theme) { state.theme = v.theme; applyTheme(state.theme); }
+    const _thBefore = JSON.stringify([state.theme, state.themeCustom || null]);
+    if (typeof v.theme === 'string') state.theme = v.theme;
+    if (v.themeCustom && typeof v.themeCustom === 'object') state.themeCustom = v.themeCustom;
+    if (JSON.stringify([state.theme, state.themeCustom || null]) !== _thBefore) applyTheme(state.theme);
     if (v.priority) state.priority = v.priority;
     if (typeof v.overdueStandard === 'number') state.overdueStandard = v.overdueStandard;
     if (typeof v.overdueVehicle === 'number') state.overdueVehicle = v.overdueVehicle;
@@ -16635,6 +16749,7 @@ async function initSyncV2() {
       if (sv && sv.exists()) {
         const s = transformKeys(sv.val(), fbDecodeKey) || {};
         if (!checkBuildGate({ _appBuild: s.appBuild || 0 })) {
+          if (s.themeCustom && typeof s.themeCustom === 'object') state.themeCustom = s.themeCustom;
           if (typeof s.theme === 'string') { state.theme = s.theme; applyTheme(state.theme); }
           if (s.priority) state.priority = s.priority;
           if (typeof s.overdueStandard === 'number') state.overdueStandard = s.overdueStandard;
