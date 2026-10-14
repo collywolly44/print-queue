@@ -6337,7 +6337,7 @@ const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor f
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 105;
+const APP_BUILD = 106;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -9010,6 +9010,11 @@ function renderKanban(filtered, allVisible) {
   let pruned = false;
   for (const k of Object.keys(state.assignments)) {
     if (k.startsWith('__group__')) continue;  // keep group-level assignments
+    // v1.106: never prune Part Needed columns here. A device with an out-of-date
+    // Part Needed list (phone not opened for a while) doesn't see newer cards and
+    // used to delete their column — the card then jumped on every device.
+    // _reconcileDerived already clears columns for resolved/deleted needs.
+    if (k.startsWith('__need__')) continue;
     if (!liveKeys.has(k)) {
       delete state.assignments[k];
       pruned = true;
@@ -9146,7 +9151,11 @@ function renderKanban(filtered, allVisible) {
   // back to the part's preferred printer per the Parts Library.
   const byMachine = Object.fromEntries(MACHINES.map(m => [m, []]));
   for (const r of finalRows) {
-    const manual = state.assignments[r.key] || (r._isGroup ? r._anyAssigned : null);
+    // v1.106: a Part Needed card's column comes from the card itself
+    // (placedMachine) when there's no column entry — it never falls through to
+    // the part's preferred printer (that made it jump out of Unassigned).
+    const manual = state.assignments[r.key] || (r._isGroup ? r._anyAssigned : null)
+      || (r._isNeed ? (r._placedMachine || 'unassigned') : null);
     let target;
     if (manual && MACHINES.includes(manual)) {
       target = manual;
@@ -9270,8 +9279,9 @@ function renderKanban(filtered, allVisible) {
         need.placedMachine = (machine && machine !== 'unassigned') ? machine : null;
         // Pre-set kanban assignment so it lands in the correct column
         const key = `__need__${need.id}`;
-        if (need.placedMachine) state.assignments[key] = need.placedMachine;
-        else delete state.assignments[key];
+        // v1.106: Unassigned is stored explicitly (deleting it let the card jump
+        // to the part's preferred printer).
+        state.assignments[key] = need.placedMachine || 'unassigned';
         save();
         renderSidebarPriority();
         renderQueue('resin');
@@ -9301,18 +9311,13 @@ function renderKanban(filtered, allVisible) {
             need.placedQueue = 'resin';
             need.placedMachine = (machine && machine !== 'unassigned') ? machine : null;
             const key = `__need__${need.id}`;
-            if (need.placedMachine) state.assignments[key] = need.placedMachine;
-            else delete state.assignments[key];
+            state.assignments[key] = need.placedMachine || 'unassigned';   // v1.106
           }
         } else {
           // Regular paint card → pre-assign the part's grouped key to the column
           // so the group lands there immediately
           const groupKey = `__group__${partName}`;
-          if (machine && machine !== 'unassigned') {
-            state.assignments[groupKey] = machine;
-          } else {
-            delete state.assignments[groupKey];
-          }
+          state.assignments[groupKey] = machine || 'unassigned';   // v1.106: keep Unassigned explicit
         }
         save();
         renderQueue('resin');
@@ -9325,8 +9330,10 @@ function renderKanban(filtered, allVisible) {
       const key = draggedKey || fallback;
       if (!key) return;
       const machine = zone.dataset.dropTarget;
-      if (machine === 'unassigned') delete state.assignments[key];
-      else state.assignments[key] = machine;
+      if (!machine) return;
+      // v1.106: store Unassigned explicitly. Deleting the entry made any part with
+      // a preferred printer snap straight back to that printer's column.
+      state.assignments[key] = machine;
       // If this is a Part Needed card already in the kanban, keep
       // need.placedMachine in sync with the new column
       if (key.startsWith('__need__')) {
@@ -16511,9 +16518,28 @@ function _afterCloudApply() {
   const wait = Math.max(0, Math.min(150, _cloudApplyFirstAt + 600 - now));
   _cloudApplyTimer = setTimeout(_flushCloudApply, wait);
 }
+// v1.106: hold cloud redraws while a card is being dragged. Another device's
+// change (e.g. an inventory count) used to redraw the board mid-drag — cards
+// shifted under the cursor and the dragged card could vanish. The data is still
+// saved right away; only the redraw waits until the drag ends.
+let _uiDragActive = false, _uiDragDeferred = false, _uiDragSafety = null;
+function _uiDragEnd() {
+  if (!_uiDragActive) return;
+  _uiDragActive = false;
+  clearTimeout(_uiDragSafety); _uiDragSafety = null;
+  if (_uiDragDeferred) { _uiDragDeferred = false; setTimeout(_flushCloudApply, 0); }
+}
+document.addEventListener('dragstart', () => {
+  _uiDragActive = true;
+  clearTimeout(_uiDragSafety);
+  _uiDragSafety = setTimeout(_uiDragEnd, 15000);   // never hold redraws forever
+}, true);
+document.addEventListener('dragend', _uiDragEnd, true);
+document.addEventListener('drop', _uiDragEnd, true);
 function _flushCloudApply() {
   clearTimeout(_cloudApplyTimer); _cloudApplyTimer = null;
   if (_staleBuild) return;
+  if (_uiDragActive) { _uiDragDeferred = true; return; }
   try { invalidateBuildQueueCache(); } catch {}
   _sidebarQueueCounts.resin = null; _sidebarQueueCounts.fdm = null;
   try {
