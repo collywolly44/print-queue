@@ -6334,6 +6334,95 @@ body.mode-mobile .mobile-only { display: block; }
 const STORAGE_KEY = 'print_queue_workshop_v1';
 const SNAPSHOT_KEY = 'print_queue_workshop_snapshots_v1';
 const SYNCBASE_KEY = 'print_queue_syncbase_v1';   // persisted common ancestor for clock-free merges across reloads
+// v1.106: Safari gives each site ~5 MB of localStorage (≈2.6M characters).
+// When the plain saved copy no longer fits, the device switches to a gzip-
+// compressed copy under STORAGE_GZ_KEY (≈5x smaller). Only ONE of the two keys
+// exists at a time; every reader goes through _localRawGet(), which returns the
+// plain JSON text either way. Compression runs in the background (native
+// CompressionStream); decompression is synchronous (inlined fflate gunzip, MIT)
+// so boot and the other readers stay synchronous.
+const STORAGE_GZ_KEY = 'print_queue_workshop_v1_gz';
+const _GZ_PREFIX = 'gz1:';
+(()=>{var f=Uint8Array,S=Uint16Array,mr=Int32Array,er=new f([0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0,0,0,0]),ir=new f([0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13,0,0]),xr=new f([16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15]),ar=function(r,n){for(var t=new S(31),e=0;e<31;++e)t[e]=n+=1<<r[e-1];for(var i=new mr(t[30]),e=1;e<30;++e)for(var l=t[e];l<t[e+1];++l)i[l]=l-t[e]<<5|e;return{b:t,r:i}},or=ar(er,2),sr=or.b,zr=or.r;sr[28]=258,zr[258]=28;var fr=ar(ir,0),Ar=fr.b,Er=fr.r,Y=new S(32768);for(o=0;o<32768;++o)g=(o&43690)>>1|(o&21845)<<1,g=(g&52428)>>2|(g&13107)<<2,g=(g&61680)>>4|(g&3855)<<4,Y[o]=((g&65280)>>8|(g&255)<<8)>>1;var g,o,I=function(r,n,t){for(var e=r.length,i=0,l=new S(n);i<e;++i)r[i]&&++l[r[i]-1];var y=new S(n);for(i=1;i<n;++i)y[i]=y[i-1]+l[i-1]<<1;var p;if(t){p=new S(1<<n);var z=15-n;for(i=0;i<e;++i)if(r[i])for(var U=i<<4|r[i],w=n-r[i],a=y[r[i]-1]++<<w,s=a|(1<<w)-1;a<=s;++a)p[Y[a]>>z]=U}else for(p=new S(e),i=0;i<e;++i)r[i]&&(p[i]=Y[y[r[i]-1]++]>>15-r[i]);return p},Z=new f(288);for(o=0;o<144;++o)Z[o]=8;var o;for(o=144;o<256;++o)Z[o]=9;var o;for(o=256;o<280;++o)Z[o]=7;var o;for(o=280;o<288;++o)Z[o]=8;var o,hr=new f(32);for(o=0;o<32;++o)hr[o]=5;var o;var Mr=I(Z,9,1);var Sr=I(hr,5,1),k=function(r){for(var n=r[0],t=1;t<r.length;++t)r[t]>n&&(n=r[t]);return n},v=function(r,n,t){var e=n/8|0;return(r[e]|r[e+1]<<8)>>(n&7)&t},W=function(r,n){var t=n/8|0;return(r[t]|r[t+1]<<8|r[t+2]<<16)>>(n&7)},Ur=function(r){return(r+7)/8|0},ur=function(r,n,t){return(n==null||n<0)&&(n=0),(t==null||t>r.length)&&(t=r.length),new f(r.subarray(n,t))};var Fr=["unexpected EOF","invalid block type","invalid length/literal","invalid distance","stream finished","no stream handler",,"no callback","invalid UTF-8 data","extra field too long","date not in range 1980-2099","filename too long","stream finishing","invalid zip data"],u=function(r,n,t){var e=new Error(n||Fr[r]);if(e.code=r,Error.captureStackTrace&&Error.captureStackTrace(e,u),!t)throw e;return e},Dr=function(r,n,t,e){var i=r.length,l=e?e.length:0;if(!i||n.f&&!n.l)return t||new f(0);var y=!t,p=y||n.i!=2,z=n.i;y&&(t=new f(i*3));var U=function(rr){var nr=t.length;if(rr>nr){var tr=new f(Math.max(nr*2,rr));tr.set(t),t=tr}},w=n.f||0,a=n.p||0,s=n.b||0,x=n.l,B=n.d,F=n.m,D=n.n,G=i*8;do{if(!x){w=v(r,a,1);var q=v(r,a+1,3);if(a+=3,q)if(q==1)x=Mr,B=Sr,F=9,D=5;else if(q==2){var P=v(r,a,31)+257,J=v(r,a+10,15)+4,K=P+v(r,a+5,31)+1;a+=14;for(var T=new f(K),$=new f(19),h=0;h<J;++h)$[xr[h]]=v(r,a+h*3,7);a+=J*3;for(var Q=k($),cr=(1<<Q)-1,pr=I($,Q,1),h=0;h<K;){var V=pr[v(r,a,cr)];a+=V&15;var c=V>>4;if(c<16)T[h++]=c;else{var A=0,E=0;for(c==16?(E=3+v(r,a,3),a+=2,A=T[h-1]):c==17?(E=3+v(r,a,7),a+=3):c==18&&(E=11+v(r,a,127),a+=7);E--;)T[h++]=A}}var X=T.subarray(0,P),m=T.subarray(P);F=k(X),D=k(m),x=I(X,F,1),B=I(m,D,1)}else u(1);else{var c=Ur(a)+4,O=r[c-4]|r[c-3]<<8,L=c+O;if(L>i){z&&u(0);break}p&&U(s+O),t.set(r.subarray(c,L),s),n.b=s+=O,n.p=a=L*8,n.f=w;continue}if(a>G){z&&u(0);break}}p&&U(s+131072);for(var gr=(1<<F)-1,yr=(1<<D)-1,H=a;;H=a){var A=x[W(r,a)&gr],M=A>>4;if(a+=A&15,a>G){z&&u(0);break}if(A||u(2),M<256)t[s++]=M;else if(M==256){H=a,x=null;break}else{var d=M-254;if(M>264){var h=M-257,C=er[h];d=v(r,a,(1<<C)-1)+sr[h],a+=C}var N=B[W(r,a)&yr],R=N>>4;N||u(3),a+=N&15;var m=Ar[R];if(R>3){var C=ir[R];m+=W(r,a)&(1<<C)-1,a+=C}if(a>G){z&&u(0);break}p&&U(s+131072);var b=s+d;if(s<m){var _=l-m,wr=Math.min(m,b);for(_+s<0&&u(3);s<wr;++s)t[s]=e[_+s]}for(;s<b;++s)t[s]=t[s-m]}}n.l=x,n.p=H,n.b=s,n.f=w,x&&(w=1,n.m=F,n.d=B,n.n=D)}while(!w);return s!=t.length&&y?ur(t,0,s):t.subarray(0,s)};var Tr=new f(0);var Cr=function(r){(r[0]!=31||r[1]!=139||r[2]!=8)&&u(6,"invalid gzip data");var n=r[3],t=10;n&4&&(t+=(r[10]|r[11]<<8)+2);for(var e=(n>>3&1)+(n>>4&1);e>0;e-=!r[t++]);return t+(n&2)},Ir=function(r){var n=r.length;return(r[n-4]|r[n-3]<<8|r[n-2]<<16|r[n-1]<<24)>>>0};function lr(r,n){var t=Cr(r);return t+8>r.length&&u(6,"invalid gzip data"),Dr(r.subarray(t,-8),{i:2},n&&n.out||new f(Ir(r)),n&&n.dictionary)}var j=typeof TextDecoder<"u"&&new TextDecoder,Zr=0;try{j.decode(Tr,{stream:!0}),Zr=1}catch{}var Br=function(r){for(var n="",t=0;;){var e=r[t++],i=(e>127)+(e>223)+(e>239);if(t+i>r.length)return{s:n,r:ur(r,t-1)};i?i==3?(e=((e&15)<<18|(r[t++]&63)<<12|(r[t++]&63)<<6|r[t++]&63)-65536,n+=String.fromCharCode(55296|e>>10,56320|e&1023)):i&1?n+=String.fromCharCode((e&31)<<6|r[t++]&63):n+=String.fromCharCode((e&15)<<12|(r[t++]&63)<<6|r[t++]&63):n+=String.fromCharCode(e)}};function vr(r,n){if(n){for(var t="",e=0;e<r.length;e+=16384)t+=String.fromCharCode.apply(null,r.subarray(e,e+16384));return t}else{if(j)return j.decode(r);var i=Br(r),l=i.s,t=i.r;return t.length&&u(8),l}}window.__pqGunzip=r=>vr(lr(r));})();
+function _isQuotaErr(e) {
+  return !!e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+    || e.code === 22 || /quota/i.test(String(e.message || '')));
+}
+let _localGz = false;                 // this device stores the compressed copy
+try { _localGz = !!localStorage.getItem(STORAGE_GZ_KEY); } catch {}
+let _gzCache = { packed: null, plain: null };
+function _gunzipPacked(packed) {
+  if (!packed || packed.indexOf(_GZ_PREFIX) !== 0) return null;
+  if (_gzCache.packed === packed) return _gzCache.plain;
+  const bin = atob(packed.slice(_GZ_PREFIX.length));
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  const plain = window.__pqGunzip(u8);
+  _gzCache = { packed, plain };
+  return plain;
+}
+// The saved local copy as plain JSON text (or null) — whichever form it is in.
+function _localRawGet() {
+  try { const p = localStorage.getItem(STORAGE_KEY); if (p) return p; } catch {}
+  try {
+    const z = localStorage.getItem(STORAGE_GZ_KEY);
+    return z ? _gunzipPacked(z) : null;
+  } catch (e) { console.warn('Compressed local copy unreadable:', e); return null; }
+}
+async function _gzipToPacked(json) {
+  const cs = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
+  const u8 = new Uint8Array(await new Response(cs).arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return _GZ_PREFIX + btoa(bin);
+}
+let _gzPending = null, _gzBusy = false, _gzToastShown = false;
+function _localSaveFailedToast() {
+  if (_gzToastShown) return; _gzToastShown = true;
+  if (typeof toast === 'function') toast('Device storage full — synced to cloud but local backup skipped', 'error');
+}
+async function _runGzWrites() {
+  if (_gzBusy) return;
+  _gzBusy = true;
+  try {
+    while (_gzPending !== null) {
+      const json = _gzPending; _gzPending = null;
+      let packed;
+      try { packed = await _gzipToPacked(json); }
+      catch (e) { console.error('Compress failed; local save skipped (cloud sync unaffected):', e); _localSaveFailedToast(); continue; }
+      // Plain copy goes first to free room; then the compressed one lands.
+      try { localStorage.removeItem(STORAGE_KEY); } catch {}
+      try { localStorage.setItem(STORAGE_GZ_KEY, packed); }
+      catch (e) {
+        try { localStorage.removeItem(SNAPSHOT_KEY); } catch {}
+        try { localStorage.setItem(STORAGE_GZ_KEY, packed); }
+        catch (e2) { console.error('Still over quota (compressed); local save skipped:', e2); _localSaveFailedToast(); continue; }
+      }
+      _gzCache = { packed, plain: json };
+    }
+  } finally { _gzBusy = false; }
+}
+// Write the local copy (JSON text). Plain when it fits; compressed otherwise.
+function _localRawSet(json) {
+  if (!_localGz) {
+    try {
+      localStorage.setItem(STORAGE_KEY, json);
+      return;
+    } catch (e) {
+      if (!_isQuotaErr(e)) throw e;
+      if (typeof CompressionStream !== 'function') {
+        try { localStorage.removeItem(SNAPSHOT_KEY); } catch {}
+        try { localStorage.setItem(STORAGE_KEY, json); return; }
+        catch (e2) { console.error('Over quota; local save skipped:', e2); _localSaveFailedToast(); return; }
+      }
+      console.warn('Local storage full — switching this device to a compressed local copy.');
+      _localGz = true;
+      try { localStorage.removeItem(SNAPSHOT_KEY); } catch {}
+    }
+  }
+  _gzPending = json;
+  _runGzWrites();
+}
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
@@ -7039,7 +7128,7 @@ function save() {
     blob._savedAt = Date.now();
     _lastLocalSavedAt = blob._savedAt;
     _localSeq++;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
+    _localRawSet(JSON.stringify(blob));
   };
   // Proactively bound the big history arrays EVERY save (not just on quota
   // failure) so localStorage can't fill up. These are audit logs — recent
@@ -7054,34 +7143,9 @@ function save() {
   blob.inventoryHistory  = state.inventoryHistory;
   blob.shippedHistory    = state.shippedHistory;
   try {
-    writeLocal();
+    writeLocal();   // v1.106: quota is handled inside (compressed copy), never throws for it
   } catch (err) {
-    const isQuota = err && (err.name === 'QuotaExceededError'
-      || err.name === 'NS_ERROR_DOM_QUOTA_REACHED'
-      || /quota/i.test(String(err.message || '')));
-    if (isQuota) {
-      console.warn('localStorage quota hit — clearing snapshots and trimming history to recover.');
-      // 1) Drop rolling snapshots (biggest, most expendable consumer)
-      try { localStorage.removeItem(SNAPSHOT_KEY); } catch {}
-      // 2) Trim the long history arrays HARD in BOTH state and the blob
-      const trim = (arr, keep) => Array.isArray(arr) ? arr.slice(-keep) : arr;
-      state.shippedHistory   = trim(state.shippedHistory, 150);
-      state.inventoryHistory = trim(state.inventoryHistory, 300);
-      state.completedOrders  = trim(state.completedOrders, 200);
-      blob.shippedHistory    = state.shippedHistory;
-      blob.inventoryHistory  = state.inventoryHistory;
-      blob.completedOrders   = state.completedOrders;
-      try {
-        writeLocal();
-      } catch (err2) {
-        console.error('Still over quota after trimming; local save skipped (cloud push will still run).', err2);
-        if (typeof toast === 'function') {
-          toast('Device storage full — synced to cloud but local backup skipped', 'error');
-        }
-      }
-    } else {
-      console.error('localStorage write failed:', err);
-    }
+    console.error('localStorage write failed:', err);
   }
 
   updateLastSync(blob.lastSync);
@@ -7558,7 +7622,7 @@ function _doCloudPush(blob) {
     if (!_fbReady || !_fbUser) { _pushInFlight = false; return; }
     try {
       // Read the very latest local state at write time (in case more edits happened)
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = _localRawGet();
       const localBlob = raw ? JSON.parse(raw) : blob;
       const pushSeq = _localSeq;   // snapshot of local write-sequence at push time
       _localWriteToken = Date.now() + ':' + Math.random();
@@ -7700,12 +7764,12 @@ function _doCloudPush(blob) {
             // from localStorage — sees the up-to-date versions and correctly
             // treats this device as current.
             try {
-              const raw2 = localStorage.getItem(STORAGE_KEY);
+              const raw2 = _localRawGet();
               if (raw2) {
                 const b2 = JSON.parse(raw2);
                 b2._ver = state._ver; b2._ordersVer = state._ordersVer;
                 b2._libraryVer = state._libraryVer; b2._inventoryVer = state._inventoryVer;
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(b2));
+                _localRawSet(JSON.stringify(b2));
               }
             } catch {}
           }
@@ -7878,7 +7942,8 @@ function looksDestructive(prev, curr) {
 }
 
 function load() {
-  const raw = localStorage.getItem(STORAGE_KEY);
+  let raw = null;
+  try { raw = _localRawGet(); } catch (e) { console.warn('Local copy unreadable:', e); }
   if (!raw) return;
   try {
     const blob = JSON.parse(raw);
@@ -9010,11 +9075,6 @@ function renderKanban(filtered, allVisible) {
   let pruned = false;
   for (const k of Object.keys(state.assignments)) {
     if (k.startsWith('__group__')) continue;  // keep group-level assignments
-    // v1.106: never prune Part Needed columns here. A device with an out-of-date
-    // Part Needed list (phone not opened for a while) doesn't see newer cards and
-    // used to delete their column — the card then jumped on every device.
-    // _reconcileDerived already clears columns for resolved/deleted needs.
-    if (k.startsWith('__need__')) continue;
     if (!liveKeys.has(k)) {
       delete state.assignments[k];
       pruned = true;
@@ -9151,11 +9211,7 @@ function renderKanban(filtered, allVisible) {
   // back to the part's preferred printer per the Parts Library.
   const byMachine = Object.fromEntries(MACHINES.map(m => [m, []]));
   for (const r of finalRows) {
-    // v1.106: a Part Needed card's column comes from the card itself
-    // (placedMachine) when there's no column entry — it never falls through to
-    // the part's preferred printer (that made it jump out of Unassigned).
-    const manual = state.assignments[r.key] || (r._isGroup ? r._anyAssigned : null)
-      || (r._isNeed ? (r._placedMachine || 'unassigned') : null);
+    const manual = state.assignments[r.key] || (r._isGroup ? r._anyAssigned : null);
     let target;
     if (manual && MACHINES.includes(manual)) {
       target = manual;
@@ -9279,9 +9335,8 @@ function renderKanban(filtered, allVisible) {
         need.placedMachine = (machine && machine !== 'unassigned') ? machine : null;
         // Pre-set kanban assignment so it lands in the correct column
         const key = `__need__${need.id}`;
-        // v1.106: Unassigned is stored explicitly (deleting it let the card jump
-        // to the part's preferred printer).
-        state.assignments[key] = need.placedMachine || 'unassigned';
+        if (need.placedMachine) state.assignments[key] = need.placedMachine;
+        else delete state.assignments[key];
         save();
         renderSidebarPriority();
         renderQueue('resin');
@@ -9311,13 +9366,18 @@ function renderKanban(filtered, allVisible) {
             need.placedQueue = 'resin';
             need.placedMachine = (machine && machine !== 'unassigned') ? machine : null;
             const key = `__need__${need.id}`;
-            state.assignments[key] = need.placedMachine || 'unassigned';   // v1.106
+            if (need.placedMachine) state.assignments[key] = need.placedMachine;
+            else delete state.assignments[key];
           }
         } else {
           // Regular paint card → pre-assign the part's grouped key to the column
           // so the group lands there immediately
           const groupKey = `__group__${partName}`;
-          state.assignments[groupKey] = machine || 'unassigned';   // v1.106: keep Unassigned explicit
+          if (machine && machine !== 'unassigned') {
+            state.assignments[groupKey] = machine;
+          } else {
+            delete state.assignments[groupKey];
+          }
         }
         save();
         renderQueue('resin');
@@ -9330,10 +9390,8 @@ function renderKanban(filtered, allVisible) {
       const key = draggedKey || fallback;
       if (!key) return;
       const machine = zone.dataset.dropTarget;
-      if (!machine) return;
-      // v1.106: store Unassigned explicitly. Deleting the entry made any part with
-      // a preferred printer snap straight back to that printer's column.
-      state.assignments[key] = machine;
+      if (machine === 'unassigned') delete state.assignments[key];
+      else state.assignments[key] = machine;
       // If this is a Part Needed card already in the kanban, keep
       // need.placedMachine in sync with the new column
       if (key.startsWith('__need__')) {
@@ -15278,33 +15336,9 @@ function applyRestoreBlob(blob, opts) {
     if (!(opts && opts.noPersist)) {
       blob._savedAt = Date.now();
       _lastLocalSavedAt = blob._savedAt;
-      const _persist = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
-      try {
-        _persist();
-      } catch (e) {
-        // Over quota — trim the big history arrays (in state AND the blob we're
-        // storing) and retry, so an incoming cloud update never fails to
-        // persist (which was silently breaking live sync entirely).
-        const isQuota = e && (e.name === 'QuotaExceededError'
-          || e.name === 'NS_ERROR_DOM_QUOTA_REACHED'
-          || /quota/i.test(String(e.message || '')));
-        if (isQuota) {
-          console.warn('Cloud-apply hit quota — trimming history and retrying.');
-          try { localStorage.removeItem(SNAPSHOT_KEY); } catch {}
-          const trim = (arr, keep) => Array.isArray(arr) ? arr.slice(-keep) : arr;
-          state.completedOrders  = trim(state.completedOrders, 300);
-          state.inventoryHistory = trim(state.inventoryHistory, 400);
-          state.shippedHistory   = trim(state.shippedHistory, 150);
-          blob.completedOrders   = state.completedOrders;
-          blob.inventoryHistory  = state.inventoryHistory;
-          blob.shippedHistory    = state.shippedHistory;
-          try { _persist(); } catch (e2) {
-            console.error('Still over quota after trimming (cloud data applied in memory, local copy skipped):', e2);
-          }
-        } else {
-          console.warn('Local persist of cloud data failed:', e);
-        }
-      }
+      // v1.106: _localRawSet handles a full device (switches to a compressed copy).
+      try { _localRawSet(JSON.stringify(blob)); }
+      catch (e) { console.warn('Local persist of cloud data failed:', e); }
     } else {
       _lastLocalSavedAt = blob._savedAt || _lastLocalSavedAt;
     }
@@ -16518,28 +16552,9 @@ function _afterCloudApply() {
   const wait = Math.max(0, Math.min(150, _cloudApplyFirstAt + 600 - now));
   _cloudApplyTimer = setTimeout(_flushCloudApply, wait);
 }
-// v1.106: hold cloud redraws while a card is being dragged. Another device's
-// change (e.g. an inventory count) used to redraw the board mid-drag — cards
-// shifted under the cursor and the dragged card could vanish. The data is still
-// saved right away; only the redraw waits until the drag ends.
-let _uiDragActive = false, _uiDragDeferred = false, _uiDragSafety = null;
-function _uiDragEnd() {
-  if (!_uiDragActive) return;
-  _uiDragActive = false;
-  clearTimeout(_uiDragSafety); _uiDragSafety = null;
-  if (_uiDragDeferred) { _uiDragDeferred = false; setTimeout(_flushCloudApply, 0); }
-}
-document.addEventListener('dragstart', () => {
-  _uiDragActive = true;
-  clearTimeout(_uiDragSafety);
-  _uiDragSafety = setTimeout(_uiDragEnd, 15000);   // never hold redraws forever
-}, true);
-document.addEventListener('dragend', _uiDragEnd, true);
-document.addEventListener('drop', _uiDragEnd, true);
 function _flushCloudApply() {
   clearTimeout(_cloudApplyTimer); _cloudApplyTimer = null;
   if (_staleBuild) return;
-  if (_uiDragActive) { _uiDragDeferred = true; return; }
   try { invalidateBuildQueueCache(); } catch {}
   _sidebarQueueCounts.resin = null; _sidebarQueueCounts.fdm = null;
   try {
@@ -17125,7 +17140,7 @@ async function pullFromCloudOnce() {
     }
     const cloudTime = cloudBlob && cloudBlob.lastSync ? new Date(cloudBlob.lastSync).getTime() : 0;
 
-    const localRaw = localStorage.getItem(STORAGE_KEY);
+    const localRaw = _localRawGet();
     const localBlob = localRaw ? JSON.parse(localRaw) : null;
     const localTime = localBlob && localBlob.lastSync ? new Date(localBlob.lastSync).getTime() : 0;
 
@@ -17206,7 +17221,7 @@ async function resyncFromCloud() {
       const token = cloudBlob._writeToken;
       delete cloudBlob._writeToken;
       const cloudVer = cloudBlob._ver || 0;
-      const localRaw = localStorage.getItem(STORAGE_KEY);
+      const localRaw = _localRawGet();
       const localBlob = localRaw ? JSON.parse(localRaw) : null;
       const localVer = localBlob ? (localBlob._ver || 0) : 0;
       // Only pull if the cloud is a genuinely higher version AND it's not our
@@ -17293,9 +17308,12 @@ window.addEventListener('storage', (e) => {
     try { if (e.newValue) _syncBase = JSON.parse(e.newValue); } catch {}
     return;
   }
-  if (e.key !== STORAGE_KEY || !e.newValue) return;
+  if ((e.key !== STORAGE_KEY && e.key !== STORAGE_GZ_KEY) || !e.newValue) return;
   let blob;
-  try { blob = JSON.parse(e.newValue); } catch { return; }
+  try {
+    if (e.key === STORAGE_GZ_KEY) { _localGz = true; blob = JSON.parse(_gunzipPacked(e.newValue)); }
+    else blob = JSON.parse(e.newValue);
+  } catch { return; }
   const at = blob._savedAt || 0;
   if (at <= _lastLocalSavedAt) return;   // not newer than what this window has
   _lastLocalSavedAt = at;
@@ -17356,7 +17374,7 @@ function subscribeWorkspace() {
     // Build gate: a newer build wrote this → we're outdated, lock + refresh.
     if (checkBuildGate(blob)) return;
     const incomingVer = blob._ver || 0;
-    const localRaw = localStorage.getItem(STORAGE_KEY);
+    const localRaw = _localRawGet();
     const localBlobNow = localRaw ? JSON.parse(localRaw) : null;
     const localVerNow = localBlobNow ? (localBlobNow._ver || 0) : 0;
     // Not newer than what we already have → it's our own echo or an out-of-order
