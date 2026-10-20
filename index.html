@@ -6426,7 +6426,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 106;
+const APP_BUILD = 107;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -10064,6 +10064,7 @@ function printPlate(clicked, qtyOverride) {
       customer: clicked.customer || '',
       originalOrderDate: clicked.date || null,
       kind: 'print',
+      dev: (typeof _deviceId === 'string') ? _deviceId : undefined,   // v1.107: which device pressed Done
       // Stamp the print type at completion time. Grouped pseudo-rows don't
       // carry `type`, so resolve from the library by part name instead of
       // reading clicked.type (which is undefined for group cards).
@@ -10122,6 +10123,64 @@ function printPlate(clicked, qtyOverride) {
 // Calls onConfirm(qty) when the user clicks confirm.
 let _plateQueue = [];      // queued { clicked, onConfirm } — so rapid Done clicks ALL register
 let _plateModalOpen = false;
+// v1.107: a phone coming back from the background can show a stale queue for a
+// minute or more (iOS leaves a dead connection open). Two safeguards:
+//  1. After the app was hidden 15s+, force a fresh connection and hold Done for
+//     up to a few seconds until the latest data from other devices has landed.
+//  2. If the same order line was marked Done on ANOTHER device in the last 30
+//     minutes, ask before adding it again.
+// Normal case (no catch-up, no duplicate): runs synchronously, exactly as before.
+let _catchUp = false, _catchUpWaiters = [], _catchUpTimer = null, _hiddenAt = 0;
+function _endCatchUp() {
+  if (!_catchUp) return;
+  _catchUp = false; clearTimeout(_catchUpTimer);
+  const w = _catchUpWaiters; _catchUpWaiters = [];
+  for (const f of w) { try { f(); } catch (e) { console.warn(e); } }
+}
+function _startCatchUp() {
+  if (!_fbReady || !_fbDb || !_fbUser) return;
+  _catchUp = true;
+  clearTimeout(_catchUpTimer);
+  _catchUpTimer = setTimeout(_endCatchUp, 6000);   // never hold Done longer than this (e.g. no signal)
+  try { if (window._fb.dbMod.goOffline) window._fb.dbMod.goOffline(_fbDb); } catch {}
+  try { window._fb.dbMod.goOnline(_fbDb); } catch {}
+}
+function _onConnectedForCatchUp(up) {
+  if (up && _catchUp) { clearTimeout(_catchUpTimer); _catchUpTimer = setTimeout(_endCatchUp, 1200); }
+}
+function _doneElsewhereRecently(clicked) {
+  const cust = clicked && clicked.customer;
+  if (!cust || cust === 'Paint queue') return null;
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  const list = state.completedOrders || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const c = list[i];
+    if (!c || c.kind !== 'print') continue;
+    const t = Date.parse(c.at) || 0;
+    if (t < cutoff) continue;
+    if (c.dev && c.dev !== _deviceId && c.partName === clicked.part && c.customer === cust && (c.sku || '') === (clicked.sku || '')) return c;
+  }
+  return null;
+}
+function _guardedDone(clicked, go) {
+  const check = () => {
+    const dup = _doneElsewhereRecently(clicked);
+    if (!dup) { go(); return; }
+    const m = Math.round((Date.now() - Date.parse(dup.at)) / 60000);
+    const when = m < 1 ? 'just now' : (m === 1 ? '1 min ago' : m + ' min ago');
+    confirmModal({
+      title: 'Already marked Done',
+      text: `"${clicked.part}" for ${clicked.customer} was marked Done on another device ${when}. Add it to stock again?`,
+      onConfirm: () => go(),
+    });
+    const b = document.getElementById('modal-confirm'); if (b) b.textContent = 'Add again';
+    try { renderQueue(); renderSidebarCounts(); } catch {}
+  };
+  if (!_catchUp) { check(); return; }
+  toast('Checking for updates from your other devices…');
+  _catchUpWaiters.push(check);
+}
+
 function confirmPrintPlate(clicked, onConfirm) {
   // Queue every request. The modal is a single shared element; without a queue,
   // rapid Done clicks would clobber each other or be dropped. Each queued item
@@ -10171,7 +10230,7 @@ function _openNextPlateConfirm() {
 
   minusBtn.onclick = () => { input.value = Math.max(0, (parseInt(input.value,10)||0) - 1); };
   plusBtn.onclick  = () => { input.value = Math.max(0, (parseInt(input.value,10)||0) + 1); };
-  confirmBtn.onclick = () => { const n = clampValue(); close(); onConfirm(n); };
+  confirmBtn.onclick = () => { const n = clampValue(); close(); _guardedDone(clicked, () => onConfirm(n)); };
   cancelBtn.onclick = close;
 
   modal.classList.add('show');
@@ -16935,6 +16994,7 @@ async function initSyncV2() {
     try {
       window._fb.onValue(window._fb.ref(_fbDb, '.info/connected'), (snap) => {
         const up = !!(snap && snap.val && snap.val());
+        _onConnectedForCatchUp(up);
         if (up) { cloudStatus('connected', _fbUser ? displayName(_fbUser.email) : 'Online'); cloudSyncPush(); }
         else cloudStatus('offline', 'Offline — changes upload when back online');
       });
@@ -17276,8 +17336,12 @@ function _wakeV2() {
   }, 1500);
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') _wakeV2();
-  else _flushV2();
+  if (document.visibilityState === 'visible') {
+    // v1.107: hidden 15s+ → the connection may be dead; reconnect and hold Done briefly
+    if (_hiddenAt && Date.now() - _hiddenAt >= 15000) _startCatchUp();
+    _hiddenAt = 0;
+    _wakeV2();
+  } else { _hiddenAt = Date.now(); _flushV2(); }
 });
 window.addEventListener('focus', _wakeV2);
 window.addEventListener('pageshow', _wakeV2);
