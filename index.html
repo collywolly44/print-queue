@@ -5590,6 +5590,14 @@ body.mode-mobile .mobile-only { display: block; }
             <button class="filter-chip" data-age-filter="14">14+ days</button>
           </div>
 
+          <div class="sku-filter" data-sku-filter="resin">
+            <div class="sku-filter-wrap">
+              <input type="text" id="resin-sku-input" class="search" placeholder="Filter by SKU — type to add one or more…" autocomplete="off">
+              <div class="sku-filter-dd" id="resin-sku-dd" hidden></div>
+            </div>
+            <div class="sku-filter-chips" id="resin-sku-chips"></div>
+          </div>
+
           <div class="kanban-help">
             Drag a card to assign it to a printer · drag to <strong>Paint</strong> when off the printer · click <strong>Done</strong> when finished
           </div>
@@ -6443,7 +6451,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 108;
+const APP_BUILD = 109;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -8793,6 +8801,7 @@ function renderQueue(type) {
 
   // Resin → kanban board. FDM → list.
   if (type === 'resin') {
+    renderSkuChips('resin');
     renderKanban(filtered, built.visible);
     return;
   }
@@ -14002,10 +14011,11 @@ function _skuNameMap() {
   }
   return map;
 }
-function renderFdmSkuChips() {
-  const wrap = document.getElementById('fdm-sku-chips');
+// v1.109: the same SKU filter on both queues (was FDM only)
+function renderSkuChips(type) {
+  const wrap = document.getElementById(type + '-sku-chips');
   if (!wrap) return;
-  const sel = (state.skuFilter && state.skuFilter.fdm) ? state.skuFilter.fdm : [];
+  const sel = (state.skuFilter && state.skuFilter[type]) ? state.skuFilter[type] : [];
   if (sel.length === 0) { wrap.innerHTML = ''; return; }
   const names = _skuNameMap();
   let html = '';
@@ -14013,32 +14023,34 @@ function renderFdmSkuChips() {
     const nm = names[sku] ? ` · ${escapeHtml((names[sku] || '').slice(0, 28))}` : '';
     html += `<span class="sku-chip" data-sku="${escapeAttr(sku)}">${escapeHtml(sku)}${nm}<span class="sku-chip-x" data-sku-remove="${escapeAttr(sku)}">✕</span></span>`;
   }
-  if (sel.length > 1) html += `<span class="sku-chip-clear" id="fdm-sku-clear">clear all</span>`;
+  if (sel.length > 1) html += `<span class="sku-chip-clear" data-sku-clear="1">clear all</span>`;
   wrap.innerHTML = html;
 }
-function renderFdmSkuDropdown(query) {
-  const dd = document.getElementById('fdm-sku-dd');
+function renderFdmSkuChips() { renderSkuChips('fdm'); }
+function renderSkuDropdown(type, query) {
+  const dd = document.getElementById(type + '-sku-dd');
   if (!dd) return;
   const q = (query || '').trim().toLowerCase();
-  const sel = new Set((state.skuFilter && state.skuFilter.fdm) ? state.skuFilter.fdm : []);
+  const sel = new Set((state.skuFilter && state.skuFilter[type]) ? state.skuFilter[type] : []);
   const names = _skuNameMap();
-  // Only SKUs that actually have FDM demand right now, so the list is relevant.
-  let fdmSkus = new Set();
+  const label = type === 'resin' ? 'resin' : 'FDM';
+  // Only SKUs that actually have demand in this queue right now, so the list is relevant.
+  let skus = new Set();
   try {
-    const built = buildQueue('fdm');
+    const built = buildQueue(type);
     for (const r of built.visible) {
       if (r._isNeed) continue;
       const rs = Array.isArray(r._skus) ? r._skus : (r.sku ? [r.sku] : []);
-      rs.forEach(s => fdmSkus.add(s));
+      rs.forEach(s => skus.add(s));
     }
-  } catch { fdmSkus = new Set(Object.keys(names)); }
-  let matches = [...fdmSkus].filter(sku => {
+  } catch { skus = new Set(Object.keys(names)); }
+  let matches = [...skus].filter(sku => {
     if (sel.has(sku)) return false;
     if (!q) return true;
     return sku.toLowerCase().includes(q) || (names[sku] || '').toLowerCase().includes(q);
   }).sort();
   if (matches.length === 0) {
-    dd.innerHTML = `<div class="sku-filter-dd-empty">${q ? 'No matching SKU with FDM demand.' : 'No SKUs with FDM demand.'}</div>`;
+    dd.innerHTML = `<div class="sku-filter-dd-empty">${q ? `No matching SKU with ${label} demand.` : `No SKUs with ${label} demand.`}</div>`;
     dd.hidden = false;
     return;
   }
@@ -14047,20 +14059,25 @@ function renderFdmSkuDropdown(query) {
   ).join('');
   dd.hidden = false;
 }
-(function wireFdmSkuFilter() {
-  const input = document.getElementById('fdm-sku-input');
-  const dd = document.getElementById('fdm-sku-dd');
+function renderFdmSkuDropdown(query) { renderSkuDropdown('fdm', query); }
+['fdm', 'resin'].forEach(function wireSkuFilter(type) {
+  const input = document.getElementById(type + '-sku-input');
+  const dd = document.getElementById(type + '-sku-dd');
   if (!input || !dd) return;
-  const addSku = (sku) => {
+  const ensure = () => {
     if (!state.skuFilter) state.skuFilter = { resin: [], fdm: [] };
-    if (!state.skuFilter.fdm.includes(sku)) state.skuFilter.fdm.push(sku);
+    if (!Array.isArray(state.skuFilter[type])) state.skuFilter[type] = [];
+  };
+  const addSku = (sku) => {
+    ensure();
+    if (!state.skuFilter[type].includes(sku)) state.skuFilter[type].push(sku);
     input.value = '';
     dd.hidden = true;
-    renderFdmSkuChips();
-    renderQueue('fdm');
+    renderSkuChips(type);
+    renderQueue(type);
   };
-  input.addEventListener('focus', () => renderFdmSkuDropdown(input.value));
-  input.addEventListener('input', () => renderFdmSkuDropdown(input.value));
+  input.addEventListener('focus', () => renderSkuDropdown(type, input.value));
+  input.addEventListener('input', () => renderSkuDropdown(type, input.value));
   input.addEventListener('blur', () => setTimeout(() => { dd.hidden = true; }, 180));
   dd.addEventListener('mousedown', (e) => {
     const item = e.target.closest('[data-sku-add]');
@@ -14068,21 +14085,22 @@ function renderFdmSkuDropdown(query) {
     e.preventDefault();
     addSku(item.dataset.skuAdd);
   });
-  document.getElementById('fdm-sku-chips')?.addEventListener('click', (e) => {
+  document.getElementById(type + '-sku-chips')?.addEventListener('click', (e) => {
+    ensure();
     const rm = e.target.closest('[data-sku-remove]');
     if (rm) {
-      state.skuFilter.fdm = state.skuFilter.fdm.filter(s => s !== rm.dataset.skuRemove);
-      renderFdmSkuChips();
-      renderQueue('fdm');
+      state.skuFilter[type] = state.skuFilter[type].filter(s => s !== rm.dataset.skuRemove);
+      renderSkuChips(type);
+      renderQueue(type);
       return;
     }
-    if (e.target.id === 'fdm-sku-clear') {
-      state.skuFilter.fdm = [];
-      renderFdmSkuChips();
-      renderQueue('fdm');
+    if (e.target.closest('[data-sku-clear]')) {
+      state.skuFilter[type] = [];
+      renderSkuChips(type);
+      renderQueue(type);
     }
   });
-})();
+});
 
 // Per-queue search and age filters (delegated by section)
 document.querySelectorAll('[data-queue-search]').forEach(input => {
