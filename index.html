@@ -1082,6 +1082,7 @@ body {
   border-radius: 3px; padding: 1px 5px; margin-left: 6px; white-space: nowrap;
   vertical-align: middle; cursor: help; flex: none;
 }
+.count-fresh-tag.count-old { color: var(--ink); background: rgba(255,255,255,0.08); }
 .kanban-card-bottom .count-fresh-tag { margin-left: auto; margin-right: 0; }
 .kanban-card-bottom .kanban-recount { width: 24px; height: 24px; font-size: 13px; flex: none; margin-left: auto; }
 .kanban-card-bottom .count-fresh-tag + .kanban-recount { margin-left: 0; }
@@ -4243,6 +4244,22 @@ body:not(.mode-mobile) .nav-paint-mobile-only { display: none !important; }
 
 /* Mobile mode: hide nav items not marked mobile-friendly */
 body.mode-mobile .nav-item[data-mobile="hide"] { display: none; }
+/* v1.108: Collin's phone gets the full History tab too (the gridiron phone does not) */
+body.mode-mobile.is-collin .nav-item[data-view="history"] { display: flex; }
+/* v1.108: History on the phone — each change as a compact 3-line card */
+body.mode-mobile #view-history .inv-hist-row.header { display: none; }
+body.mode-mobile #view-history .inv-hist-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "part delta" "change reason" "time who";
+  gap: 3px 12px; padding: 10px 12px;
+}
+body.mode-mobile #view-history .inv-hist-part { grid-area: part; font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+body.mode-mobile #view-history .inv-hist-delta { grid-area: delta; text-align: right; font-size: 14px; }
+body.mode-mobile #view-history .inv-hist-change { grid-area: change; }
+body.mode-mobile #view-history .inv-hist-reason { grid-area: reason; text-align: right; }
+body.mode-mobile #view-history .inv-hist-time { grid-area: time; color: var(--ink-dim); font-size: 11px; }
+body.mode-mobile #view-history .inv-hist-who { grid-area: who; text-align: right; color: var(--ink-dim); font-size: 11px; }
+body.mode-mobile #view-history #ledger-search { width: 100%; max-width: none; }
 body.mode-mobile .view-mobile-hidden { display: none !important; }
 
 /* Gridiron-only header bar inside the mobile inventory landing.
@@ -6426,7 +6443,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 107;
+const APP_BUILD = 108;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -8411,10 +8428,14 @@ function countFreshTag(part) {
   const at = _lastCountedMap()[part];
   if (!at) return null;
   const days = Math.floor((Date.now() - Date.parse(at)) / 86400000);
-  if (!(days >= 0) || days > COUNT_FRESH_DAYS) return null;
+  if (!(days >= 0)) return null;
   const label = days === 0 ? 'today' : days + 'd';
-  const title = 'Stock counted ' + (days === 0 ? 'today' : days === 1 ? '1 day ago' : days + ' days ago') + ' — count is likely accurate';
-  return { cls: ' count-fresh', html: `<span class="count-fresh-tag" title="${title}">✓ ${label}</span>` };
+  const ago = days === 0 ? 'today' : days === 1 ? '1 day ago' : days + ' days ago';
+  // v1.108: the tag never disappears — green for 30 days, then white (count may be off)
+  if (days > COUNT_FRESH_DAYS) {
+    return { cls: '', html: `<span class="count-fresh-tag count-old" title="Stock counted ${ago} — may be worth a recount">✓ ${label}</span>` };
+  }
+  return { cls: ' count-fresh', html: `<span class="count-fresh-tag" title="Stock counted ${ago} — count is likely accurate">✓ ${label}</span>` };
 }
 
 // Total UNITS of work in a built queue — the number of parts you actually
@@ -17512,10 +17533,23 @@ applyTheme(state.theme);   // v1.96: this device's last theme until the cloud sa
 migrateInventoryToEvents();   // event-source inventory (seeds from existing counts on first run)
 renderQueue();
 renderSidebarCounts();
-// Default view: Inventory on mobile (where Part Needed and Walk Through live),
-// Resin Queue on desktop.
+// Default view: on mobile, Collin's phone opens on the FDM Queue (v1.108) and the
+// gridiron phone on Inventory (where Part Needed and Walk Through live); Resin
+// Queue on desktop. The account isn't known until sign-in finishes, so use the
+// one this phone last signed in with (applyAccountLockdown corrects it anyway).
+function _lastSignedInUser() {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf('firebase:authUser:') !== 0) continue;
+      const u = JSON.parse(localStorage.getItem(k) || 'null');
+      if (u && u.email) return displayName(u.email).toLowerCase();
+    }
+  } catch {}
+  return '';
+}
 if (state.appMode === 'mobile') {
-  switchView('inventory');
+  switchView(_lastSignedInUser() === 'gridiron' ? 'inventory' : 'queue-fdm');
 } else {
   switchView('queue-resin');
 }
