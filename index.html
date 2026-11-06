@@ -5437,6 +5437,7 @@ body.mode-mobile .mobile-only { display: block; }
   font-size: 12px;
   color: var(--ink-dim);
 }
+html.planner-open, html.planner-open body { overflow: hidden !important; }
 </style>
 </head>
 <body>
@@ -6451,7 +6452,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 109;
+const APP_BUILD = 110;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -15764,6 +15765,17 @@ async function initFirebase() {
     // Watch auth state. If user is signed in, hide the login overlay and pull data.
     window._fb.onAuthStateChanged(_fbAuth, async (user) => {
       _fbUser = user;
+      // v1.110: Mark & Quaid → Product Planner only. No print-data sync starts for them.
+      const _plannerUser = user ? displayName(user.email).toLowerCase() : '';
+      if (user && PLANNER_ONLY_USERS.includes(_plannerUser)) {
+        document.getElementById('auth-overlay').classList.add('hidden');
+        document.body.classList.add('is-planner-user');
+        hideBootOverlay();
+        if (window.Planner) window.Planner.open(_plannerUser, { readOnly: false });
+        return;
+      }
+      document.body.classList.remove('is-planner-user');
+      if (window.Planner && window.Planner.isOpen) window.Planner.close();
       if (user) {
         document.getElementById('auth-overlay').classList.add('hidden');
         cloudStatus("connecting", displayName(user.email));
@@ -15796,6 +15808,8 @@ async function initFirebase() {
 // "collin@printqueue.local". If the user actually types an @ we trust it
 // (so legacy real-email accounts still work).
 const USERNAME_DOMAIN = 'printqueue.local';
+// v1.110: these logins only get the Product Planner (they never load the print data)
+const PLANNER_ONLY_USERS = ['mark', 'quaid'];
 function usernameToEmail(input) {
   const v = String(input || '').trim().toLowerCase();
   if (!v) return '';
@@ -17683,6 +17697,687 @@ if (!window.OFFLINE_MODE) {
   document.getElementById('auth-overlay').classList.add('hidden');
   hideBootOverlay();
 }
+</script>
+
+<script>
+// ============================================================
+// v1.110: PRODUCT PLANNER (Mark & Quaid; Collin can view)
+// Lives in its own shadow DOM so none of its styles or ids can touch the print app,
+// and syncs to its own cloud spot (planner/…), never to the print data.
+// ============================================================
+(function () {
+  const PLANNER_CSS = "\n:host {\n  --bg: #0f1419; --panel: #161c24; --ink: #e8eef5; --accent: #e2c08d;\n  --c-ideas: #e2c08d; --c-design: #6cc3c1; --c-hold: #b39ddb;\n  --panel-2: color-mix(in srgb, var(--panel) 88%, var(--ink) 12%);\n  --panel-3: color-mix(in srgb, var(--panel) 80%, var(--ink) 20%);\n  --line: color-mix(in srgb, var(--panel) 78%, var(--ink) 22%);\n  --line-bright: color-mix(in srgb, var(--panel) 65%, var(--ink) 35%);\n  --ink-dim: color-mix(in srgb, var(--ink) 62%, var(--bg) 38%);\n  --ink-faint: color-mix(in srgb, var(--ink) 42%, var(--bg) 58%);\n  --on-accent: #141a21;\n}\n* { box-sizing: border-box; }\n:host { position: fixed; inset: 0; z-index: 5000; display: none; }\n:host(.open) { display: block; }\n.pl { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; margin: 0; color: var(--ink); font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; font-size: 14px; line-height: normal; text-align: left; }\n.pl { background:\n  radial-gradient(1200px 500px at 10% -10%, color-mix(in srgb, var(--c-design) 7%, transparent), transparent 60%),\n  radial-gradient(900px 500px at 100% 0%, color-mix(in srgb, var(--c-hold) 6%, transparent), transparent 60%), var(--bg); }\nbutton { font: inherit; color: inherit; }\ninput, textarea, select { font: inherit; }\n\n/* preview bar (not part of the app) */\n.pv-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 16px; background: rgba(0,0,0,0.35); border-bottom: 1px dashed var(--line); font-size: 12px; color: var(--ink-dim); }\n.pv-bar b { color: var(--ink); font-weight: 600; }\n.pv-who { display: flex; gap: 6px; }\n.pv-who button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; font-size: 12px; color: var(--ink-dim); }\n.pv-who button.on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); font-weight: 600; }\n\n/* header */\n.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 28px 4px; flex-wrap: wrap; }\n.brand { display: flex; align-items: center; gap: 12px; }\n.brand-dot { width: 12px; height: 12px; border-radius: 3px; background: var(--accent); box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 50%, transparent); }\n.brand h1 { font-family: 'Bebas Neue', sans-serif; font-weight: 400; letter-spacing: 0.06em; font-size: 30px; margin: 0; line-height: 1; }\n.brand .sub { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; color: var(--ink-faint); text-transform: uppercase; margin-top: 4px; }\n.top-right { display: flex; align-items: center; gap: 10px; position: relative; }\n.hello { font-size: 13px; color: var(--ink-dim); display: flex; align-items: center; gap: 10px; margin-right: 4px; }\n.avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #10151b; }\n.viewonly { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-bright); color: var(--ink-dim); }\n.sq { width: 40px; height: 40px; border-radius: 11px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; display: grid; place-items: center; color: var(--ink); }\n.sq:hover, .sq.open { background: var(--panel-2); border-color: var(--line-bright); }\n.sq svg { width: 18px; height: 18px; }\n.menu { position: absolute; right: 0; top: 48px; width: 260px; background: var(--panel); border: 1px solid var(--line-bright); border-radius: 14px; padding: 6px; box-shadow: 0 20px 50px rgba(0,0,0,0.45); z-index: 800; display: none; }\n.menu.show { display: block; }\n.menu button { width: 100%; text-align: left; display: flex; align-items: center; gap: 12px; padding: 11px 12px; border: 0; background: transparent; border-radius: 10px; cursor: pointer; font-size: 14px; }\n.menu button:hover { background: var(--panel-2); }\n.menu .mi { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--panel-2); font-size: 14px; flex: none; }\n.menu .sub2 { font-size: 11.5px; color: var(--ink-faint); display: block; margin-top: 1px; }\n.menu .soon { padding: 8px 12px 6px; font-size: 11px; color: var(--ink-faint); border-top: 1px solid var(--line); margin-top: 4px; }\n\n/* quick idea bar */\n.btn { border: 1px solid var(--line-bright); background: var(--panel-2); border-radius: 10px; padding: 9px 14px; cursor: pointer; font-size: 13px; font-weight: 500; }\n.btn:hover { background: var(--panel-3); }\n.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }\n.btn.flat { background: transparent; }\n.btn.small { padding: 5px 10px; font-size: 12px; border-radius: 8px; }\n.icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 1px solid transparent; background: transparent; cursor: pointer; color: var(--ink-faint); display: grid; place-items: center; font-size: 16px; }\n.icon-btn:hover { background: var(--panel-2); color: var(--ink); border-color: var(--line); }\n\n/* layout: calendar | in design  /  ideas | on hold (equal, full width) */\n.layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; grid-template-areas: \"cal design\" \"bottom bottom\"; gap: 18px; margin: 18px 28px 40px; align-items: start; }\n.a-cal { grid-area: cal; } .a-design { grid-area: design; }\n.bottom { grid-area: bottom; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }\n.panel { background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }\n\n/* lists */\n.list { display: flex; flex-direction: column; position: relative; }\n.list::before { content: ''; position: absolute; left: 16px; right: 16px; top: 0; height: 3px; border-radius: 0 0 3px 3px; background: var(--lc); }\n.list-head { flex: none; padding: 16px 16px 12px; border-bottom: 1px solid var(--line); }\n.list-title { display: flex; align-items: center; gap: 10px; }\n.list-title .name { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.06em; font-size: 22px; flex: 1; line-height: 1; }\n.list-title .count { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-faint); background: var(--panel-2); border-radius: 999px; padding: 2px 9px; }\n.list-hint { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }\n.list-body { padding: 12px; display: grid; grid-template-columns: 1fr; gap: 10px; min-height: 70px; align-content: start; overflow-y: auto; }\n.bottom .list-body { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); max-height: 520px; }\n.a-design .list-body { max-height: 620px; }\n.list-body.drop-on { background: color-mix(in srgb, var(--lc) 6%, transparent); }\n.list-empty { font-size: 12px; color: var(--ink-faint); text-align: center; padding: 18px 8px; border: 1px dashed var(--line); border-radius: 12px; grid-column: 1 / -1; }\n.adder { margin: 0 12px 12px; }\n.adder button { width: 100%; padding: 9px 10px; border-radius: 10px; border: 1px dashed var(--line); background: transparent; color: var(--ink-faint); cursor: pointer; font-size: 12.5px; text-align: left; }\n.adder button:hover { color: var(--ink); border-color: var(--line-bright); }\n.adder input, .agenda-add input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--lc, var(--accent)); background: var(--bg); color: var(--ink); outline: none; font-size: 13.5px; }\n.adder .tip { font-size: 11px; color: var(--ink-faint); margin: 5px 2px 0; }\n\n/* product boxes */\n.card { position: relative; background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel) 94%, var(--ink) 6%)); border: 1px solid var(--line); border-left: 4px solid var(--pc); border-radius: 12px; padding: 10px 12px; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: pan-x pan-y; display: flex; flex-direction: column; gap: 8px; min-height: 64px; }\n.card:hover { border-color: var(--line-bright); border-left-color: var(--pc); box-shadow: 0 6px 18px rgba(0,0,0,0.22); }\n.card.dragging { opacity: 0.3; }\n.card .row1 { display: flex; gap: 8px; align-items: flex-start; }\n.rank { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; color: var(--on-accent); background: var(--lc); border-radius: 6px; padding: 1px 6px; flex: none; margin-top: 1px; }\n.card .title { font-weight: 600; font-size: 13.5px; line-height: 1.35; flex: 1; min-width: 0; overflow-wrap: anywhere; }\n.card .meta { display: flex; align-items: center; gap: 6px 8px; margin-top: auto; flex-wrap: wrap; }\n.done-btn { white-space: nowrap; }\n.chip { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--pc) 16%, transparent); color: var(--pc); white-space: nowrap; }\n.note-dot { font-size: 11px; color: var(--ink-faint); }\n.done-btn { margin-left: auto; border: 1px solid var(--line-bright); background: transparent; border-radius: 8px; padding: 3px 9px; font-size: 11.5px; color: var(--ink-dim); cursor: pointer; }\n.done-btn:hover { color: #10151b; background: #8cc7a1; border-color: #8cc7a1; }\n.placeholder { min-height: 56px; border-radius: 12px; border: 2px dashed color-mix(in srgb, var(--lc) 70%, transparent); background: color-mix(in srgb, var(--lc) 8%, transparent); }\n.drag-ghost { position: fixed; z-index: 1000; pointer-events: none; transform: rotate(2deg) scale(1.02); box-shadow: 0 18px 40px rgba(0,0,0,0.45); opacity: 0.96; }\n\n/* calendar */\n.cal-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }\n.cal-month { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 0.06em; min-width: 180px; }\n.cal-tip { margin-left: auto; font-size: 11.5px; color: var(--ink-faint); }\n.dow { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid var(--line); }\n.dow div { padding: 7px 10px; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.12em; color: var(--ink-faint); text-transform: uppercase; }\n.week { position: relative; border-bottom: 1px solid var(--line); }\n.week:last-child { border-bottom: 0; }\n.wdays { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(7, 1fr); }\n.day { border-right: 1px solid var(--line); padding: 5px 7px; cursor: pointer; min-width: 0; }\n.day:last-child { border-right: 0; }\n.day:hover { background: color-mix(in srgb, var(--ink) 2.5%, transparent); }\n.day.out { background: rgba(0,0,0,0.13); }\n.day.out .dn { opacity: 0.45; }\n.day.drop-on { background: color-mix(in srgb, var(--accent) 10%, transparent); }\n.dn { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink-dim); display: flex; justify-content: space-between; }\n.dn b { font-weight: 600; }\n.day.today .dn b { background: var(--accent); color: var(--on-accent); border-radius: 999px; padding: 1px 7px; }\n.day .plus { opacity: 0; color: var(--ink-faint); }\n.day:hover .plus { opacity: 1; }\n.bar { position: absolute; z-index: 2; border-radius: 9px; background: color-mix(in srgb, var(--pc) 24%, var(--panel)); border: 1px solid color-mix(in srgb, var(--pc) 45%, transparent); border-left: 4px solid var(--pc); color: var(--ink); padding: 4px 8px; overflow: hidden; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: pan-x pan-y; display: flex; flex-direction: column; justify-content: center; }\n.bar:hover { background: color-mix(in srgb, var(--pc) 34%, var(--panel)); }\n.bar.cl { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left-width: 1px; border-left-style: dashed; }\n.bar.cr { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-style: dashed; }\n.bar .bt { font-weight: 600; font-size: 12px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.bar .bs { font-size: 11px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }\n.bar.big .bt { font-size: 14px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }\n.bar.done { opacity: 0.55; }\n.bar.flash { animation: copyflash 1.4s ease-out; }\n@keyframes copyflash { 0% { box-shadow: 0 0 0 2px var(--ink), 0 0 24px 4px color-mix(in srgb, var(--pc) 70%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }\n.chip.today { background: color-mix(in srgb, var(--c-design) 18%, transparent); color: var(--c-design); }\n.card.auto { background: linear-gradient(180deg, color-mix(in srgb, var(--c-design) 9%, var(--panel-2)), color-mix(in srgb, var(--panel) 94%, var(--ink) 6%)); }\n.spans { display: flex; flex-direction: column; gap: 8px; }\n.ctx { position: fixed; z-index: 950; width: 240px; background: var(--panel); border: 1px solid var(--line-bright); border-radius: 12px; padding: 6px; box-shadow: 0 18px 44px rgba(0,0,0,0.45); }\n.ctx-h { padding: 8px 10px 8px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--line); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.ctx small { display: block; font-weight: 400; font-size: 11px; color: var(--ink-faint); margin-top: 2px; font-family: 'JetBrains Mono', monospace; }\n.ctx button { width: 100%; text-align: left; border: 0; background: transparent; border-radius: 8px; padding: 9px 10px; cursor: pointer; font-size: 13px; }\n.ctx button:hover { background: var(--panel-2); }\n.ctx button.soft { color: var(--ink-dim); }\n.bar .h { position: absolute; top: 0; bottom: 0; width: 10px; cursor: ew-resize; z-index: 3; }\n.bar .h.l { left: -2px; } .bar .h.r { right: -2px; }\n.bar .h::after { content: ''; position: absolute; top: 50%; transform: translateY(-50%); width: 3px; height: 16px; border-radius: 2px; background: var(--ink); opacity: 0; transition: opacity .12s; }\n.bar .h.l::after { left: 4px; } .bar .h.r::after { right: 4px; }\n.bar:hover .h::after { opacity: 0.5; }\n.pl.ro .bar .h { display: none; }\n.day-add { position: absolute; z-index: 5; padding: 4px; }\n.day-add input { width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg); color: var(--ink); outline: none; font-size: 12.5px; box-shadow: 0 8px 20px rgba(0,0,0,0.35); }\n.agenda { display: none; }\n\n/* product panel + other sheets */\n.scrim { position: fixed; inset: 0; background: rgba(5,8,12,0.55); backdrop-filter: blur(3px); display: none; align-items: center; justify-content: center; z-index: 900; padding: 16px; }\n.scrim.show { display: flex; }\n.modal { width: min(460px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; background: var(--panel); border: 1px solid var(--line-bright); border-radius: 18px; padding: 18px 20px 20px; box-shadow: 0 30px 80px rgba(0,0,0,0.5); position: relative; }\n.modal.wide { width: min(760px, 100%); }\n.modal h3 { margin: 0 0 4px; font-family: 'Bebas Neue', sans-serif; font-weight: 400; letter-spacing: 0.06em; font-size: 26px; }\n.modal .lead { color: var(--ink-faint); font-size: 12.5px; margin: 0 0 16px; }\n.x { position: absolute; top: 12px; right: 12px; }\n.pt { width: 100%; background: transparent; border: 0; border-bottom: 1px solid transparent; color: var(--ink); font-size: 20px; font-weight: 600; padding: 4px 36px 6px 0; outline: none; }\n.pt:focus { border-bottom-color: var(--line-bright); }\n.pn { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; color: var(--ink); padding: 9px 11px; font-size: 13.5px; min-height: 64px; resize: vertical; outline: none; margin-top: 8px; }\n.pn:focus { border-color: var(--line-bright); }\n.lbl { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); margin: 16px 0 8px; }\n.seg { display: flex; gap: 6px; flex-wrap: wrap; }\n.seg button { border: 1px solid var(--line-bright); background: var(--bg); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; color: var(--ink-dim); }\n.seg button.on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); font-weight: 600; }\n.dates { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }\n.dates input { background: var(--bg); border: 1px solid var(--line-bright); border-radius: 9px; color: var(--ink); padding: 7px 9px; font-size: 13px; }\n.swatches { display: flex; gap: 8px; flex-wrap: wrap; }\n.swatches button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }\n.swatches button.on { border-color: var(--ink); }\n.modal-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; flex-wrap: wrap; }\n.modal-foot .left { margin-right: auto; }\n.btn.quiet-danger { color: #e3a6b4; border-color: rgba(227,166,180,0.35); background: transparent; }\n.ro-note { font-size: 13px; color: var(--ink-dim); line-height: 1.5; }\n\n/* theme editor + history */\n.presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }\n.preset { border: 2px solid var(--line); border-radius: 12px; padding: 10px; cursor: pointer; text-align: left; background: var(--bg); }\n.preset.on { border-color: var(--accent); }\n.preset .sw { display: flex; gap: 4px; margin-bottom: 8px; }\n.preset .sw i { width: 22px; height: 22px; border-radius: 6px; display: block; border: 1px solid rgba(255,255,255,0.08); }\n.preset b { font-size: 13px; font-weight: 600; }\n.colors { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }\n.color-row { display: flex; align-items: center; gap: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }\n.color-row input[type=color] { width: 34px; height: 34px; border: 0; padding: 0; background: none; cursor: pointer; }\n.color-row span { font-size: 13px; }\n.color-row small { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--ink-faint); }\n.hsearch { width: 100%; background: var(--bg); border: 1px solid var(--line-bright); border-radius: 10px; color: var(--ink); padding: 10px 12px; font-size: 14px; outline: none; margin-top: 12px; }\n.hist-month { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); margin: 16px 0 8px; }\n.hist-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-left: 4px solid var(--pc); border-radius: 12px; background: var(--bg); margin-bottom: 8px; }\n.hist-item .t { font-weight: 600; font-size: 13.5px; }\n.hist-item .s { font-size: 12px; color: var(--ink-faint); margin-top: 2px; }\n.hist-item .tick { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: rgba(140,199,161,0.18); color: #8cc7a1; font-size: 13px; flex: none; }\n.hist-item .grow { flex: 1; min-width: 0; }\n.hist-stats { display: flex; gap: 10px; flex-wrap: wrap; }\n.hist-stats div { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }\n.hist-stats b { font-family: 'JetBrains Mono', monospace; font-size: 20px; display: block; }\n.hist-stats span { font-size: 11.5px; color: var(--ink-faint); }\n\n.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(20px); background: var(--panel-3); border: 1px solid var(--line-bright); color: var(--ink); padding: 10px 12px 10px 16px; border-radius: 12px; font-size: 13px; display: flex; gap: 12px; align-items: center; opacity: 0; transition: opacity .2s, transform .2s; z-index: 1100; box-shadow: 0 12px 30px rgba(0,0,0,0.4); max-width: calc(100vw - 32px); pointer-events: none; }\n.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }\n.toast button { border: 0; background: var(--panel); border-radius: 8px; padding: 4px 10px; cursor: pointer; color: var(--accent); font-weight: 600; }\n\n/* view only (Collin) */\n.pl.ro .adder, .pl.ro .done-btn, .pl.ro .day .plus, .pl.ro [data-restore], .pl.ro .agenda-add { display: none !important; }\n.pl.ro .card, .pl.ro .bar { cursor: pointer; }\n\n/* full screen */\n.pl.fs .pv-bar, .pl.fs .brand .sub { display: none; }\n.pl.fs .top { padding-top: 12px; }\n.pl.fs .layout { margin-top: 10px; }\n\n@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }\n@media (max-width: 1100px) { .layout { grid-template-columns: minmax(0, 1fr) 280px; } }\n@media (max-width: 860px) {\n  .layout { grid-template-columns: 1fr; grid-template-areas: \"cal\" \"design\" \"bottom\"; }\n  .bottom { grid-template-columns: 1fr; }\n}\n@media (max-width: 700px) {\n  .top { padding: 14px 16px 4px; }\n    .layout { margin: 14px 16px 32px; gap: 14px; }\n  .hello .role, .hello b, .cal-tip { display: none; }\n  .bottom .list-body { grid-template-columns: 1fr; }\n  .cal-month { font-size: 22px; min-width: 0; flex: 1; }\n  .dow div { padding: 6px 0; text-align: center; letter-spacing: 0.04em; }\n  .day { padding: 3px 2px; }\n  .dn { justify-content: center; font-size: 11px; }\n  .day .plus { display: none; }\n  .bar { padding: 0 3px; border-radius: 4px; border-left-width: 3px; }\n  .bar .bt { font-size: 9.5px; font-weight: 600; }\n  .bar .bs, .bar .h { display: none; }\n  .day.sel { box-shadow: inset 0 0 0 2px var(--accent); }\n  .agenda { display: block; padding: 12px 14px 16px; border-top: 1px solid var(--line); }\n  .agenda h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink-dim); }\n  .agenda .card { margin-bottom: 8px; }\n}\n\n.back { display: none; align-items: center; gap: 6px; height: 40px; padding: 0 14px; border-radius: 11px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 13px; color: var(--ink); }\n.back:hover { background: var(--panel-2); }\n.pl.ro .back { display: inline-flex; }\n.pl.ro [data-menu=\"signout\"] { display: none; }\n.loading { padding: 60px 20px; text-align: center; color: var(--ink-faint); font-size: 13px; }\n.err { margin: 18px 28px 0; padding: 12px 14px; border-radius: 12px; border: 1px solid color-mix(in srgb, #e3a6b4 40%, transparent); color: #e3a6b4; font-size: 13px; display: none; }\n.err.show { display: block; }\n";
+  const PLANNER_HTML = "<div class=\"top\">\n  <div class=\"brand\">\n    <div class=\"brand-dot\"></div>\n    <div><h1>Product Planner</h1><div class=\"sub\">Ideas \u00b7 design \u00b7 releases</div></div>\n  </div>\n  <div class=\"top-right\">\n    <button class=\"back\" id=\"pl-back\" title=\"Back to Print Queue\">\u2190 Print Queue</button>\n    <div class=\"hello\" id=\"hello\"></div>\n    <button class=\"sq\" id=\"fs-btn\" title=\"Full screen\" aria-label=\"Full screen\"></button>\n    <button class=\"sq\" id=\"burger\" title=\"Menu\" aria-label=\"Menu\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M4 7h16M4 12h16M4 17h16\"/></svg></button>\n    <div class=\"menu\" id=\"menu\">\n      <button data-menu=\"theme\"><span class=\"mi\">\ud83c\udfa8</span><span>Theme editor<span class=\"sub2\">Colors for your planner</span></span></button>\n      <button data-menu=\"history\"><span class=\"mi\">\u2713</span><span>Completed design history<span class=\"sub2\" id=\"menu-hist-sub\"></span></span></button>\n      <button data-menu=\"signout\"><span class=\"mi\">\u238b</span><span>Sign out</span></button>\n      <div class=\"soon\">More tools coming later</div>\n    </div>\n  </div>\n</div>\n\n\n<div class=\"err\" id=\"pl-err\"></div>\n<div class=\"layout\">\n  <section class=\"panel a-cal\">\n    <div class=\"cal-head\">\n      <button class=\"icon-btn\" id=\"cal-prev\" title=\"Previous month\">\u2039</button>\n      <div class=\"cal-month\" id=\"cal-month\"></div>\n      <button class=\"icon-btn\" id=\"cal-next\" title=\"Next month\">\u203a</button>\n      <button class=\"btn small flat\" id=\"cal-today\">Today</button>\n      <span class=\"cal-tip\" id=\"cal-tip\"></span>\n    </div>\n    <div class=\"dow\"><div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div></div>\n    <div id=\"weeks\"></div>\n    <div class=\"agenda\" id=\"agenda\"></div>\n  </section>\n  <section class=\"panel list a-design\" id=\"list-design\"></section>\n  <div class=\"bottom\">\n    <section class=\"panel list\" id=\"list-ideas\"></section>\n    <section class=\"panel list\" id=\"list-hold\"></section>\n  </div>\n</div>\n\n<div class=\"scrim\" id=\"scrim\"><div class=\"modal\" id=\"modal\"></div></div>\n<div class=\"toast\" id=\"toast\"><span id=\"toast-text\"></span><button id=\"toast-undo\">Undo</button></div>\n\n";
+  let host = null, R = null, W = null, isOpen = false, booted = false, api = null;
+
+  function mount() {
+    if (host) return;
+    host = document.createElement('div'); host.id = 'planner-host';
+    document.body.appendChild(host);
+    R = host.attachShadow({ mode: 'open' });
+    R.innerHTML = '<style>' + PLANNER_CSS + '</style><div class="pl" id="pl">' + PLANNER_HTML + '</div>';
+    W = R.getElementById('pl');
+    if (!R.elementFromPoint) R.elementFromPoint = (x, y) => document.elementFromPoint(x, y);
+  }
+
+  function boot() {
+
+// ===================== data: ONE kind of thing — a product =====================
+// A product can sit in a list (Ideas / Design Queue / On Hold) and can be on the calendar
+// any number of times (spans), e.g. Mon–Thu this week AND Mon–Thu next week.
+const LISTS = {
+  ideas:  { name: 'Ideas', hint: 'Ranked by priority — #1 is next up. Drag to re-rank · double-click for details.', color: 'var(--c-ideas)', ranked: true, empty: 'No ideas waiting. Enjoy the quiet.' },
+  design: { name: 'Design Queue', hint: "Today's scheduled products show up here on their own · add anything else below.", color: 'var(--c-design)', ranked: false, empty: 'Nothing scheduled today — drag a product here or onto today on the calendar.' },
+  hold:   { name: 'On Hold — Later', hint: 'Good ideas, just not now. No pressure.', color: 'var(--c-hold)', ranked: false, empty: 'Nothing parked.' },
+};
+const PALETTE = ['#e2c08d', '#7fb2e5', '#8cc7a1', '#b39ddb', '#e3a6b4', '#6cc3c1', '#f0b59a', '#a9c1e0'];
+const USERS = { mark: { name: 'Mark', color: '#e2c08d', role: 'Ideas' }, quaid: { name: 'Quaid', color: '#7fb2e5', role: 'Design & engineering' }, collin: { name: 'Collin', color: '#8cc7a1', role: '' } };
+let me = '', readOnly = true;
+let colorTurn = 0;
+const uid = () => Math.random().toString(36).slice(2, 10);
+const pad = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseDay = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const dAdd = (s, n) => { const d = parseDay(s); d.setDate(d.getDate() + n); return ymd(d); };
+const dDiff = (a, b) => Math.round((parseDay(b) - parseDay(a)) / 864e5);
+let today = new Date(); today.setHours(0, 0, 0, 0);
+let T = ymd(today);
+function refreshToday() { const d = new Date(); d.setHours(0, 0, 0, 0); if (ymd(d) !== T) { today = d; T = ymd(d); } }
+const fmtDay = s => parseDay(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const fmtRange = (a, b) => a === b ? fmtDay(a) : `${fmtDay(a)} – ${fmtDay(b)}`;
+const nextColor = () => PALETTE[(P.length + colorTurn++) % PALETTE.length];
+const sp = (s, e) => ({ id: uid(), s, e: e || s });
+const mk = (title, extra = {}) => ({ id: uid(), title, notes: '', color: nextColor(), list: null, spans: [], by: me, ...extra });
+
+let P = [];
+const S = { view: (() => { const d = new Date(today); d.setDate(1); return d; })(), selDay: T, fs: false };
+const byId = id => P.find(p => p.id === id);
+const inList = l => P.filter(p => p.list === l && !p.done);
+const onCal = p => p.spans && p.spans.length > 0;
+const covers = (p, day) => (p.spans || []).some(x => x.s <= day && x.e >= day);
+function spanLabel(p) {
+  const s = (p.spans || []).slice().sort((a, b) => a.s.localeCompare(b.s));
+  if (!s.length) return '';
+  const pick = s.find(x => x.e >= T) || s[s.length - 1];
+  return fmtRange(pick.s, pick.e) + (s.length > 1 ? ` +${s.length - 1}` : '');
+}
+// Design Queue = products scheduled for today (automatic) + anything added to it by hand
+function designQueue() {
+  const auto = P.filter(p => !p.done && p.list !== 'design' && covers(p, T))
+    .sort((a, b) => a.spans.map(x => x.s).sort()[0].localeCompare(b.spans.map(x => x.s).sort()[0]));
+  return { auto, manual: inList('design') };
+}
+
+// ===================== themes (each person keeps their own) =====================
+const THEME_FIELDS = [['bg', 'Background'], ['panel', 'Panels'], ['ink', 'Text'], ['accent', 'Accent / buttons'], ['c-ideas', 'Ideas color'], ['c-design', 'Design Queue color'], ['c-hold', 'On Hold color']];
+const PRESETS = {
+  night:  { name: 'Night (default)', bg: '#0f1419', panel: '#161c24', ink: '#e8eef5', accent: '#e2c08d', 'c-ideas': '#e2c08d', 'c-design': '#6cc3c1', 'c-hold': '#b39ddb' },
+  slate:  { name: 'Slate blue', bg: '#121826', panel: '#1a2234', ink: '#e6ecf7', accent: '#8fb8ff', 'c-ideas': '#8fb8ff', 'c-design': '#7fd6c2', 'c-hold': '#c3a6f0' },
+  forest: { name: 'Forest', bg: '#0f1613', panel: '#16201b', ink: '#e7efe9', accent: '#a9d18e', 'c-ideas': '#e6c68a', 'c-design': '#a9d18e', 'c-hold': '#9fb7c9' },
+  dusk:   { name: 'Dusk', bg: '#17121c', panel: '#211a29', ink: '#f2eaf5', accent: '#f0b59a', 'c-ideas': '#f0b59a', 'c-design': '#9fd3e0', 'c-hold': '#cfa9e8' },
+  paper:  { name: 'Warm paper (light)', bg: '#f4efe6', panel: '#fffaf2', ink: '#2b2a28', accent: '#c98a3a', 'c-ideas': '#c98a3a', 'c-design': '#3f9a8f', 'c-hold': '#8a6fbf' },
+};
+let theme = { ...PRESETS.night };
+const lum = hex => { const n = parseInt(hex.slice(1), 16); const c = [n >> 16 & 255, n >> 8 & 255, n & 255].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+function applyTheme(t) {
+  const r = host.style;
+  for (const [k] of THEME_FIELDS) r.setProperty('--' + k, t[k]);
+  r.setProperty('--on-accent', lum(t.accent) > 0.35 ? '#141a21' : '#ffffff');
+  host.style.colorScheme = lum(t.bg) > 0.5 ? 'light' : 'dark';
+}
+
+// ===================== helpers =====================
+const $ = (s, el = R) => el.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ro = () => readOnly;
+const narrow = () => matchMedia('(max-width: 700px)').matches;
+let toastTimer = null, undoFn = null;
+function toast(text, undo) {
+  $('#toast-text').textContent = text; undoFn = undo || null; $('#toast-undo').style.display = undo ? '' : 'none';
+  $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), undo ? 6000 : 2400);
+}
+$('#toast-undo').onclick = () => { if (undoFn) undoFn(); undoFn = null; $('#toast').classList.remove('show'); render(); };
+const snapshot = () => JSON.parse(JSON.stringify(P));
+const restore = snap => () => { P = snap; };
+
+// ===================== lists =====================
+function cardHTML(p, idx, L, auto) {
+  const todayTag = covers(p, T) && !p.done;
+  return `<div class="card ${auto ? 'auto' : ''}" data-card="${p.id}" style="--pc:${p.color}">
+    <div class="row1">${L && L.ranked ? `<span class="rank">#${idx + 1}</span>` : ''}<div class="title">${esc(p.title)}</div></div>
+    <div class="meta">
+      ${todayTag && L && L === LISTS.design ? '<span class="chip today" title="On the calendar for today">● Today</span>' : ''}
+      ${onCal(p) ? `<span class="chip">◷ ${spanLabel(p)}</span>` : ''}
+      ${p.notes ? '<span class="note-dot" title="Has notes">✎</span>' : ''}
+      ${p.done ? '<span class="chip">✓ Done</span>' : `<button class="done-btn" data-done="${p.id}" title="Mark this product finished">✓ Done</button>`}
+    </div>
+  </div>`;
+}
+const openAdders = new Set();
+function renderList(id) {
+  const L = LISTS[id], el = $('#list-' + id);
+  let html, count;
+  if (id === 'design') {
+    const { auto, manual } = designQueue();
+    count = auto.length + manual.length;
+    html = auto.map(p => cardHTML(p, 0, L, true)).join('') + manual.map(p => cardHTML(p, 0, L, false)).join('');
+  } else {
+    const items = inList(id); count = items.length;
+    html = items.map((p, i) => cardHTML(p, i, L)).join('');
+  }
+  el.style.setProperty('--lc', L.color);
+  el.innerHTML = `<div class="list-head"><div class="list-title"><span class="name">${L.name}</span><span class="count">${count}</span></div><div class="list-hint">${L.hint}</div></div>
+    <div class="list-body" data-drop-list="${id}">${count ? html : `<div class="list-empty">${L.empty}</div>`}</div>
+    <div class="adder" data-adder="${id}">${openAdders.has(id) ? `<input type="text" placeholder="Product name, then Enter…" enterkeyhint="done"><div class="tip">Enter adds it · keep typing to add more · Esc to close</div>` : `<button data-open-adder="${id}">+ Add product</button>`}</div>`;
+  if (openAdders.has(id)) wireAdder(el.querySelector('.adder input'), v => { P.push(mk(v, { list: id, by: me })); }, () => { openAdders.delete(id); renderList(id); }, () => renderList(id), id);
+}
+function wireAdder(inp, add, close, rerender, focusKey) {
+  inp.focus();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { const v = inp.value.trim(); if (!v) { close(); return; } add(v); scheduleSave(); rerender(); renderCal(); const n = R.querySelector(`[data-adder="${focusKey}"] input`); if (n) n.focus(); }
+    else if (e.key === 'Escape') close();
+  });
+  inp.addEventListener('blur', () => setTimeout(() => { if (!inp.isConnected) return; if (!inp.value.trim()) close(); }, 120));
+}
+
+// ===================== calendar: week rows, products stretch across days =====================
+function weekLayout(days) {
+  const a = days[0], b = days[6];
+  const items = [];
+  for (const p of P) for (const x of (p.spans || [])) if (x.s <= b && x.e >= a) items.push({ p, x });
+  items.sort((m, n) => m.x.s.localeCompare(n.x.s) || dDiff(n.x.s, n.x.e) - dDiff(m.x.s, m.x.e));
+  const laneEnd = [], out = [];
+  for (const it of items) {
+    const c0 = Math.max(0, dDiff(a, it.x.s)), c1 = Math.min(6, dDiff(a, it.x.e));
+    let lane = laneEnd.findIndex(e => e < c0); if (lane < 0) { lane = laneEnd.length; laneEnd.push(-1); }
+    laneEnd[lane] = c1; out.push({ ...it, c0, c1, lane, cl: it.x.s < a, cr: it.x.e > b });
+  }
+  return { segs: out, lanes: laneEnd.length };
+}
+let flashSpan = null;
+function renderCal() {
+  const v = S.view;
+  $('#cal-month').textContent = v.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const first = new Date(v); first.setDate(1 - v.getDay());
+  const weeksN = Math.ceil((v.getDay() + new Date(v.getFullYear(), v.getMonth() + 1, 0).getDate()) / 7);
+  const ph = narrow();
+  const baseH = S.fs ? Math.max(110, Math.floor((innerHeight - 175) / weeksN)) : (ph ? 64 : 118);
+  const HEAD = ph ? 20 : 26, GAP = ph ? 2 : 4;
+  let html = '';
+  for (let w = 0; w < weeksN; w++) {
+    const days = []; for (let i = 0; i < 7; i++) { const d = new Date(first); d.setDate(first.getDate() + w * 7 + i); days.push(ymd(d)); }
+    const { segs, lanes } = weekLayout(days);
+    const avail = baseH - HEAD - 6;
+    const minH = ph ? 13 : 24, maxH = ph ? 18 : 78;
+    let laneH = lanes ? Math.min(maxH, Math.floor((avail - GAP * (lanes - 1)) / lanes)) : maxH;
+    laneH = Math.max(minH, laneH);
+    const H = Math.max(baseH, HEAD + lanes * (laneH + GAP) + 6);
+    html += `<div class="week" data-week="${w}" data-start="${days[0]}" style="height:${H}px"><div class="wdays">${days.map(d => {
+      const dd = parseDay(d);
+      return `<div class="day ${dd.getMonth() !== v.getMonth() ? 'out' : ''} ${d === T ? 'today' : ''} ${ph && d === S.selDay ? 'sel' : ''}" data-day="${d}"><div class="dn"><b>${dd.getDate()}</b><span class="plus">+</span></div></div>`;
+    }).join('')}</div>${segs.map(s => {
+      const big = laneH >= 46;
+      const left = `calc(${s.c0} * 100% / 7 + ${ph ? 1 : 4}px)`, width = `calc(${s.c1 - s.c0 + 1} * 100% / 7 - ${ph ? 2 : 8}px)`;
+      const sub = big ? `<div class="bs">${s.p.list ? LISTS[s.p.list].name + ' · ' : ''}${fmtRange(s.x.s, s.x.e)}</div>` : '';
+      return `<div class="bar ${big ? 'big' : ''} ${s.cl ? 'cl' : ''} ${s.cr ? 'cr' : ''} ${s.p.done ? 'done' : ''} ${flashSpan === s.x.id ? 'flash' : ''}" data-bar="${s.p.id}" data-span="${s.x.id}" style="--pc:${s.p.color};left:${left};width:${width};top:${HEAD + s.lane * (laneH + GAP)}px;height:${laneH}px" title="${esc(s.p.title + ' · ' + fmtRange(s.x.s, s.x.e))}">
+        ${s.cl ? '' : '<span class="h l" data-edge="l"></span>'}<div class="bt">${s.p.done ? '✓ ' : ''}${esc(s.p.title)}</div>${sub}${s.cr ? '' : '<span class="h r" data-edge="r"></span>'}</div>`;
+    }).join('')}</div>`;
+  }
+  $('#weeks').innerHTML = html;
+  const sel = P.filter(p => covers(p, S.selDay));
+  $('#agenda').innerHTML = `<h4>${fmtDay(S.selDay)}</h4>${sel.map(p => cardHTML(p, 0, null)).join('') || '<div class="list-empty" style="margin-bottom:8px">Nothing on this day.</div>'}
+    <div class="adder agenda-add" data-adder="day"><input type="text" placeholder="+ Add a product on ${fmtDay(S.selDay)}" enterkeyhint="done"></div>`;
+  const ai = $('#agenda .agenda-add input');
+  ai.addEventListener('keydown', e => { if (e.key === 'Enter' && ai.value.trim()) { P.push(mk(ai.value.trim(), { spans: [sp(S.selDay)], by: me })); render(); toast('Added to ' + fmtDay(S.selDay)); } });
+}
+function dayAt(x, y) {
+  for (const wk of R.querySelectorAll('.week')) {
+    const r = wk.getBoundingClientRect();
+    if (y >= r.top && y <= r.bottom && x >= r.left && x <= r.right) return dAdd(wk.dataset.start, Math.min(6, Math.floor((x - r.left) / (r.width / 7))));
+  }
+  return null;
+}
+function openDayAdder(day) {
+  const cell = R.querySelector(`.day[data-day="${day}"]`); if (!cell) return;
+  const wk = cell.closest('.week'); const wr = wk.getBoundingClientRect(), cr = cell.getBoundingClientRect();
+  const box = document.createElement('div'); box.className = 'day-add';
+  const w = Math.max(cr.width, 180);
+  box.style.left = Math.min(cr.left - wr.left, wr.width - w) + 'px'; box.style.width = w + 'px'; box.style.top = '22px';
+  box.innerHTML = `<input type="text" placeholder="Product on ${fmtDay(day)}…" enterkeyhint="done">`;
+  wk.appendChild(box);
+  const inp = box.querySelector('input'); inp.focus();
+  const close = () => box.remove();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { const v = inp.value.trim(); close(); if (v) { const np = mk(v, { spans: [sp(day)], by: me }); P.push(np); render(); toast(`Added to ${fmtDay(day)} — drag its edge to stretch it`, () => { P = P.filter(x => x !== np); }); } }
+    else if (e.key === 'Escape') close();
+  });
+  inp.addEventListener('blur', () => setTimeout(close, 120));
+}
+
+function render() {
+  refreshToday(); scheduleSave();
+  W.classList.toggle('ro', ro());
+  const u = USERS[me];
+  $('#hello').innerHTML = `${u.role ? `<span class="role">${u.role}</span>` : ''}<span class="avatar" style="background:${u.color}">${u.name[0]}</span><b>${u.name}</b>${ro() ? '<span class="viewonly">View only</span>' : ''}`;
+  $('#menu-hist-sub').textContent = `${P.filter(p => p.done).length} finished so far`;
+  $('#cal-tip').textContent = ro() ? 'View only' : 'Click a day to add · drag ends to stretch · right-click to duplicate · double-click for details';
+  renderLists();
+  renderCal();
+}
+
+// ===================== duplicating on the calendar =====================
+// "Next week" skips weeks that already have the exact same days, so repeating Mon–Thu keeps marching forward
+function nextFreeWeek(p, x) { let off = 7; while (p.spans.some(z => z.s === dAdd(x.s, off) && z.e === dAdd(x.e, off))) off += 7; return off; }
+function duplicateSpan(pid, spanId, offsetDays) {
+  const p = byId(pid), x = p && p.spans.find(s => s.id === spanId); if (!x) return;
+  const snap = snapshot();
+  const copy = sp(dAdd(x.s, offsetDays), dAdd(x.e, offsetDays));
+  p.spans.push(copy);
+  flashSpan = copy.id; setTimeout(() => { flashSpan = null; }, 1600);
+  if (offsetDays) {   // show the month where the copy landed
+    const v = S.view, mEnd = ymd(new Date(v.getFullYear(), v.getMonth() + 1, 0));
+    if (copy.s > mEnd) { const d = parseDay(copy.s); S.view = new Date(d.getFullYear(), d.getMonth(), 1); }
+  }
+  render();
+  toast(offsetDays ? `Copied to ${fmtRange(copy.s, copy.e)}` : 'Copy made — drag it where you want it', restore(snap));
+}
+function removeSpan(pid, spanId) {
+  const p = byId(pid); const snap = snapshot();
+  p.spans = p.spans.filter(s => s.id !== spanId);
+  if (!p.list && !onCal(p) && !p.done) p.list = 'ideas';
+  render(); toast(onCal(p) ? 'Removed those days' : `Taken off the calendar${p.list ? ' — still in ' + LISTS[p.list].name : ''}`, restore(snap));
+}
+function hideCtx() { const c = $('#ctx'); if (c) c.remove(); }
+R.addEventListener('contextmenu', e => {
+  const bar = e.target.closest('[data-bar]');
+  if (!bar || ro()) return;
+  e.preventDefault(); hideCtx();
+  const p = byId(bar.dataset.bar), x = p.spans.find(s => s.id === bar.dataset.span);
+  const m = document.createElement('div'); m.className = 'ctx'; m.id = 'ctx';
+  m.innerHTML = `<div class="ctx-h">${esc(p.title)}<small>${fmtRange(x.s, x.e)}</small></div>
+    <button data-ctx="next">⧉ Duplicate to next week<small>${fmtRange(dAdd(x.s, nextFreeWeek(p, x)), dAdd(x.e, nextFreeWeek(p, x)))}</small></button>
+    <button data-ctx="here">⧉ Duplicate, then drag it</button>
+    <button data-ctx="open">✎ Details</button>
+    <button data-ctx="remove" class="soft">✕ Remove these days</button>`;
+  W.appendChild(m);
+  const w = 240, h = m.offsetHeight;
+  m.style.left = Math.min(e.clientX, innerWidth - w - 8) + 'px'; m.style.top = Math.min(e.clientY, innerHeight - h - 8) + 'px';
+  m.onclick = ev => {
+    const b = ev.target.closest('[data-ctx]'); if (!b) return; hideCtx();
+    if (b.dataset.ctx === 'next') duplicateSpan(p.id, x.id, nextFreeWeek(p, x));
+    else if (b.dataset.ctx === 'here') duplicateSpan(p.id, x.id, 0);
+    else if (b.dataset.ctx === 'remove') removeSpan(p.id, x.id);
+    else openProduct(p.id);
+  };
+});
+R.addEventListener('mousedown', e => { if (!e.target.closest('#ctx')) hideCtx(); });
+W.addEventListener('scroll', hideCtx, true);
+
+// ===================== product panel (everything optional, saves as you type) =====================
+let onCloseModal = null;
+function openModal(html, wire, wide) { const m = $('#modal'); m.className = 'modal' + (wide ? ' wide' : ''); m.innerHTML = html; $('#scrim').classList.add('show'); wire && wire(m); }
+function closeModal() { $('#scrim').classList.remove('show'); const f = onCloseModal; onCloseModal = null; if (f) f(); }
+$('#scrim').addEventListener('mousedown', e => { if (e.target.id === 'scrim') closeModal(); });
+document.addEventListener('keydown', e => { if (!isOpen) return; if (e.key === 'Escape') { if ($('#scrim').classList.contains('show')) closeModal(); hideMenu(); hideCtx(); } });
+
+function openProduct(id) {
+  const p = byId(id); if (!p) return;
+  const x = '<button class="icon-btn x" data-close title="Close">✕</button>';
+  const sorted = () => p.spans.slice().sort((a, b) => a.s.localeCompare(b.s));
+  if (ro()) {
+    openModal(`${x}<h3 style="padding-right:30px">${esc(p.title)}</h3><p class="lead">${p.done ? 'Finished · ' : ''}${p.list ? LISTS[p.list].name : 'Calendar'}</p>
+      ${onCal(p) ? `<div class="ro-note">${sorted().map(s => fmtRange(s.s, s.e)).join('<br>')}</div>` : ''}${p.notes ? `<div class="ro-note" style="margin-top:10px">${esc(p.notes)}</div>` : ''}`, m => m.querySelector('[data-close]').onclick = closeModal);
+    return;
+  }
+  const before = snapshot();
+  const body = () => `${x}
+    <input class="pt" id="p-title" value="${esc(p.title)}" placeholder="Product name">
+    <textarea class="pn" id="p-notes" placeholder="Notes (optional)">${esc(p.notes || '')}</textarea>
+    <div class="lbl">List</div>
+    <div class="seg" id="p-list">${Object.entries(LISTS).map(([k, l]) => `<button data-l="${k}" class="${p.list === k ? 'on' : ''}">${l.name}</button>`).join('')}<button data-l="" class="${!p.list ? 'on' : ''}">Calendar only</button></div>
+    <div class="lbl">On the calendar</div>
+    <div class="spans">${sorted().map(s => `<div class="dates" data-sp="${s.id}"><input type="date" data-k="s" value="${s.s}"> → <input type="date" data-k="e" value="${s.e}"><button class="btn small flat" data-dup title="Copy these days to the next week">⧉ Next week</button><button class="icon-btn" data-rm title="Remove these days">✕</button></div>`).join('')}</div>
+    <div class="dates" style="margin-top:8px"><button class="btn small" id="p-addspan">+ ${onCal(p) ? 'Add another time' : 'Put on calendar'}</button>${onCal(p) ? '' : '<span style="font-size:12px;color:var(--ink-faint)">or drag the box onto a day</span>'}</div>
+    <div class="lbl">Color</div>
+    <div class="swatches">${PALETTE.map(c => `<button data-c="${c}" class="${c === p.color ? 'on' : ''}" style="background:${c}"></button>`).join('')}</div>
+    <div class="modal-foot"><button class="btn quiet-danger left" id="p-del">Delete</button>${p.done ? '<button class="btn" id="p-undone">Not done</button>' : '<button class="btn primary" id="p-done">✓ Done</button>'}</div>`;
+  const wire = m => {
+    const again = () => { render(); m.innerHTML = body(); wire(m); };
+    m.querySelector('[data-close]').onclick = closeModal;
+    const t = m.querySelector('#p-title'); t.oninput = () => { p.title = t.value; renderSoft(); };
+    const n = m.querySelector('#p-notes'); n.oninput = () => { p.notes = n.value; renderSoft(); };
+    m.querySelector('#p-list').onclick = e => { const b = e.target.closest('[data-l]'); if (!b) return; const l = b.dataset.l || null; if (p.list !== l) { P.splice(P.indexOf(p), 1); P.push(p); p.list = l; } if (!p.list && !onCal(p)) p.spans.push(sp(T)); again(); };
+    m.querySelectorAll('[data-sp]').forEach(row => {
+      const s = p.spans.find(z => z.id === row.dataset.sp);
+      row.querySelectorAll('input').forEach(inp => inp.onchange = () => {
+        if (!inp.value) return;
+        if (inp.dataset.k === 's') { const len = dDiff(s.s, s.e); s.s = inp.value; if (s.e < s.s) s.e = dAdd(s.s, len); }
+        else s.e = inp.value < s.s ? s.s : inp.value;
+        again();
+      });
+      row.querySelector('[data-dup]').onclick = () => { const off = nextFreeWeek(p, s); p.spans.push(sp(dAdd(s.s, off), dAdd(s.e, off))); again(); };
+      row.querySelector('[data-rm]').onclick = () => { p.spans = p.spans.filter(z => z !== s); if (!p.list && !onCal(p)) p.list = 'ideas'; again(); };
+    });
+    m.querySelector('#p-addspan').onclick = () => { const last = sorted().pop(); p.spans.push(last ? sp(dAdd(last.s, 7), dAdd(last.e, 7)) : sp(T)); again(); };
+    m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { p.color = b.dataset.c; render(); m.querySelectorAll('[data-c]').forEach(z => z.classList.toggle('on', z === b)); });
+    m.querySelector('#p-del').onclick = () => { P = P.filter(z => z !== p); onCloseModal = null; closeModal(); render(); toast(`Deleted "${p.title}"`, restore(before)); };
+    const d = m.querySelector('#p-done'); if (d) d.onclick = () => { onCloseModal = null; closeModal(); markDone(p); };
+    const ud = m.querySelector('#p-undone'); if (ud) ud.onclick = () => { p.done = false; if (!p.list && !onCal(p)) p.list = 'ideas'; again(); };
+  };
+  onCloseModal = () => { if (!p.title.trim()) p.title = 'Untitled product'; render(); };
+  openModal(body(), wire);
+}
+function renderLists() { ['design', 'ideas', 'hold'].forEach(renderList); }
+function renderSoft() { scheduleSave(); renderLists(); renderCal(); }
+function markDone(p) {
+  const snap = snapshot();
+  p.done = true; p.doneAt = T; p.doneBy = me;
+  render();
+  toast(`✓ "${p.title}" finished — saved in Completed history${onCal(p) ? ' (stays on the calendar)' : ''}`, restore(snap));
+}
+
+// ===================== ☰ menu =====================
+function hideMenu() { $('#menu').classList.remove('show'); $('#burger').classList.remove('open'); }
+$('#burger').onclick = e => { e.stopPropagation(); $('#menu').classList.toggle('show'); $('#burger').classList.toggle('open'); };
+R.addEventListener('mousedown', e => { if (!e.target.closest('#menu, #burger')) hideMenu(); });
+R.querySelectorAll('[data-menu]').forEach(b => b.onclick = () => { hideMenu(); const k = b.dataset.menu; if (k === 'theme') openThemeEditor(); else if (k === 'history') openHistory(); else if (k === 'signout' && typeof doSignOut === 'function') doSignOut(); });
+
+function openThemeEditor() {
+  const saved = { ...theme }; let draft = { ...theme };
+  const presetKey = () => Object.keys(PRESETS).find(k => THEME_FIELDS.every(([f]) => PRESETS[k][f].toLowerCase() === draft[f].toLowerCase())) || null;
+  const body = () => `<button class="icon-btn x" data-cancel title="Close">✕</button><h3>Theme editor</h3><p class="lead">Pick a starting point, then fine-tune any color. Each person keeps their own theme.</p>
+    <div class="presets">${Object.entries(PRESETS).map(([k, pr]) => `<button class="preset ${presetKey() === k ? 'on' : ''}" data-preset="${k}"><div class="sw">${['bg', 'panel', 'accent', 'c-design', 'c-hold'].map(f => `<i style="background:${pr[f]}"></i>`).join('')}</div><b>${pr.name}</b></button>`).join('')}</div>
+    <div class="colors">${THEME_FIELDS.map(([f, label]) => `<label class="color-row"><input type="color" data-color="${f}" value="${draft[f]}"><span>${label}<small>${draft[f].toUpperCase()}</small></span></label>`).join('')}</div>
+    <div class="modal-foot"><button class="btn flat left" data-reset>Reset to default</button><button class="btn flat" data-cancel>Cancel</button><button class="btn primary" data-save>Save theme</button></div>`;
+  const wire = m => {
+    m.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => { draft = { ...draft, ...PRESETS[b.dataset.preset] }; delete draft.name; applyTheme(draft); m.innerHTML = body(); wire(m); });
+    m.querySelectorAll('[data-color]').forEach(inp => inp.oninput = () => { draft[inp.dataset.color] = inp.value; inp.nextElementSibling.querySelector('small').textContent = inp.value.toUpperCase(); applyTheme(draft); m.querySelectorAll('.preset').forEach(z => z.classList.toggle('on', z.dataset.preset === presetKey())); });
+    m.querySelector('[data-reset]').onclick = () => { draft = { ...PRESETS.night }; delete draft.name; applyTheme(draft); m.innerHTML = body(); wire(m); };
+    m.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => closeModal());
+    m.querySelector('[data-save]').onclick = () => { theme = { ...draft }; onCloseModal = null; closeModal(); saveTheme(); toast('Theme saved'); };
+  };
+  onCloseModal = () => applyTheme(saved);
+  openModal(body(), wire, true);
+}
+function openHistory() {
+  let q = '';
+  const body = () => {
+    const done = P.filter(p => p.done);
+    const items = done.slice().sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || '')).filter(p => !q || p.title.toLowerCase().includes(q));
+    const thisMonth = done.filter(p => p.doneAt && p.doneAt.slice(0, 7) === T.slice(0, 7)).length;
+    let h = `<button class="icon-btn x" data-close title="Close">✕</button><h3>Completed design history</h3><p class="lead">Every product marked Done, newest first.</p>
+      <div class="hist-stats"><div><b>${done.length}</b><span>finished in total</span></div><div><b>${thisMonth}</b><span>finished this month</span></div></div>
+      <input class="hsearch" type="search" id="h-q" placeholder="Search finished products…" value="${esc(q)}">`;
+    let month = '';
+    if (!items.length) h += `<div class="list-empty" style="margin-top:14px">${q ? 'Nothing matches.' : 'Nothing finished yet — it will show up here.'}</div>`;
+    for (const p of items) {
+      const ml = p.doneAt ? parseDay(p.doneAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Earlier';
+      if (ml !== month) { month = ml; h += `<div class="hist-month">${ml}</div>`; }
+      h += `<div class="hist-item" style="--pc:${p.color}"><span class="tick">✓</span><div class="grow"><div class="t">${esc(p.title)}</div><div class="s">Finished ${p.doneAt ? fmtDay(p.doneAt) : ''}${USERS[p.doneBy] ? ' by ' + USERS[p.doneBy].name : ''}${onCal(p) ? ' · on calendar ' + spanLabel(p) : ''}${USERS[p.by] ? ' · idea from ' + USERS[p.by].name : ''}</div></div><button class="btn small" data-restore="${p.id}">Restore</button></div>`;
+    }
+    return h;
+  };
+  const wire = m => {
+    m.querySelector('[data-close]').onclick = closeModal;
+    const qi = m.querySelector('#h-q'); qi.oninput = () => { q = qi.value.trim().toLowerCase(); const pos = qi.selectionStart; m.innerHTML = body(); wire(m); const n = m.querySelector('#h-q'); n.focus(); n.setSelectionRange(pos, pos); };
+    m.querySelectorAll('[data-restore]').forEach(b => b.onclick = () => { const p = byId(b.dataset.restore); p.done = false; if (!p.list && !onCal(p)) p.list = 'ideas'; render(); m.innerHTML = body(); wire(m); toast(`"${p.title}" is back`); });
+  };
+  openModal(body(), wire, true);
+}
+
+// ===================== full screen =====================
+const FS_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+const FS_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>';
+function setFs(on) { S.fs = on; W.classList.toggle('fs', on); $('#fs-btn').innerHTML = on ? FS_OFF : FS_ON; $('#fs-btn').title = on ? 'Exit full screen' : 'Full screen'; renderCal(); }
+$('#fs-btn').onclick = () => {
+  if (!S.fs) { const el = document.documentElement; if (el.requestFullscreen) el.requestFullscreen().catch(() => {}); else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen(); setFs(true); }
+  else { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); setFs(false); }
+};
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && S.fs) setFs(false); });
+let rz = null; addEventListener('resize', () => { if (!isOpen) return; clearTimeout(rz); rz = setTimeout(renderCal, 120); });
+
+// ===================== clicks =====================
+// Details open on a DOUBLE click (double tap on a phone) — a single click does nothing to a product.
+let lastTap = { key: null, t: 0 };
+function isDouble(key) {
+  const now = Date.now(), ok = lastTap.key === key && now - lastTap.t < 450;
+  lastTap = ok ? { key: null, t: 0 } : { key, t: now };
+  return ok;
+}
+R.addEventListener('click', e => {
+  if (justDragged) return;
+  const t = e.target;
+  if (t.closest('#modal, #menu, #burger, #fs-btn, .day-add, .adder input, #ctx')) return;
+  const done = t.closest('[data-done]'); if (done) { if (!ro()) markDone(byId(done.dataset.done)); return; }
+  const oa = t.closest('[data-open-adder]'); if (oa) { openAdders.add(oa.dataset.openAdder); renderList(oa.dataset.openAdder); return; }
+  const card = t.closest('[data-card]'); if (card) { if (isDouble('c' + card.dataset.card)) openProduct(card.dataset.card); return; }
+  const bar = t.closest('[data-bar]');
+  if (bar) {
+    const id = bar.dataset.bar;
+    if (isDouble('b' + id)) { openProduct(id); return; }
+    if (narrow()) { const p = byId(id), x = p.spans.find(s => s.id === bar.dataset.span); if (x && !(x.s <= S.selDay && x.e >= S.selDay)) { S.selDay = x.s; renderCal(); } }
+    return;
+  }
+  const day = t.closest('[data-day]');
+  if (day) { if (narrow()) { S.selDay = day.dataset.day; renderCal(); return; } if (!ro()) openDayAdder(day.dataset.day); }
+});
+$('#cal-prev').onclick = () => { S.view.setMonth(S.view.getMonth() - 1); renderCal(); };
+$('#cal-next').onclick = () => { S.view.setMonth(S.view.getMonth() + 1); renderCal(); };
+$('#cal-today').onclick = () => { S.view = new Date(today); S.view.setDate(1); S.selDay = T; renderCal(); };
+
+// ===================== drag: boxes, calendar products, stretching =====================
+let drag = null, justDragged = false;
+R.addEventListener('pointerdown', e => {
+  if (ro() || e.button > 0) return;
+  const src = e.target.closest('[data-card], [data-bar]');
+  if (!src || e.target.closest('button, input, textarea, select, #modal')) return;
+  const edge = e.target.closest('[data-edge]');
+  const d = { src, x: e.clientX, y: e.clientY, id: e.pointerId, touch: e.pointerType !== 'mouse', started: false, timer: null, alt: e.altKey,
+    pid: src.dataset.card || src.dataset.bar, spanId: src.dataset.span || null, kind: src.dataset.card ? 'card' : (edge ? 'edge-' + edge.dataset.edge : 'bar') };
+  if (d.touch) d.timer = setTimeout(() => { if (drag === d) startDrag(d.x, d.y); }, 260);
+  drag = d;
+});
+R.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  if (!drag.started) {
+    const m = Math.hypot(e.clientX - drag.x, e.clientY - drag.y);
+    if (drag.touch) { if (m > 10) { clearTimeout(drag.timer); drag = null; } return; }   // finger moved first → scrolling
+    if (m > 5) startDrag(e.clientX, e.clientY); else return;
+  }
+  moveDrag(e.clientX, e.clientY);
+});
+const endPtr = e => { if (!drag || (e && e.pointerId !== drag.id)) return; clearTimeout(drag.timer); if (drag.started) finishDrag(e.type === 'pointerup'); drag = null; };
+R.addEventListener('pointerup', endPtr);
+R.addEventListener('pointercancel', endPtr);
+R.addEventListener('touchmove', e => { if (drag && drag.started) e.preventDefault(); }, { passive: false });
+document.addEventListener('keydown', e => { if (!isOpen) return; if (e.key === 'Escape' && drag && drag.started) { drag.cancel = true; finishDrag(false); drag = null; } });
+
+function makeGhost(d) {
+  const p = byId(d.pid);
+  if (d.kind === 'card') { const r = d.src.getBoundingClientRect(); d.ghost = d.src.cloneNode(true); d.ghost.style.width = r.width + 'px'; d.offX = d.x - r.left; d.offY = d.y - r.top; }
+  else { d.ghost = document.createElement('div'); d.ghost.className = 'card'; d.ghost.style.cssText = `--pc:${p.color};width:220px`; d.ghost.innerHTML = `<div class="title">${esc(p.title)}</div>`; d.offX = 30; d.offY = 18; }
+  d.ghost.classList.add('drag-ghost'); const lc = getComputedStyle(d.src).getPropertyValue('--lc'); if (lc) d.ghost.style.setProperty('--lc', lc);
+  W.appendChild(d.ghost);
+}
+const cloneSpans = p => JSON.parse(JSON.stringify(p.spans || []));
+function startDrag(x, y) {
+  const d = drag, p = byId(d.pid); d.started = true;
+  d.orig = { list: p.list, idx: P.indexOf(p), spans: cloneSpans(p) };
+  d.grabDay = dayAt(d.x, d.y);
+  if (d.kind === 'bar' && d.alt) {   // Alt/Option-drag = drag a copy
+    const x0 = p.spans.find(s => s.id === d.spanId); const c = sp(x0.s, x0.e); p.spans.push(c); d.spanId = c.id; d.copy = true;
+  }
+  d.base = cloneSpans(p);   // what the calendar looks like before this drag (plus the copy, for Alt-drag)
+  d.phH = d.kind === 'card' ? d.src.offsetHeight : 56;
+  if (d.kind === 'card') {
+    makeGhost(d);
+    const body = d.src.closest('[data-drop-list]');
+    if (body) {
+      // the box lifts out and its spot becomes the gap — so the gap is always where it will land
+      let nx = d.src.nextElementSibling; while (nx && !nx.dataset.card) nx = nx.nextElementSibling;
+      const ph = document.createElement('div'); ph.className = 'placeholder'; ph.style.minHeight = d.phH + 'px';
+      body.insertBefore(ph, d.src); body.classList.add('drop-on');
+      d.target = { type: 'list', list: body.dataset.dropList, before: nx ? nx.dataset.card : null };
+    }
+    d.src.style.display = 'none';
+  }
+  if (navigator.vibrate) try { navigator.vibrate(8); } catch {}
+  moveDrag(x, y);
+}
+function clearMarks() { R.querySelectorAll('.drop-on').forEach(z => z.classList.remove('drop-on')); R.querySelectorAll('.placeholder').forEach(z => z.remove()); }
+const sameSpans = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function putSpans(p, spans) { if (sameSpans(p.spans, spans)) return false; p.spans = spans; return true; }
+function moveDrag(x, y) {
+  const d = drag, p = byId(d.pid);
+  if (d.ghost) { d.ghost.style.left = (x - d.offX) + 'px'; d.ghost.style.top = (y - d.offY) + 'px'; }
+  const edge = 60; if (y < edge) W.scrollBy(0, -12); else if (y > innerHeight - edge) W.scrollBy(0, 12);
+  const day = dayAt(x, y);
+  // stretching one end of a calendar product
+  if (d.kind === 'edge-l' || d.kind === 'edge-r') {
+    if (!day) return;
+    const ns = cloneSpans(p), s = ns.find(z => z.id === d.spanId);
+    if (d.kind === 'edge-l') s.s = day > s.e ? s.e : day; else s.e = day < s.s ? s.s : day;
+    if (putSpans(p, ns)) renderCal(); d.target = { type: 'cal' }; return;
+  }
+  const under = R.elementFromPoint(x, y);
+  if (under && under.closest('.placeholder')) return;   // already showing this gap — keep steady
+  const listPanel = under && under.closest('.list');
+  if (listPanel) {
+    if (putSpans(p, d.base.map(s => ({ ...s })))) renderCal();   // calendar goes back to how it was
+    if (!d.ghost) makeGhost(d);
+    d.ghost.style.display = '';
+    const body = listPanel.querySelector('[data-drop-list]');
+    const cards = [...body.querySelectorAll('[data-card]')].filter(c => c.dataset.card !== d.pid);
+    const oneCol = cards.length && cards[0].getBoundingClientRect().width > body.clientWidth * 0.6;
+    let before = null;
+    for (const c of cards) {
+      const r = c.getBoundingClientRect();
+      // one column: top half = above, bottom half = below · grid (Ideas/On Hold): left half = before, right half = after
+      if (y < r.top || (y <= r.bottom && (oneCol ? y < r.top + r.height / 2 : x < r.left + r.width / 2))) { before = c; break; }
+    }
+    const t = { type: 'list', list: body.dataset.dropList, before: before ? before.dataset.card : null };
+    if (JSON.stringify(t) === JSON.stringify(d.target)) return;
+    clearMarks(); d.target = t; body.classList.add('drop-on');
+    const ph = document.createElement('div'); ph.className = 'placeholder'; ph.style.minHeight = (d.phH || 56) + 'px';
+    if (before) body.insertBefore(ph, before); else body.insertBefore(ph, body.querySelector('.list-empty'));
+    return;
+  }
+  clearMarks();
+  if (day) {
+    // over the calendar: it moves there live (keeps its length)
+    const ns = d.base.map(s => ({ ...s }));
+    if (d.kind === 'card') {
+      const len = ns.length ? dDiff(ns[0].s, ns[0].e) : 0;
+      ns.push({ id: 'drop', s: day, e: dAdd(day, len) });   // a box dropped on the calendar adds a time
+    } else {
+      const o = d.base.find(s => s.id === d.spanId), s = ns.find(z => z.id === d.spanId);
+      const delta = dDiff(d.grabDay || o.s, day);
+      s.s = dAdd(o.s, delta); s.e = dAdd(o.e, delta);
+    }
+    if (putSpans(p, ns)) renderCal();
+    if (d.ghost) d.ghost.style.display = 'none';
+    d.target = { type: 'cal' };
+    return;
+  }
+  if (putSpans(p, d.base.map(s => ({ ...s })))) renderCal();
+  if (d.ghost) d.ghost.style.display = '';
+  d.target = null;
+}
+function finishDrag(drop) {
+  const d = drag, p = byId(d.pid);
+  clearMarks(); if (d.ghost) d.ghost.remove(); d.src.style.display = '';
+  justDragged = true; setTimeout(() => { justDragged = false; }, 0);
+  const undoAll = () => { P.splice(P.indexOf(p), 1); P.splice(d.orig.idx, 0, p); p.list = d.orig.list; p.spans = d.orig.spans.map(s => ({ ...s })); };
+  if (!drop || d.cancel || !d.target) { undoAll(); render(); return; }
+  if (d.target.type === 'cal') {
+    const added = p.spans.find(s => s.id === 'drop'); if (added) added.id = uid();
+    render();
+    if (!sameSpans(p.spans, d.orig.spans)) {
+      const s = added || p.spans.find(z => z.id === d.spanId);
+      toast(added ? `On the calendar: ${fmtRange(s.s, s.e)} — drag its edge to stretch it` : (d.copy ? `Copied to ${fmtRange(s.s, s.e)}` : `${p.title}: ${fmtRange(s.s, s.e)}`), undoAll);
+    }
+    return;
+  }
+  // into a list: list-to-list moves it; calendar-to-list copies it (it stays on the calendar too)
+  P.splice(P.indexOf(p), 1); p.list = d.target.list;
+  const bp = d.target.before && byId(d.target.before);
+  let at = (bp && bp.list === p.list) ? P.indexOf(bp) : -1;
+  if (at < 0 && bp) at = P.findIndex(x => x.list === p.list && !x.done);   // dropped among today's automatic ones → top of the hand-added ones
+  if (at < 0) { let last = -1; P.forEach((x, i) => { if (x.list === p.list && !x.done) last = i; }); at = last + 1; }
+  P.splice(at, 0, p);
+  render();
+  const L = LISTS[p.list];
+  if (d.kind === 'bar' && d.orig.list !== p.list) toast(`${d.orig.list ? 'Moved' : 'Copied'} to ${L.name} — still on the calendar too`, undoAll);
+  else if (d.orig.list !== p.list) toast(`Moved to ${L.name}`, undoAll);
+  else if (L.ranked) toast(`Now priority #${inList(p.list).indexOf(p) + 1}`, undoAll);
+}
+
+
+
+    // ---------------- cloud sync: planner/products/{id}, planner/themes/{name} ----------------
+    let synced = {}, saveTimer = null, ready = false, unsub = null, pendingRemote = null, loadErr = false;
+    const CACHE_KEY = 'pq_planner_cache_v1', THEME_KEY = 'pq_planner_theme_v1';
+    const canon = p => ({ id: p.id, title: String(p.title || ''), notes: String(p.notes || ''), color: p.color || PALETTE[0], list: p.list || '',
+      spans: (p.spans || []).filter(x => x && x.s && x.e).map(x => ({ id: String(x.id), s: x.s, e: x.e })), by: p.by || '',
+      done: !!p.done, doneAt: p.doneAt || '', doneBy: p.doneBy || '', ord: Number(p.ord) || 0 });
+    const fromCloud = r => { const c = canon({ ...r, spans: Array.isArray(r.spans) ? r.spans : Object.values(r.spans || {}) }); return { ...c, list: c.list || null }; };
+    const key = p => JSON.stringify(canon(p));
+    function scheduleSave() {
+      if (ro() || !ready) return;
+      clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 350);
+    }
+    function flushSave() {
+      clearTimeout(saveTimer); saveTimer = null;
+      if (ro() || !ready || !window._fb || !_fbDb) return;
+      P.forEach((p, i) => { p.ord = i; });
+      const updates = {}, seen = new Set();
+      for (const p of P) { seen.add(p.id); const k = key(p); if (synced[p.id] !== k) { updates[p.id] = canon(p); synced[p.id] = k; } }
+      for (const id of Object.keys(synced)) if (!seen.has(id)) { updates[id] = null; delete synced[id]; }
+      cache();
+      if (!Object.keys(updates).length) return;
+      window._fb.dbMod.update(window._fb.ref(_fbDb, 'planner/products'), updates)
+        .catch(e => { console.warn('planner save failed', e); toast("Couldn't save — check the connection. Your changes are kept on this screen."); });
+    }
+    function cache() { try { localStorage.setItem(CACHE_KEY, JSON.stringify(P.map(canon))); } catch {} }
+    function applyRemote(obj) {
+      if (drag && drag.started) { pendingRemote = obj; return; }
+      const list = Object.values(obj || {}).filter(r => r && r.id).map(fromCloud);
+      const local = new Map(P.map(p => [p.id, p]));
+      const out = [];
+      for (const r of list) {
+        const l = local.get(r.id);
+        if (l && synced[r.id] !== undefined && key(l) !== synced[r.id]) { out.push(l); continue; }   // unsaved change here wins (it's on its way up)
+        synced[r.id] = key(r);
+        if (l) { for (const k of Object.keys(l)) delete l[k]; Object.assign(l, r); out.push(l); } else out.push(r);
+      }
+      for (const l of P) if (!obj || !obj[l.id]) { if (synced[l.id] === undefined) out.push(l); else delete synced[l.id]; }   // new here & not up yet → keep; deleted elsewhere → drop
+      out.sort((a, b) => (a.ord || 0) - (b.ord || 0));
+      P = out; ready = true; R.getElementById('pl-err').classList.remove('show');
+      cache(); render();
+    }
+    function start() {
+      stop();
+      try { const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); if (Array.isArray(c) && !P.length) P = c.map(fromCloud); } catch {}
+      try { const t = JSON.parse(localStorage.getItem(THEME_KEY + ':' + me) || 'null'); if (t && t.bg) { theme = { ...PRESETS.night, ...t }; } else theme = { ...PRESETS.night }; } catch {}
+      applyTheme(theme); render();
+      if (!window._fb || !_fbDb) return;
+      unsub = window._fb.onValue(window._fb.ref(_fbDb, 'planner/products'), snap => applyRemote(snap.val() || {}), err => {
+        console.warn('planner load failed', err);
+        const e = R.getElementById('pl-err'); e.textContent = "Can't reach the planner data right now (check the connection, or the Firebase rules for this login)."; e.classList.add('show');
+      });
+      window._fb.get(window._fb.ref(_fbDb, 'planner/themes/' + me)).then(s => {
+        const t = s && s.val && s.val(); if (t && t.bg) { theme = { ...PRESETS.night, ...t }; applyTheme(theme); try { localStorage.setItem(THEME_KEY + ':' + me, JSON.stringify(theme)); } catch {} }
+      }).catch(() => {});
+    }
+    function stop() { if (saveTimer) flushSave(); if (unsub) { try { unsub(); } catch {} unsub = null; } }
+    function saveTheme() {
+      try { localStorage.setItem(THEME_KEY + ':' + me, JSON.stringify(theme)); } catch {}
+      if (window._fb && _fbDb) window._fb.set(window._fb.ref(_fbDb, 'planner/themes/' + me), { ...theme }).catch(() => toast("Theme kept on this device — couldn't save it to the cloud."));
+    }
+    // apply anything that arrived while a box was being dragged
+    R.addEventListener('pointerup', () => setTimeout(() => { if (pendingRemote && !(drag && drag.started)) { const o = pendingRemote; pendingRemote = null; applyRemote(o); } }, 30));
+    setInterval(() => { if (isOpen) { const before = T; refreshToday(); if (T !== before) render(); } }, 5 * 60 * 1000);
+    R.getElementById('pl-back').onclick = () => window.Planner.close();
+    setFs(false);
+    api = {
+      open(user, opts) {
+        const changed = me !== user;
+        me = user; readOnly = !!(opts && opts.readOnly);
+        if (changed) { P = []; synced = {}; ready = false; openAdders.clear(); }
+        start();
+      },
+      close() { stop(); if (S.fs) { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); setFs(false); } closeModal(); hideMenu(); hideCtx(); },
+    };
+  }
+
+  window.Planner = {
+    open(user, opts) {
+      mount();
+      if (!booted) { booted = true; boot(); }
+      isOpen = true; host.classList.add('open'); document.documentElement.classList.add('planner-open');
+      api.open(user, opts || {});
+    },
+    close() {
+      if (!host) return;
+      if (api) api.close();
+      isOpen = false; host.classList.remove('open'); document.documentElement.classList.remove('planner-open');
+    },
+    get isOpen() { return isOpen; },
+  };
+
+  // Collin: a "Planner" item in the menu (view only). Hidden for every other account by .nav-collin-only.
+  try {
+    const nav = document.querySelector('.sidebar .nav');
+    if (nav) {
+      const item = document.createElement('div');
+      item.className = 'nav-item nav-collin-only'; item.dataset.mobile = 'show'; item.id = 'nav-planner';
+      item.innerHTML = '<span>Planner</span><span class="nav-item-num">view</span>';
+      const settings = nav.querySelector('.nav-item[data-view="import"]');
+      nav.insertBefore(item, settings || null);
+      item.addEventListener('click', () => window.Planner.open('collin', { readOnly: true }));
+    }
+  } catch (e) { console.warn('planner menu item', e); }
+})();
 </script>
 </body>
 </html>
