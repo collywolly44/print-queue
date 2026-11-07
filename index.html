@@ -3308,7 +3308,7 @@ body:not(.mode-mobile) .nav-paint-mobile-only { display: none !important; }
 .edit-active-list { display: flex; flex-direction: column; gap: 6px; }
 .edit-active-row {
   display: grid;
-  grid-template-columns: 80px 1fr auto;
+  grid-template-columns: 80px 1fr auto auto;
   gap: 12px;
   align-items: center;
   background: var(--panel);
@@ -6452,7 +6452,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 111;
+const APP_BUILD = 112;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -6827,6 +6827,72 @@ function cleanupFulfilledCustomOrders() {
     cleaned++;
   }
   return cleaned;
+}
+
+// v1.112: mark a custom order shipped BY HAND. The automatic close above only
+// happens once stock covers the order AFTER every older ShipStation order has
+// claimed its parts — so a custom order can wait forever. This takes its parts
+// out of stock right now (never below 0), logs it as "Custom order shipped",
+// and closes it the same way the automatic close does.
+function isCustomOrderGroup(customer, orderId) {
+  return (state.orderEdits || []).some(e => e && e.kind === 'add' && e.custom !== false
+    && (e.customer || '') === (customer || '') && (e.orderId || '') === (orderId || ''));
+}
+function shipCustomOrder(customer, orderId) {
+  const gkey = (c, o) => `${c || ''}||${o || ''}`;
+  const key = gkey(customer, orderId);
+  const rows = state.orders.filter(o => gkey(o.customer, o.orderId) === key);
+  if (!rows.length || !isCustomOrderGroup(customer, orderId)) { toast('That custom order is already closed'); return; }
+  const partsOf = (sku) => { const lib = state.library[sku]; return (lib && Array.isArray(lib.parts)) ? lib.parts : []; };
+  const demand = {};
+  for (const o of rows) for (const p of partsOf(o.sku)) {
+    const name = (typeof p === 'string') ? p : (p && p.name) || '';
+    if (!name) continue;
+    const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
+    demand[name] = (demand[name] || 0) + (Number(o.qty) || 1) * per;
+  }
+  const kinds = Object.keys(demand).length;
+  const units = Object.values(demand).reduce((a, b) => a + b, 0);
+  const short = Object.entries(demand).filter(([n, need]) => Number(state.inventory[n] || 0) < need).map(([n]) => n);
+  const noRecipe = rows.filter(o => partsOf(o.sku).length === 0).map(o => o.sku);
+  const what = rows.map(o => `${o.sku} ×${o.qty}`).join(', ');
+  confirmModal({
+    title: 'Mark custom order shipped?',
+    text: `${customer || 'Custom order'} — ${what}. This takes ${units} part${units === 1 ? '' : 's'} (${kinds} kind${kinds === 1 ? '' : 's'}) out of stock and closes the order.`
+      + (short.length ? ` ${short.length} of them ${short.length === 1 ? "doesn't" : "don't"} have enough in stock and will go to 0 (${short.slice(0, 4).join(', ')}${short.length > 4 ? '…' : ''}).` : '')
+      + (noRecipe.length ? ` ${noRecipe.join(', ')} has no parts list, so nothing is taken out for it.` : ''),
+    onConfirm: () => {
+      const nowIso = new Date().toISOString();
+      for (const [name, need] of Object.entries(demand)) {
+        const before = Number(state.inventory[name] || 0);
+        const take = Math.min(need, Math.max(0, before));
+        if (take <= 0) continue;
+        _invDepositEvent(name, -take, 'custom-order-fulfilled');
+        logInventoryChange(name, before, Number(state.inventory[name] || 0), 'custom-order-fulfilled');
+      }
+      if (!Array.isArray(state.completedOrders)) state.completedOrders = [];
+      if (!Array.isArray(state.shippedHistory)) state.shippedHistory = [];
+      for (const o of rows) {
+        state.shippedHistory.push({ uid: _uniqueId(), at: nowIso, sku: o.sku || '', item: o.item || '', customer: o.customer || '', qty: Number(o.qty) || 1 });
+        for (const p of partsOf(o.sku)) {
+          const name = (typeof p === 'string') ? p : (p && p.name) || '';
+          if (!name) continue;
+          const per = (typeof p === 'string') ? 1 : Math.max(1, Math.floor(Number(p.qty) || 1));
+          state.completedOrders.push({ uid: _uniqueId(), at: nowIso, partName: name, qty: (Number(o.qty) || 1) * per, sku: o.sku,
+            customer: o.customer || '', originalOrderDate: o.date || nowIso, kind: 'print',
+            printType: (typeof p === 'string') ? 'resin' : (p.type === 'fdm' ? 'fdm' : 'resin'), synthetic: true });
+        }
+      }
+      _tombstoneEdits(state.orderEdits.filter(e => e && gkey(e.customer, e.orderId) === key).map(e => e.id));
+      state.orderEdits = state.orderEdits.filter(e => !(e && gkey(e.customer, e.orderId) === key));
+      state.orders = state.orders.filter(o => gkey(o.customer, o.orderId) !== key);
+      save();
+      try { renderQueue(); renderSidebarCounts(); renderOrders(); renderEditOrders(); renderInventory(); } catch (e) { console.warn(e); }
+      toast(`✓ ${customer || 'Custom order'} shipped — ${units} part${units === 1 ? '' : 's'} taken out of stock`);
+    },
+  });
+  const btn = document.getElementById('modal-confirm');
+  btn.textContent = 'Mark shipped'; btn.classList.remove('btn-danger'); btn.classList.add('btn-primary');
 }
 
 // Log a manual inventory change to state.inventoryHistory. Use BEFORE
@@ -10914,7 +10980,7 @@ function renderOrders() {
         <div class="lib-cell lib-name">${escapeHtml(o.item)}</div>
         <div class="lib-cell">${escapeHtml(o.customer)}</div>
         <div class="lib-cell"><span class="qty-badge ${o.qty>1?'multi':''}">×${o.qty}</span></div>
-        <div class="lib-cell"></div>
+        <div class="lib-cell">${isCustomOrderGroup(o.customer, o.orderId) ? `<button class="btn btn-sm" data-ship-custom="${escapeAttr(o.customer || '')}|${escapeAttr(o.orderId || '')}" title="Custom order — mark it shipped">Ship</button>` : ''}</div>
       </div>`;
   });
   html += '</div>';
@@ -10922,6 +10988,7 @@ function renderOrders() {
     html += `<div style="margin-top:12px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:11px;">Showing first 500 of ${filtered.length.toLocaleString()} matches.</div>`;
   }
   container.innerHTML = html;
+  container.querySelectorAll('[data-ship-custom]').forEach(b => b.addEventListener('click', () => { const [c, id] = b.dataset.shipCustom.split('|'); shipCustomOrder(c, id); }));
 }
 
 // True while renderInventory is swapping the table's HTML. Removing a focused
@@ -12669,6 +12736,7 @@ function renderEditOrdersResults() {
     html += `
       <div class="edit-action-add">
         <button class="btn btn-sm" data-edit-add="${escapeAttr(g.orderId || '')}|${escapeAttr(g.customer || '')}|${escapeAttr(g.date || '')}">+ Add line to this order</button>
+        ${isCustomOrderGroup(g.customer, g.orderId) ? `<button class="btn btn-sm btn-primary" data-ship-custom="${escapeAttr(g.customer || '')}|${escapeAttr(g.orderId || '')}">✓ Mark shipped</button>` : ''}
       </div>`;
     html += `</div>`;
   }
@@ -12682,6 +12750,9 @@ function renderEditOrdersResults() {
   });
   root.querySelectorAll('[data-edit-remove]').forEach(btn => {
     btn.addEventListener('click', () => doRemoveLine(btn.dataset.editRemove));
+  });
+  root.querySelectorAll('[data-ship-custom]').forEach(btn => {
+    btn.addEventListener('click', () => { const [c, id] = btn.dataset.shipCustom.split('|'); shipCustomOrder(c, id); });
   });
   root.querySelectorAll('[data-edit-add]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -12710,10 +12781,14 @@ function renderEditActiveList() {
       <div class="edit-active-row">
         <div class="edit-active-kind">${escapeHtml(e.kind)}</div>
         <div class="edit-active-desc">${escapeHtml(desc)}</div>
+        ${e.kind === 'add' && e.custom !== false ? `<button class="edit-active-undo" data-ship-custom="${escapeAttr(e.customer || '')}|${escapeAttr(e.orderId || '')}" title="Take its parts out of stock and close it">Mark shipped</button>` : ''}
         <button class="edit-active-undo" data-undo="${escapeAttr(e.id)}">Undo</button>
       </div>`;
   }
   root.innerHTML = html;
+  root.querySelectorAll('[data-ship-custom]').forEach(btn => {
+    btn.addEventListener('click', () => { const [c, id] = btn.dataset.shipCustom.split('|'); shipCustomOrder(c, id); });
+  });
   root.querySelectorAll('[data-undo]').forEach(btn => {
     btn.addEventListener('click', () => {
       const edit = (state.orderEdits || []).find(x => x.id === btn.dataset.undo);
