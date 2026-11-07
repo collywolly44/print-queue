@@ -6493,7 +6493,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 141;
+const APP_BUILD = 142;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -19665,7 +19665,7 @@ function finishDrag(drop) {
     // Collin pastes it once and it lives in Firebase at ai/key (readable only by Quaid + Collin). Simple math is
     // answered locally for free. Monthly spend is tracked in ai/usage/YYYY-MM and capped by ai/settings/cap.
     var AI_MODES = {   // $ per million tokens
-      fast: { model: 'claude-sonnet-5-5', name: 'Sonnet 5.5', max: 8000, thinking: { type: 'between_tools' }, effort: 'low', price: { in: 2, cacheW: 2.5, cacheR: 0.1, out: 10 } },
+      fast: { model: 'claude-sonnet-5-5', name: 'Sonnet 5.5', max: 2000, thinking: { type: 'between_tools' }, effort: 'low', price: { in: 2, cacheW: 2.5, cacheR: 0.1, out: 10 } },
       deep: { model: 'claude-opus-5-5', name: 'Opus 5.5', max: 32000, thinking: { type: 'adaptive' }, effort: 'xhigh', price: { in: 4, cacheW: 5, cacheR: 0.2, out: 20 } },
     };
     var aiKey = null, aiCap = 50, aiUsage = { cost: 0, n: 0 }, aiLoaded = false, aiBusy = false, aiHard = false, aiChat = [], aiImg = null, aiRec = null, aiAbort = null;
@@ -19680,23 +19680,25 @@ About the business:
 - Product codes look like GA0800, GA0448, V00 519. Variants are often separate color listings (OD green, black, tan/desert, arctic white, enemy blue).
 - Parts are made on FDM printers and on resin printers (Elegoo Mars 4 / Saturn 3 class), then painted and assembled. Small details and thin parts usually go to resin; bigger structural parts to FDM.
 
-How to answer:
-- Lead with the direct answer in the first line (a number, a yes/no, or a one-sentence recommendation). Then give the supporting detail.
-- Be concrete: give dimensions in millimeters, show the scale conversion (real size ÷ 12, or ÷ 18), and give actual numbers for clearances, wall thickness, angles, print orientation and settings.
-- Useful defaults unless told otherwise: FDM 0.4 mm nozzle, 0.12–0.2 mm layers, minimum practical wall about 0.8 mm, sliding/pin clearance 0.2–0.3 mm per side, print-in-place gaps about 0.4 mm. Resin: walls down to about 0.5 mm, clearances 0.1–0.15 mm, hollow and drain larger parts, angle parts 30–45° to reduce suction and supports.
-- For math, show the short working so it can be checked, and double-check arithmetic. Use the right units.
-- For design problems, think about printability, strength where kids/collectors handle the part, how it attaches to the figure or vehicle, paint access, and part count / assembly time. Offer 2–3 options with trade-offs when there is a real choice.
-- If a photo is attached, say briefly what you see first, then answer.
-- Keep it scannable: short paragraphs, bullets, bold for the key numbers. Use small headings only for longer answers. No filler, no repeating the question.
-- If something depends on information you don't have (exact figure, printer, material), state your assumption and continue rather than stopping to ask — ask one short question at the end only if it truly changes the answer.
-- If you're not sure about a real-world dimension, say so and give your best estimate with how to verify it.`;
+How to answer — keep it SIMPLE:
+- Give the answer, not the work. Never show calculations, formulas, conversions or step-by-step reasoning (no "6 ft 2 in = 1880 mm ÷ 12 = …"). Just the result.
+- Simple or math questions: one line with the answer and its unit (e.g. "157 mm"). Nothing else.
+- Design questions: the recommendation in one sentence, then at most 3 short bullets with the key numbers he needs (dimensions in mm, clearances, wall thickness, orientation). Only offer options if there's a real choice, and then just 2, one line each.
+- Aim for under 60 words. Only go longer if he asks for detail or an explanation.
+- No headings, no tables unless he asks, no intro, no recap, no repeating the question, no "let me know if…".
+- Use **bold** for the key number.
+- Useful defaults (use them, don't mention them): FDM 0.4 mm nozzle, 0.12–0.2 mm layers, minimum wall about 0.8 mm, sliding/pin clearance 0.2–0.3 mm per side, print-in-place gaps about 0.4 mm. Resin: walls down to about 0.5 mm, clearances 0.1–0.15 mm, hollow and drain larger parts, angle parts 30–45°. Scale: 1:12 divides real size by 12, 1:18 by 18.
+- Double-check numbers silently before answering.
+- If a photo is attached, answer about it directly (a few words on what you see only if it matters).
+- If you'd need to assume something (figure, printer, material), assume the most likely and answer; mention the assumption in a few words only if it changes the answer.
+- If unsure about a real-world dimension, give your best estimate and add "(estimate)".`;
 
     // ---------- simple math answered locally (free, instant) ----------
     function aiLocalMath(t) {
       const fmt = v => Math.abs(v) >= 1000 ? v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : String(+v.toFixed(4));
       const s = t.toLowerCase().replace(/[,$?]/g, '').replace(/×/g, '*').replace(/÷/g, '/').trim();
       let m;
-      if ((m = /^(?:what(?:'?s| is)\s+)?([\d.]+)\s*%\s*of\s*([\d.]+)$/.exec(s))) { const v = +m[1] / 100 * +m[2]; return { v: fmt(v), w: `${m[1]}% × ${m[2]} = ${fmt(v)}` }; }
+      if ((m = /^(?:what(?:'?s| is)\s+)?([\d.]+)\s*%\s*of\s*([\d.]+)$/.exec(s))) { const v = +m[1] / 100 * +m[2]; return { v: (/\$/.test(t) ? '$' : '') + fmt(/\$/.test(t) ? Math.round(v * 100) / 100 : v), w: `${m[1]}% × ${m[2]} = ${fmt(v)}` }; }
       if ((m = /^(?:what(?:'?s| is)\s+)?1\s*:\s*(\d+)\s*(?:scale)?\s*(?:of|for)?\s*(?:a\s+)?(\d+)\s*(?:ft|foot|feet|')\s*(?:(\d+)\s*(?:in|inch|inches|")?)?[a-z\s]*(?:in\s+mm)?$/.exec(s))) {
         const inches = +m[2] * 12 + (+m[3] || 0), mm = inches * 25.4 / +m[1];
         return { v: mm.toFixed(1) + ' mm', w: `${m[2]} ft ${m[3] || 0} in = ${inches} in = ${(inches * 25.4).toFixed(0)} mm ÷ ${m[1]} = ${mm.toFixed(1)} mm (${(mm / 25.4).toFixed(2)} in)` };
@@ -19837,7 +19839,7 @@ How to answer:
       }
       box.innerHTML = aiChat.map((m, i) => m.role === 'user'
         ? `<div class="ai-msg me">${m.img ? `<img class="ai-uimg" src="${m.img.url}" alt="">` : (m.had ? '<span class="ai-had">📷 photo</span>' : '')}${esc(m.text)}</div>`
-        : `<div class="ai-msg bot${m.err ? ' err' : ''}" data-i="${i}">${m.local ? `<div class="ai-ans">${esc(m.local.v)}</div><div class="ai-work">${esc(m.local.w)}</div>` : (m.text ? aiMd(m.text) : '')}${m.pending ? `<span class="ai-typing"><i></i><i></i><i></i>${m.thinking ? (m.deep ? '<em>thinking it through…</em>' : '') : ''}</span>` : ''}
+        : `<div class="ai-msg bot${m.err ? ' err' : ''}" data-i="${i}">${m.local ? `<div class="ai-ans">${esc(m.local.v)}</div>` : (m.text ? aiMd(m.text) : '')}${m.pending ? `<span class="ai-typing"><i></i><i></i><i></i>${m.thinking ? (m.deep ? '<em>thinking it through…</em>' : '') : ''}</span>` : ''}
             ${!m.pending && !m.err ? `<div class="ai-acts">${!m.local && !ro() ? '<button data-ai-idea>＋ Save as an idea</button>' : ''}<button data-ai-copy>Copy</button>${m.deep ? '<span class="ai-cost">🧠 deep</span>' : ''}</div>` : ''}</div>`).join('');
       box.querySelectorAll('[data-ai-copy]').forEach(b => b.onclick = () => { const m = aiChat[+b.closest('[data-i]').dataset.i]; const t = m.local ? m.local.v : m.text; try { navigator.clipboard.writeText(t); toast('Copied'); } catch { toast("Couldn't copy"); } });
       box.querySelectorAll('[data-ai-idea]').forEach(b => b.onclick = () => aiSaveIdea(+b.closest('[data-i]').dataset.i));
@@ -20009,7 +20011,7 @@ How to answer:
       const img = aiImg; aiImg = null; aiAttRender();
       aiChat.push({ role: 'user', text: t || '(photo)', img });
       const local = !img && aiLocalMath(t);
-      if (local) { aiChat.push({ role: 'assistant', text: local.v + '\n' + local.w, local }); aiSaveChat(); aiRender(); return; }
+      if (local) { aiChat.push({ role: 'assistant', text: local.v, local }); aiSaveChat(); aiRender(); return; }
       try { await aiLoad(true); } catch {}   // fresh key / limit / this month's spend (another device may have used some)
       if (!aiKey) { aiChat.push({ role: 'assistant', err: true, text: pnlEdit() ? 'Add your Anthropic API key first (⚙ at the top of this window).' : 'Collin needs to add the AI key before design questions work. Simple math works now.' }); aiSaveChat(); aiRender(); return; }
       if (aiUsage.cost >= aiCap) { aiChat.push({ role: 'assistant', err: true, text: `This month's AI limit ($${aiCap}) is used up — it resets on the 1st.${pnlEdit() ? ' You can raise it in ⚙ settings.' : ''}` }); aiSaveChat(); aiRender(); return; }
