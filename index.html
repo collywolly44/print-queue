@@ -3967,6 +3967,7 @@ body:not(.mode-mobile) .nav-paint-mobile-only { display: none !important; }
 .boot-name {
   font-family: 'Bebas Neue', sans-serif;
   font-size: 38px;
+  text-align: center; white-space: nowrap; font-size: min(38px, 8.6vw);
   letter-spacing: 0.12em;
   color: var(--ink);
 }
@@ -5487,7 +5488,7 @@ html.planner-open, html.planner-open body { overflow: hidden !important; }
 <div class="boot-overlay" id="boot-overlay">
   <div class="boot-center">
     <img class="boot-icon" src="icon.png" alt="" onerror="this.style.display='none'">
-    <div class="boot-name">PRINT QUEUE</div>
+    <div class="boot-name">GRIDIRON STUDIOS</div>
     <div class="boot-sub">Workshop · Cloud</div>
     <div class="boot-progress">
       <div class="boot-progress-fill"></div>
@@ -6493,7 +6494,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 146;
+const APP_BUILD = 147;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
