@@ -6494,7 +6494,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 148;
+const APP_BUILD = 149;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -18777,11 +18777,15 @@ function finishDrag(drop) {
       // v1.138: On Hold is gone — anything still parked there goes back to Ideas (bottom of Mark's ranking unless it already had a spot)
       for (const p of P) if (p.list === 'hold' && !p.trashed) { p.list = 'ideas'; if (p.rank === undefined || p.rank === null || p.rank === '') p.rank = maxRank() + 1; }
       for (const p of inList('ideas')) if (p.rank === undefined || p.rank === null || p.rank === '') p.rank = rk(p);
+      // v1.149: also cards put straight onto the calendar (not just ones in the Design Queue list): if one isn't Done
+      // and its last block ended in the past week, that block stretches to today. Only that card changes — nothing else moves.
+      const wk = dAdd(T, -7);
       for (const p of P) {
-        if (p.done || p.trashed || p.list !== 'design') continue;
-        if (!p.spans.length) { p.spans.push(sp(T)); continue; }
+        if (p.done || p.trashed || p.list === 'ideas') continue;
+        if (p.list === 'design' && !p.spans.length) { p.spans.push(sp(T)); continue; }
+        if (!p.spans.length) continue;
         const last = p.spans.reduce((a, z) => (z.e > a.e ? z : a), p.spans[0]);
-        if (last.e < T) last.e = T;
+        if (last.e < T && (p.list === 'design' || last.e >= wk)) last.e = T;
       }
       const cut = dAdd(T, -30);
       const old = P.filter(p => p.trashed && p.trashed.slice(0, 10) < cut);
