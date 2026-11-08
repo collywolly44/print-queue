@@ -6494,7 +6494,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 147;
+const APP_BUILD = 148;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -18018,7 +18018,8 @@ const fmtDay = s => parseDay(s).toLocaleDateString('en-US', { month: 'short', da
 const fmtRange = (a, b) => a === b ? fmtDay(a) : `${fmtDay(a)} – ${fmtDay(b)}`;
 const nextColor = () => PALETTE[(P.length + colorTurn++) % PALETTE.length];
 const sp = (s, e) => ({ id: uid(), s, e: e || s });
-const mk = (title, extra = {}) => ({ id: uid(), title, notes: '', color: nextColor(), list: null, spans: [], by: me, ...extra });
+var createdHere = new Set();   // v1.148: products made on this device that aren't in the cloud yet
+const mk = (title, extra = {}) => { const p = { id: uid(), title, notes: '', color: nextColor(), list: null, spans: [], by: me, ...extra }; createdHere.add(p.id); return p; };
 
 let P = [];
 const S = { view: (() => { const d = new Date(today); d.setDate(1); return d; })(), selDay: T, fs: false };
@@ -18648,7 +18649,14 @@ function finishDrag(drop) {
 
     // ---------------- cloud sync: planner/products/{id}, planner/themes/{name} ----------------
     let synced = {}, saveTimer = null, ready = false, unsub = null, pendingRemote = null, loadErr = false;
+    // v1.148: safe sync between devices. Every product carries `rev`, bumped on each save. A save is a transaction:
+    // if another device saved a newer version since this one last saw it, the two are merged field by field
+    // (only what was changed HERE is applied on top), so an old screen can never put old data back.
+    // After the app has been in the background / offline, it catches up with the cloud before saving anything.
+    let baseRev = {}, inflight = new Set(), stale = false, resyncP = null, hiddenAt = 0;
     const CACHE_KEY = 'pq_planner_cache_v1', THEME_KEY = 'pq_planner_theme_v1';
+    const cacheKey = () => CACHE_KEY + ':' + me;
+    try { localStorage.removeItem(CACHE_KEY); } catch {}   // old copy shared by every account on the device
     const canon = p => ({ rank: (p.rank === undefined || p.rank === null || p.rank === '') ? null : Number(p.rank), id: p.id, title: String(p.title || ''), notes: String(p.notes || ''), color: p.color || PALETTE[0], list: p.list || '',
       spans: (p.spans || []).filter(x => x && x.s && x.e).map(x => ({ id: String(x.id), s: x.s, e: x.e })), by: p.by || '',
       done: !!p.done, doneAt: p.doneAt || '', doneBy: p.doneBy || '', ord: Number(p.ord) || 0, photos: Number(p.photos) || 0, sentAt: p.sentAt || '', trashed: p.trashed || '' });
@@ -18662,36 +18670,72 @@ function finishDrag(drop) {
       clearTimeout(saveTimer); saveTimer = null;
       if (ro() || !ready || isSender() || !window._fb || !_fbDb) return;
       P.forEach((p, i) => { p.ord = i; });
-      const updates = {}, seen = new Set();
-      for (const p of P) { seen.add(p.id); const k = key(p); if (synced[p.id] !== k) { updates[p.id] = canon(p); synced[p.id] = k; } }
-      for (const id of Object.keys(synced)) if (!seen.has(id)) { updates[id] = null; delete synced[id]; }
       cache();
-      if (!Object.keys(updates).length) return;
-      window._fb.dbMod.update(window._fb.ref(_fbDb, 'planner/products'), updates)
-        .catch(e => { console.warn('planner save failed', e); toast("Couldn't save — check the connection. Your changes are kept on this screen."); });
+      if (stale) { resync().then(() => { if (!stale) scheduleSave(); }); return; }   // catch up first; changes stay on this screen meanwhile
+      const seen = new Set(), dels = {};
+      for (const p of P) { seen.add(p.id); if (!inflight.has(p.id) && synced[p.id] !== key(p)) pushOne(p); }
+      for (const id of Object.keys(synced)) if (!seen.has(id) && !inflight.has(id)) { dels[id] = null; delete synced[id]; delete baseRev[id]; }
+      if (Object.keys(dels).length) window._fb.dbMod.update(window._fb.ref(_fbDb, 'planner/products'), dels)
+        .catch(e => { console.warn('planner delete failed', e); toast("Couldn't save — check the connection."); });
     }
-    function cache() { try { localStorage.setItem(CACHE_KEY, JSON.stringify(P.map(canon))); } catch {} }
+    function pushOne(p) {
+      const id = p.id, mine = canon(p), mineKey = JSON.stringify(mine), isNew = synced[id] === undefined;
+      const base = isNew ? null : JSON.parse(synced[id]), bRev = baseRev[id];
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      inflight.add(id);
+      window._fb.runTransaction(window._fb.ref(_fbDb, 'planner/products/' + id), cur => {
+        if (cur === null || cur === undefined) return isNew ? { ...mine, rev: 1 } : null;   // deleted on another device: leave it deleted
+        const cr = Number(cur.rev) || 0;
+        if (!isNew && cr === bRev) return { ...mine, rev: cr + 1 };   // nobody else changed it
+        const theirs = fromCloud(cur), out = {};
+        for (const k of Object.keys(mine)) out[k] = base && same(mine[k], base[k]) ? theirs[k] : mine[k];   // keep their changes, add only ours
+        out.list = out.list || '';
+        return { ...out, rev: cr + 1 };
+      }).then(res => {
+        inflight.delete(id);
+        const v = res && res.snapshot && res.snapshot.val ? res.snapshot.val() : null;
+        const lp = P.find(x => x.id === id);
+        if (!v) {   // it was deleted elsewhere while this screen still had it
+          if (!isNew) { delete synced[id]; delete baseRev[id]; if (lp) { P = P.filter(x => x !== lp); render(); } }
+          return;
+        }
+        const r = fromCloud(v); synced[id] = key(r); baseRev[id] = Number(v.rev) || 0; createdHere.delete(id);
+        if (lp && key(lp) === mineKey && mineKey !== synced[id]) { for (const k of Object.keys(lp)) delete lp[k]; Object.assign(lp, r); render(); }   // merged with newer changes from another device
+        else if (lp && key(lp) !== synced[id]) scheduleSave();   // more edits happened while saving
+      }).catch(e => { inflight.delete(id); console.warn('planner save failed', e); toast("Couldn't save — check the connection. Your changes are kept on this screen."); });
+    }
+    function resync() {
+      if (resyncP) return resyncP;
+      if (!window._fb || !_fbDb) return Promise.resolve();
+      resyncP = window._fb.get(window._fb.ref(_fbDb, 'planner/products')).then(s => applyRemote((s && s.val && s.val()) || {}))
+        .catch(e => console.warn('planner catch-up failed', e)).finally(() => { resyncP = null; });
+      return resyncP;
+    }
+    function cache() { try { localStorage.setItem(cacheKey(), JSON.stringify(P.map(canon))); } catch {} }
     function applyRemote(obj) {
       if (drag && drag.started) { pendingRemote = obj; return; }
-      const list = Object.values(obj || {}).filter(r => r && r.id).map(fromCloud);
       const local = new Map(P.map(p => [p.id, p]));
       const out = [];
-      for (const r of list) {
-        const l = local.get(r.id);
-        if (l && synced[r.id] !== undefined && key(l) !== synced[r.id]) { out.push(l); continue; }   // unsaved change here wins (it's on its way up)
-        if (!l && synced[r.id] !== undefined && saveTimer) continue;   // v1.119: deleted here, not uploaded yet — don't bring it back
-        synced[r.id] = key(r);
+      for (const raw of Object.values(obj || {})) {
+        if (!raw || !raw.id) continue;
+        const r = fromCloud(raw), l = local.get(r.id);
+        if (l && (inflight.has(r.id) || (synced[r.id] !== undefined && key(l) !== synced[r.id]))) { out.push(l); continue; }   // edits here on their way up (merged when saved)
+        if (!l && synced[r.id] !== undefined && (saveTimer || inflight.has(r.id))) continue;   // deleted here, not uploaded yet — don't bring it back
+        synced[r.id] = key(r); baseRev[r.id] = Number(raw.rev) || 0;
         if (l) { for (const k of Object.keys(l)) delete l[k]; Object.assign(l, r); out.push(l); } else out.push(r);
       }
-      for (const l of P) if (!obj || !obj[l.id]) { if (synced[l.id] === undefined) out.push(l); else delete synced[l.id]; }   // new here & not up yet → keep; deleted elsewhere → drop
+      for (const l of P) if (!obj || !obj[l.id]) {
+        if (createdHere.has(l.id) && synced[l.id] === undefined) out.push(l);   // made on this device, not uploaded yet
+        else { delete synced[l.id]; delete baseRev[l.id]; }   // deleted on another device, or an old leftover on this one — drop it
+      }
       out.sort((a, b) => (a.ord || 0) - (b.ord || 0));
-      P = out; ready = true; R.getElementById('pl-err').classList.remove('show');
+      P = out; ready = true; stale = false; R.getElementById('pl-err').classList.remove('show');
       if (rolledDay !== T) { rolledDay = T; rollOver(); }
       cache(); render();
     }
     function start() {
       stop();
-      try { const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); if (Array.isArray(c) && !P.length) P = c.map(fromCloud); } catch {}
+      try { const c = JSON.parse(localStorage.getItem(cacheKey()) || 'null'); if (Array.isArray(c) && !P.length) P = c.map(fromCloud); } catch {}
       try { const t = JSON.parse(localStorage.getItem(THEME_KEY + ':' + me) || 'null'); theme = (t && t.bg && !isOldDefault(t)) ? { ...defaultTheme(), ...t } : defaultTheme(); } catch { theme = defaultTheme(); }
       applyTheme(theme); render();
       if (!window._fb || !_fbDb) return;
@@ -18714,7 +18758,14 @@ function finishDrag(drop) {
     }
     // apply anything that arrived while a box was being dragged
     R.addEventListener('pointerup', () => setTimeout(() => { if (pendingRemote && !(drag && drag.started)) { const o = pendingRemote; pendingRemote = null; applyRemote(o); } }, 30));
-    setInterval(() => { if (isOpen) { const before = T; refreshToday(); if (T !== before) { if (ready) { rolledDay = T; rollOver(); } render(); } } }, 5 * 60 * 1000);
+    setInterval(() => { if (isOpen) { const before = T; refreshToday(); if (T !== before) { if (ready) { stale = true; resync(); } render(); } } }, 5 * 60 * 1000);
+    // v1.148: back from the background / sleep / no signal → treat this screen as out of date until it has caught up
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { hiddenAt = Date.now(); return; }
+      if (isOpen && ready && Date.now() - hiddenAt > 15000) { stale = true; resync(); }
+    });
+    window.addEventListener('online', () => { if (isOpen && ready) { stale = true; resync(); } });
+    window.addEventListener('pageshow', e => { if (e.persisted && isOpen && ready) { stale = true; resync(); } });
     R.getElementById('pl-back').onclick = () => window.Planner.close();
 
     // ---------------- v1.119: roll-over, trash can, delete confirm, cover photo ----------------
@@ -20391,7 +20442,7 @@ Then a new line and the written answer as described above. Never mention the SAY
       if ((!pv || nr > rk(pv)) && (!nx || nr < rk(nx))) slots[to] = nr;
       else { slots = L.map(rk).sort((a, b) => a - b); for (let i = 1; i < slots.length; i++) if (slots[i] <= slots[i - 1]) slots[i] = slots[i - 1] + 0.001; }
       const up = {}, before = new Map(L.map(p => [p.id, p.rank]));
-      L.forEach((p, i) => { if (p.rank !== slots[i]) { p.rank = slots[i]; up[p.id + '/rank'] = slots[i]; synced[p.id] = key(p); } });
+      L.forEach((p, i) => { if (p.rank !== slots[i]) { p.rank = slots[i]; up[p.id + '/rank'] = slots[i]; if (window._fb && window._fb.dbMod.increment) up[p.id + '/rev'] = window._fb.dbMod.increment(1); synced[p.id] = key(p); } });
       cache(); renderRank();
       const mp = byId(movedId); toast(`"${mp.title}" is now #${to + 1}`);
       if (!Object.keys(up).length || !window._fb || !_fbDb) return;
@@ -20425,9 +20476,9 @@ Then a new line and the written answer as described above. Never mention the SAY
       p.photos = photos.length;
       const up = {};
       up['photos/' + p.id] = toObj(photos); up['thumbs/' + p.id] = toObj(thumbs);
-      up['products/' + p.id] = canon(p);
+      if (synced[p.id] === undefined || !window._fb.dbMod.increment) up['products/' + p.id] = { ...canon(p), rev: (baseRev[p.id] || 0) + 1 };
+      else { up['products/' + p.id + '/photos'] = p.photos; up['products/' + p.id + '/rev'] = window._fb.dbMod.increment(1); }
       await window._fb.dbMod.update(window._fb.ref(_fbDb, 'planner'), up);
-      synced[p.id] = key(p);
       photoCache.set(p.id, photos.slice()); thumbCache.set(p.id, thumbs[0] || '');
     }
     async function addProductPhotos(p, files) {
@@ -20536,7 +20587,8 @@ Then a new line and the written answer as described above. Never mention the SAY
       open(user, opts) {
         const changed = me !== user;
         me = user; readOnly = !!(opts && opts.readOnly);
-        if (changed) { P = []; synced = {}; ready = false; openAdders.clear(); }
+        if (changed) { P = []; synced = {}; baseRev = {}; inflight.clear(); createdHere.clear(); ready = false; openAdders.clear(); }
+        else if (ready) stale = true;   // it was closed a while — its copy may be old
         start();
       },
       close() { stop(); if (S.fs) { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); setFs(false); } closeModal(); hideMenu(); hideCtx(); },
