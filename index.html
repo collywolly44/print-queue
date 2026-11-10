@@ -5480,6 +5480,57 @@ body.mode-mobile .mobile-only { display: block; }
   color: var(--ink-dim);
 }
 html.planner-open, html.planner-open body { overflow: hidden !important; }
+
+/* ============================================================
+   v1.158: Collin's phone — room for the camera at the top, a slimmer
+   header, and thin queue cards so more fit on the screen.
+   (Only Collin's login; the shop phone keeps its layout.)
+   ============================================================ */
+body.mode-mobile.is-collin .sidebar { padding-top: max(44px, calc(env(safe-area-inset-top) + 6px)); }
+body.mode-mobile.is-collin .cloud-status { top: max(44px, calc(env(safe-area-inset-top) + 6px)); right: 8px; padding: 3px 8px; }
+body.mode-mobile.is-collin .brand { padding: 0 110px 6px 14px; margin-bottom: 2px; min-height: 28px; display: flex; align-items: center; }
+body.mode-mobile.is-collin .brand-name { font-size: 15px; }
+body.mode-mobile.is-collin .brand-sub { display: none; }
+body.mode-mobile.is-collin .nav { padding: 0 8px 4px; }
+body.mode-mobile.is-collin .nav-item { padding: 7px 11px; font-size: 12px; }
+body.mode-mobile.is-collin .main { padding: 10px 8px 60px; }
+/* page header: title + small buttons on one row, no subtitle */
+body.mode-mobile.is-collin .page-header { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; padding-bottom: 8px; }
+body.mode-mobile.is-collin .page-header > div:first-child { flex: 1 1 auto; min-width: 0; }
+body.mode-mobile.is-collin .page-title { font-size: 21px; line-height: 1.1; margin: 0; }
+body.mode-mobile.is-collin .page-sub { display: none; }
+body.mode-mobile.is-collin .page-actions { flex: 0 0 auto; gap: 6px; }
+body.mode-mobile.is-collin .page-actions .btn { flex: 0 0 auto; padding: 6px 10px; font-size: 10px; min-height: 0; }
+/* search + age chips + SKU filter: tighter */
+body.mode-mobile.is-collin .toolbar { gap: 6px; margin-bottom: 6px; }
+body.mode-mobile.is-collin .search.search-prominent { padding: 9px 12px; font-size: 16px; min-height: 0; }
+body.mode-mobile.is-collin .filter-chip { padding: 7px 10px; font-size: 10.5px; }
+body.mode-mobile.is-collin .sku-filter { margin-bottom: 8px; }
+body.mode-mobile.is-collin .sku-filter .search { padding: 8px 12px; font-size: 16px; min-height: 0; max-width: none; width: 100%; }
+body.mode-mobile.is-collin .sku-filter-wrap { width: 100%; max-width: none; }
+/* thin queue cards — two lines:
+     part name ............ ×qty  [DONE]
+     date · age · orders    #  ⟳  [DONE]   */
+body.mode-mobile.is-collin .queue-row {
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "part part part qty  done"
+    "date age  customer num  done";
+  column-gap: 8px; row-gap: 2px;
+  padding: 7px 8px 7px 10px; margin-bottom: 4px; border-radius: 8px;
+}
+body.mode-mobile.is-collin .qcell-part { font-size: 15px; line-height: 1.2; display: block; }
+body.mode-mobile.is-collin .qcell-part .count-fresh-tag, body.mode-mobile.is-collin .qcell-part [class*="count-"] { font-size: 9.5px; padding: 1px 5px; margin-left: 6px; vertical-align: 2px; }
+body.mode-mobile.is-collin .qcell-date { font-size: 11px; font-weight: 500; color: var(--ink-dim); }
+body.mode-mobile.is-collin .qcell-age { grid-area: age; display: flex; align-items: center; }
+body.mode-mobile.is-collin .qcell-age .badge { font-size: 9.5px; padding: 1px 5px; }
+body.mode-mobile.is-collin .qcell-customer { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.mode-mobile.is-collin .qcell-qty { justify-self: end; align-self: center; }
+body.mode-mobile.is-collin .qty-badge { font-size: 13px; padding: 1px 7px; }
+body.mode-mobile.is-collin .qcell-num { align-self: center; padding-top: 0; gap: 6px; font-size: 10px; }
+body.mode-mobile.is-collin .btn-recount { width: 26px; height: 26px; font-size: 12px; }
+body.mode-mobile.is-collin .qcell-action { align-self: center; }
+body.mode-mobile.is-collin .btn-done { min-height: 44px; padding: 6px 12px; font-size: 12px; letter-spacing: 0.06em; }
 </style>
 </head>
 <body>
@@ -6494,7 +6545,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 155;
+const APP_BUILD = 158;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -18793,7 +18844,7 @@ function finishDrag(drop) {
       for (const raw of Object.values(obj || {})) {
         if (!raw || !raw.id) continue;
         const r = fromCloud(raw), l = local.get(r.id);
-        if (l && (inflight.has(r.id) || (synced[r.id] !== undefined && key(l) !== synced[r.id]))) { out.push(l); continue; }   // edits here on their way up (merged when saved)
+        if (l && !ro() && !isSender() && (inflight.has(r.id) || (synced[r.id] !== undefined && key(l) !== synced[r.id]))) { out.push(l); continue; }   // edits here on their way up (merged when saved)
         if (!l && synced[r.id] !== undefined && (saveTimer || inflight.has(r.id))) continue;   // deleted here, not uploaded yet — don't bring it back
         synced[r.id] = key(r); baseRev[r.id] = Number(raw.rev) || 0;
         if (l) { for (const k of Object.keys(l)) delete l[k]; Object.assign(l, r); out.push(l); } else out.push(r);
@@ -18805,7 +18856,8 @@ function finishDrag(drop) {
       out.sort((a, b) => (a.ord || 0) - (b.ord || 0));
       if (!ro() && !isSender()) for (const p of out) if (p.trashed) p.trashed = '';   // v1.150: the trash is gone — bring back anything an old screen put there
       P = out; ready = true; stale = false; R.getElementById('pl-err').classList.remove('show');
-      if (rolledDay !== T) { rolledDay = T; rollOver(); }
+      if (ro() || isSender()) rollSpans();   // v1.156: Collin's and Mark's screens show today's roll-over right away (only Quaid's screen saves it)
+      else if (rolledDay !== me + '|' + T) { rolledDay = me + '|' + T; rollOver(); }   // v1.157: per login — switching accounts in the same tab no longer skips it
       cache(); render();
     }
     var verUnsub = null;
@@ -18861,13 +18913,7 @@ function finishDrag(drop) {
     let rolledDay = '';
     // Anything in the Design Queue that isn't Done keeps going: its last block on the calendar is
     // stretched to today. Also empties the trash of things deleted more than 30 days ago.
-    function rollOver() {
-      if (ro() || isSender() || !ready) return;
-      // v1.138: On Hold is gone — anything still parked there goes back to Ideas (bottom of Mark's ranking unless it already had a spot)
-      for (const p of P) if (p.list === 'hold' && !p.trashed) { p.list = 'ideas'; if (p.rank === undefined || p.rank === null || p.rank === '') p.rank = maxRank() + 1; }
-      for (const p of inList('ideas')) if (p.rank === undefined || p.rank === null || p.rank === '') p.rank = rk(p);
-      // v1.149: also cards put straight onto the calendar (not just ones in the Design Queue list): if one isn't Done
-      // and its last block ended in the past week, that block stretches to today. Only that card changes — nothing else moves.
+    function rollSpans() {   // an unfinished card's last block stretches to today; nothing else moves
       const wk = dAdd(T, -7);
       for (const p of P) {
         if (p.done || p.trashed || p.list === 'ideas') continue;
@@ -18876,6 +18922,15 @@ function finishDrag(drop) {
         const last = p.spans.reduce((a, z) => (z.e > a.e ? z : a), p.spans[0]);
         if (last.e < T && (p.list === 'design' || last.e >= wk)) last.e = T;
       }
+    }
+    function rollOver() {
+      if (ro() || isSender() || !ready) return;
+      // v1.138: On Hold is gone — anything still parked there goes back to Ideas (bottom of Mark's ranking unless it already had a spot)
+      for (const p of P) if (p.list === 'hold' && !p.trashed) { p.list = 'ideas'; if (p.rank === undefined || p.rank === null || p.rank === '') p.rank = maxRank() + 1; }
+      for (const p of inList('ideas')) if (p.rank === undefined || p.rank === null || p.rank === '') p.rank = rk(p);
+      // v1.149: also cards put straight onto the calendar (not just ones in the Design Queue list): if one isn't Done
+      // and its last block ended in the past week, that block stretches to today. Only that card changes — nothing else moves.
+      rollSpans();
       // v1.150: nothing is auto-deleted any more
     }
     function purgePhotos(ids) {
