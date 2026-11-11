@@ -6545,7 +6545,7 @@ function _localRawSet(json) {
 // Build/schema version. BUMP THIS whenever sync logic or the data shape changes.
 // A device running an OLD build is blocked from writing to the cloud (it could
 // overwrite newer data with old-format/old-logic writes) and is told to refresh.
-const APP_BUILD = 158;
+const APP_BUILD = 159;
 const MAX_SNAPSHOTS = 1;   // was 5 — snapshots were the main localStorage hog
 // Target ages for the 5 retained snapshots: ~20 min, 2 h, 8 h, 24 h, 72 h.
 const SNAPSHOT_TIERS_MS = [20 * 60 * 1000, 2 * 3600 * 1000, 8 * 3600 * 1000, 24 * 3600 * 1000, 72 * 3600 * 1000];
@@ -16695,11 +16695,14 @@ function _mergeMapField(field, cloudMap) {
   _lastPushedMaps[field] = JSON.parse(JSON.stringify(cloudMap));
 }
 // Stamp a node with a strictly-higher version after its content is written.
+// v1.159: identifies THIS open tab (two tabs on one computer share _deviceId), so a tab can tell its own uploads coming back
+const _tabId = Math.random().toString(36).slice(2, 10);
+let _libBase = null;   // the product list exactly as this tab last uploaded / received it (for merging)
 async function _writeNodeRev(path, kind) {
   let cur = 0;
   try { const s = await window._fb.get(_node(path + '/__ctl')); if (s.exists()) cur = Number(s.val().rev) || 0; } catch {}
   const next = Math.max(cur, _appliedRev[kind]) + 1;
-  await window._fb.set(_node(path + '/__ctl'), { rev: next, by: _deviceId });
+  await window._fb.set(_node(path + '/__ctl'), { rev: next, by: _deviceId, tab: _tabId });
   _appliedRev[kind] = next;
 }
 
@@ -16821,14 +16824,26 @@ function _attachListenersV2() {
     try { _persistPendingSync(); } catch {}
   });
   onNode('library', v => {
+    // v1.159: products are uploaded one product at a time, so every snapshot is a complete, usable list. Merge it in,
+    // product by product: anything changed on THIS screen and not uploaded yet stays as it is here (this used to be
+    // wiped when our own upload echoed back while the next part was being added); everything else comes from the cloud.
     const rev = _revOf(v);
-    if (rev <= _appliedRev.library) return;
-    _appliedRev.library = rev;
+    if (!v || (!v.__ctl && _appliedRev.library >= 0) || rev < _appliedRev.library) return;   // a whole-list upload from an older version still in progress, or an old echo
+    if (rev > _appliedRev.library) _appliedRev.library = rev;
+    const cloud = {}; for (const k of Object.keys(v)) if (k !== '__ctl') cloud[k] = v[k];
+    const pending = cheapHash(JSON.stringify(state.library || {})) !== _lastPushedLibrarySig;   // edits here not uploaded yet
+    let keptLocal = false;
     applySlice(() => state.library, () => {
-      const lib = {}; for (const k of Object.keys(v)) if (k !== '__ctl') lib[k] = v[k];
-      state.library = lib;
-      _lastPushedLibrarySig = cheapHash(JSON.stringify(state.library || {}));
+      if (pending && _libBase) {
+        const base = JSON.parse(_libBase), local = state.library || {}, out = { ...cloud };
+        for (const sku of new Set([...Object.keys(local), ...Object.keys(base)])) {
+          if (JSON.stringify(local[sku]) !== JSON.stringify(base[sku])) { keptLocal = true; if (local[sku] === undefined) delete out[sku]; else out[sku] = local[sku]; }
+        }
+        state.library = out;
+      } else state.library = cloud;
+      const cj = JSON.stringify(cloud); _lastPushedLibrarySig = cheapHash(cj); _libBase = cj;
     });
+    if (keptLocal) { try { cloudSyncPush(); } catch {} }   // upload the edits we kept, on top of the cloud's
     try { _persistPendingSync(); } catch {}
   });
   onNode('invEvents', v => {
@@ -17180,8 +17195,17 @@ async function _doSyncPushInner() {
       try { const s = await window._fb.get(_node(path + '/__ctl')); const r = (s.exists() && Number(s.val().rev)) || 0; return r > Math.max(_appliedRev[kind], 0); } catch { return true; }
     };
     if (libraryChanged) {
-      if (await _behind('library', 'library')) { console.warn('sync2: library push skipped — behind cloud'); }
-      else { await window._fb.set(_node('library'), transformKeys(state.library || {}, fbEncodeKey)); await _writeNodeRev('library', 'library'); _lastPushedLibrarySig = lSig; tick(1); try { _persistPendingSync(); } catch {} }
+      const libJson = JSON.stringify(state.library || {});
+      if (_libBase) {
+        // v1.159: upload ONLY the products changed on this screen. Products someone else changed meanwhile are left alone,
+        // so two screens editing at once can't wipe each other's work.
+        const base = JSON.parse(_libBase), cur = JSON.parse(libJson), delta = {};
+        for (const k of new Set([...Object.keys(base), ...Object.keys(cur)])) if (JSON.stringify(base[k]) !== JSON.stringify(cur[k])) delta[k] = cur[k] === undefined ? null : cur[k];
+        if (Object.keys(delta).length) { await window._fb.dbMod.update(_node('library'), transformKeys(delta, fbEncodeKey)); await _writeNodeRev('library', 'library'); }
+        _lastPushedLibrarySig = cheapHash(libJson); _libBase = libJson; tick(1); try { _persistPendingSync(); } catch {}
+      }
+      else if (await _behind('library', 'library')) { console.warn('sync2: library push skipped — behind cloud'); }
+      else { await window._fb.set(_node('library'), transformKeys(JSON.parse(libJson), fbEncodeKey)); await _writeNodeRev('library', 'library'); _lastPushedLibrarySig = cheapHash(libJson); _libBase = libJson; tick(1); try { _persistPendingSync(); } catch {} }
     }
     await _batch(_node('invEvents'), invPend);
     await _batch(_node('partsNeeded'), needPend);
